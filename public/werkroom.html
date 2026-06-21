@@ -30,7 +30,7 @@
   <!-- Fetch the game source and the render call, then compile BOTH together with Babel
        in one pass so the render only runs after DragRaceGame is defined. -->
   <script>
-    fetch("werkroom-game.js")
+    fetch("werkroom-game.js?v=" + Date.now(), { cache: "no-store" })
       .then(function (r) {
         if (!r.ok) throw new Error("Could not load werkroom-game.js (" + r.status + ")");
         return r.text();
