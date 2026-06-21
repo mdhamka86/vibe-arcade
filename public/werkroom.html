@@ -39,7 +39,9 @@
         var full = code + "\n\n" +
           "const __root = ReactDOM.createRoot(document.getElementById('root'));\n" +
           "__root.render(React.createElement(DragRaceGame));\n";
-        var compiled = Babel.transform(full, { presets: ["react"] }).code;
+        var compiled = Babel.transform(full, {
+          presets: [["react", { runtime: "classic" }]]
+        }).code;
         // clear the loading text, then run
         document.getElementById("root").innerHTML = "";
         var s = document.createElement("script");
