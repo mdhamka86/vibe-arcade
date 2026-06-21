@@ -3,71 +3,167 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hammy's Arcade</title>
-  <meta name="description" content="A little collection of browser games and vibe-code experiments." />
+  <title>hammyLabs</title>
+  <meta name="description" content="A small house of vibe-coded experiments. Browser apps, games, and tools built with love." />
   <style>
-    :root { --gold: #d8b15a; --gold-bright: #f4dd9a; --cream: #f3e9dd; --mauve: #caa6d8; }
-    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-    html, body { margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --paper: #FAFAF7;
+      --ink: #18181B;
+      --muted: #71717A;
+      --line: #E4E4E7;
+      --gold: #B45309;
+      --card: #FFFFFF;
+      --green: #15803D;
+    }
     body {
-      font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
-      background: radial-gradient(ellipse at 50% 0%, #4a1840 0%, #260f24 42%, #0c0510 100%);
-      background-color: #0c0510;
-      color: var(--cream);
+      background: var(--paper);
+      color: var(--ink);
+      font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
       min-height: 100vh;
       padding: 48px 20px 80px;
     }
-    .wrap { max-width: 640px; margin: 0 auto; }
-    .eyebrow { font-size: 11px; letter-spacing: 6px; color: var(--gold); text-align: center; font-weight: 600; }
+    .container { max-width: 540px; margin: 0 auto; }
+    .eyebrow {
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      color: var(--muted);
+      font-weight: 700;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
     h1 {
-      font-family: Georgia, 'Times New Roman', serif;
-      font-weight: 900; text-align: center; font-size: 46px; letter-spacing: 1px;
-      margin: 14px 0 6px; color: #f7ecdc;
-      text-shadow: 0 0 24px rgba(244,221,154,0.35), 0 2px 0 rgba(0,0,0,0.4);
+      font-family: Georgia, serif;
+      font-size: 36px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+      margin-bottom: 10px;
     }
-    .tagline { text-align: center; color: var(--mauve); font-size: 13px; letter-spacing: 2px; margin-bottom: 6px; }
-    .rule { height: 1px; max-width: 320px; margin: 22px auto;
-      background: linear-gradient(90deg, transparent, var(--gold) 18%, var(--gold-bright) 50%, var(--gold) 82%, transparent); }
-    .games { display: flex; flex-direction: column; gap: 16px; margin-top: 28px; }
-    .game {
-      display: block; text-decoration: none; color: inherit;
-      border: 1px solid rgba(216,177,90,0.32); border-radius: 4px;
-      background: rgba(38,15,36,0.6); padding: 20px 22px;
-      transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    .tagline {
+      font-size: 15px;
+      color: var(--muted);
+      line-height: 1.6;
+      margin-bottom: 48px;
     }
-    .game:hover { transform: translateY(-2px); border-color: rgba(216,177,90,0.7); background: rgba(216,177,90,0.06); }
-    .game-title { font-family: Georgia, serif; font-size: 22px; font-weight: 800; color: var(--gold-bright); margin-bottom: 4px; }
-    .game-desc { font-size: 13.5px; line-height: 1.5; opacity: 0.85; }
-    .game-tag { display: inline-block; margin-top: 10px; font-size: 10.5px; letter-spacing: 2px;
-      color: var(--gold); border: 1px solid rgba(216,177,90,0.4); border-radius: 999px; padding: 3px 12px; }
-    .soon { opacity: 0.5; cursor: default; }
-    .soon:hover { transform: none; border-color: rgba(216,177,90,0.32); background: rgba(38,15,36,0.6); }
-    footer { text-align: center; margin-top: 44px; font-size: 11.5px; color: var(--mauve); opacity: 0.6; font-style: italic; }
+    .section-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    .app-grid { display: flex; flex-direction: column; gap: 12px; margin-bottom: 48px; }
+    .app-card {
+      display: block;
+      text-decoration: none;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 20px 20px 18px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .app-card:hover {
+      border-color: #A1A1AA;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.07);
+    }
+    .app-card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .app-name {
+      font-family: Georgia, serif;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--ink);
+      line-height: 1.2;
+    }
+    .app-badge {
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--gold);
+      border: 1px solid var(--gold);
+      border-radius: 20px;
+      padding: 3px 9px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .app-desc {
+      font-size: 13.5px;
+      color: var(--muted);
+      line-height: 1.55;
+      margin-bottom: 12px;
+    }
+    .app-meta {
+      font-size: 11px;
+      color: #A1A1AA;
+      font-weight: 500;
+    }
+    .coming-soon {
+      background: var(--paper);
+      border: 1px dashed var(--line);
+      border-radius: 12px;
+      padding: 20px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .footer {
+      font-size: 12px;
+      color: #A1A1AA;
+      margin-top: 48px;
+      line-height: 1.6;
+    }
+    .footer strong { color: var(--muted); font-weight: 600; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="eyebrow">NOW ENTERING</div>
-    <h1>HAMMY'S ARCADE</h1>
-    <div class="tagline">A LITTLE HOUSE OF VIBE-CODE GAMES</div>
-    <div class="rule"></div>
+  <div class="container">
+    <div class="eyebrow">hammyLabs</div>
+    <h1>A small house of<br>vibe-code.</h1>
+    <p class="tagline">Browser apps, games, and experiments. Built with love, a lot of Claude, and no regard for sleep schedules.</p>
 
-    <div class="games">
-      <a class="game" href="/werkroom.html">
-        <div class="game-title">The Werkroom</div>
-        <div class="game-desc">A full RuPaul's Drag Race season simulator. Name your queen, werk seven rotating challenges, read your sisters in the library, and lip sync for your legacy.</div>
-        <span class="game-tag">DRAG RACE &middot; AI-POWERED</span>
+    <div class="section-label">Apps &amp; Games</div>
+
+    <div class="app-grid">
+
+      <a href="one-more-gig.html" class="app-card">
+        <div class="app-card-top">
+          <div class="app-name">One More Gig</div>
+          <div class="app-badge">Game</div>
+        </div>
+        <p class="app-desc">An 11-year music career roguelike. Build stats, drop releases, chart climbs, dodge disasters, and join the 27 Club. Every run ends the same way. What you leave behind is up to you.</p>
+        <div class="app-meta">Music · Roguelike · Replayable</div>
       </a>
 
-      <!-- To add your next game: copy the block above, change the href, title, and description. -->
-      <div class="game soon">
-        <div class="game-title">More coming soon</div>
-        <div class="game-desc">The next vibe-code experiment is already cooking. Watch this space.</div>
-        <span class="game-tag">IN THE WERK ROOM</span>
-      </div>
+      <a href="werkroom.html" class="app-card">
+        <div class="app-card-top">
+          <div class="app-name">The Werkroom</div>
+          <div class="app-badge">AI-Powered</div>
+        </div>
+        <p class="app-desc">A full RuPaul's Drag Race season simulator. Name your queen, werk seven rotating challenges, read your sisters in the library, and lip sync for your legacy.</p>
+        <div class="app-meta">Drag Race · AI · Season Simulator</div>
+      </a>
+
     </div>
 
-    <footer>Built with love and a little venom. Made for lil Naddy.</footer>
+    <div class="section-label">In the Lab</div>
+    <div class="coming-soon">
+      The next experiment is cooking. No ETA. No promises. Watch this space.
+    </div>
+
+    <div class="footer">
+      <strong>hammyLabs</strong> — built by Hammy, powered by vibe-code and Singaporean stubbornness.<br>
+      Made with love for lil Naddy. 🐱
+    </div>
   </div>
 </body>
 </html>
