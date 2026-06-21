@@ -6,21 +6,51 @@
   <title>The Werkroom — A Drag Race Season Run</title>
   <meta name="description" content="A browser-based RuPaul's Drag Race season simulator. Name your queen, werk the challenges, lip sync for your legacy." />
   <style>
-    html, body { margin: 0; padding: 0; background: #0c0510; }
+    html, body { margin: 0; padding: 0; background: #0c0510; color: #f3e9dd; }
     * { -webkit-tap-highlight-color: transparent; }
+    #loading { font-family: Georgia, serif; text-align: center; padding: 60px 20px; color: #d8b15a; letter-spacing: 2px; }
+    #err { font-family: monospace; padding: 20px; color: #ff8d8d; white-space: pre-wrap; font-size: 12px; }
   </style>
-  <!-- React + Babel from CDN so there's no build step -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body>
-  <div id="root"></div>
-  <!-- the game code, compiled in the browser by Babel -->
-  <script type="text/babel" data-presets="react" src="werkroom-game.js"></script>
-  <script type="text/babel" data-presets="react">
-    const root = ReactDOM.createRoot(document.getElementById("root"));
-    root.render(<DragRaceGame />);
+  <div id="root"><div id="loading">Loading the werkroom...</div></div>
+  <div id="err"></div>
+
+  <script>
+    // Show any error on-screen instead of a silent black void.
+    window.addEventListener("error", function (e) {
+      var box = document.getElementById("err");
+      if (box) box.textContent = "Load error: " + (e.message || e.type);
+    });
+  </script>
+
+  <!-- Fetch the game source and the render call, then compile BOTH together with Babel
+       in one pass so the render only runs after DragRaceGame is defined. -->
+  <script>
+    fetch("werkroom-game.js")
+      .then(function (r) {
+        if (!r.ok) throw new Error("Could not load werkroom-game.js (" + r.status + ")");
+        return r.text();
+      })
+      .then(function (code) {
+        var full = code + "\n\n" +
+          "const __root = ReactDOM.createRoot(document.getElementById('root'));\n" +
+          "__root.render(React.createElement(DragRaceGame));\n";
+        var compiled = Babel.transform(full, { presets: ["react"] }).code;
+        // clear the loading text, then run
+        document.getElementById("root").innerHTML = "";
+        var s = document.createElement("script");
+        s.text = compiled;
+        document.body.appendChild(s);
+      })
+      .catch(function (err) {
+        document.getElementById("err").textContent = String(err);
+        var l = document.getElementById("loading");
+        if (l) l.textContent = "Something went wrong loading the game.";
+      });
   </script>
 </body>
 </html>
