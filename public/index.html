@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hammy's Arcade</title>
+  <meta name="description" content="A little collection of browser games and vibe-code experiments." />
+  <style>
+    :root { --gold: #d8b15a; --gold-bright: #f4dd9a; --cream: #f3e9dd; --mauve: #caa6d8; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: 'Trebuchet MS', 'Segoe UI', sans-serif;
+      background: radial-gradient(ellipse at 50% 0%, #4a1840 0%, #260f24 42%, #0c0510 100%);
+      background-color: #0c0510;
+      color: var(--cream);
+      min-height: 100vh;
+      padding: 48px 20px 80px;
+    }
+    .wrap { max-width: 640px; margin: 0 auto; }
+    .eyebrow { font-size: 11px; letter-spacing: 6px; color: var(--gold); text-align: center; font-weight: 600; }
+    h1 {
+      font-family: Georgia, 'Times New Roman', serif;
+      font-weight: 900; text-align: center; font-size: 46px; letter-spacing: 1px;
+      margin: 14px 0 6px; color: #f7ecdc;
+      text-shadow: 0 0 24px rgba(244,221,154,0.35), 0 2px 0 rgba(0,0,0,0.4);
+    }
+    .tagline { text-align: center; color: var(--mauve); font-size: 13px; letter-spacing: 2px; margin-bottom: 6px; }
+    .rule { height: 1px; max-width: 320px; margin: 22px auto;
+      background: linear-gradient(90deg, transparent, var(--gold) 18%, var(--gold-bright) 50%, var(--gold) 82%, transparent); }
+    .games { display: flex; flex-direction: column; gap: 16px; margin-top: 28px; }
+    .game {
+      display: block; text-decoration: none; color: inherit;
+      border: 1px solid rgba(216,177,90,0.32); border-radius: 4px;
+      background: rgba(38,15,36,0.6); padding: 20px 22px;
+      transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+    }
+    .game:hover { transform: translateY(-2px); border-color: rgba(216,177,90,0.7); background: rgba(216,177,90,0.06); }
+    .game-title { font-family: Georgia, serif; font-size: 22px; font-weight: 800; color: var(--gold-bright); margin-bottom: 4px; }
+    .game-desc { font-size: 13.5px; line-height: 1.5; opacity: 0.85; }
+    .game-tag { display: inline-block; margin-top: 10px; font-size: 10.5px; letter-spacing: 2px;
+      color: var(--gold); border: 1px solid rgba(216,177,90,0.4); border-radius: 999px; padding: 3px 12px; }
+    .soon { opacity: 0.5; cursor: default; }
+    .soon:hover { transform: none; border-color: rgba(216,177,90,0.32); background: rgba(38,15,36,0.6); }
+    footer { text-align: center; margin-top: 44px; font-size: 11.5px; color: var(--mauve); opacity: 0.6; font-style: italic; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="eyebrow">NOW ENTERING</div>
+    <h1>HAMMY'S ARCADE</h1>
+    <div class="tagline">A LITTLE HOUSE OF VIBE-CODE GAMES</div>
+    <div class="rule"></div>
+
+    <div class="games">
+      <a class="game" href="/werkroom.html">
+        <div class="game-title">The Werkroom</div>
+        <div class="game-desc">A full RuPaul's Drag Race season simulator. Name your queen, werk seven rotating challenges, read your sisters in the library, and lip sync for your legacy.</div>
+        <span class="game-tag">DRAG RACE &middot; AI-POWERED</span>
+      </a>
+
+      <!-- To add your next game: copy the block above, change the href, title, and description. -->
+      <div class="game soon">
+        <div class="game-title">More coming soon</div>
+        <div class="game-desc">The next vibe-code experiment is already cooking. Watch this space.</div>
+        <span class="game-tag">IN THE WERK ROOM</span>
+      </div>
+    </div>
+
+    <footer>Built with love and a little venom. Made for lil Naddy.</footer>
+  </div>
+</body>
+</html>
