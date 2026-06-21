@@ -1,0 +1,2575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>10 Turns: Lions Rising</title>
+<meta name="description" content="A mini football manager game celebrating Singapore's maiden Asian Cup qualification." />
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Georgia&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: #0a0f14; }
+  #root { min-height: 100vh; }
+  .loading { color:#9aa7b4; font-family:system-ui,sans-serif; text-align:center; padding-top:40vh; font-size:15px; }
+  .errbox { color:#ff8a8a; font-family:monospace; font-size:12px; white-space:pre-wrap; padding:20px; line-height:1.5; }
+</style>
+</head>
+<body>
+<div id="root"><div class="loading">Loading the Lions… 🦁</div></div>
+
+<!-- App source kept as inert text, compiled once after the libraries are confirmed loaded. -->
+<script id="appsrc" type="text/plain">
+
+// ============================================================
+// 10 TURNS: LIONS RISING · A MINI FOOTBALL MANAGER GAME
+// - Courting now costs limited Influence points per window;
+//   courting can fail; winning refills Influence.
+// - XI: choose formation, then place each player into a slot
+//   matching the shape; sim runs automatically.
+// - Expanded REAL eligible-player pool (many young).
+// - Attribute bands fixed (no more wild spikes).
+// ============================================================
+
+let UID = 1;
+const rnd = (a, b) => Math.random() * (b - a) + a;
+const ri = (a, b) => Math.floor(rnd(a, b + 1));
+const pick = (arr) => arr[ri(0, arr.length - 1)];
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const avg = (arr) => (arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0);
+
+// attribute band the whole game respects
+const ATTR_MIN = 38, ATTR_MAX = 88;
+const cap = (v) => clamp(Math.round(v), ATTR_MIN, ATTR_MAX);
+
+function P(n, pos, age, pac, tec, phy, men, club, extra = {}) {
+  return { n, pos, age, pac: cap(pac), tec: cap(tec), phy: cap(phy), men: cap(men), club, real: true, ...extra };
+}
+
+// ---------- Singapore selection pool (real players only) ----------
+// Every name here is a real Singapore international or current SPL/overseas-based
+// Singaporean. Ratings are estimates for game balance, the players are genuine.
+const REAL_POOL = [
+  // Goalkeepers
+  P("Hassan Sunny", "GK", 42, 42, 70, 68, 82, "Lion City Sailors"),
+  P("Izwan Mahbud", "GK", 35, 48, 68, 70, 74, "Young Lions"),
+  P("Zharfan Rohaizad", "GK", 28, 55, 66, 72, 70, "Hougang United"),
+  P("Syazwan Buhari", "GK", 33, 48, 64, 70, 70, "BG Tampines Rovers"),
+  P("Hairul Syirhan", "GK", 31, 48, 62, 68, 66, "Geylang International"),
+  P("Adib Nur Hakim", "GK", 27, 52, 62, 68, 64, "Lion City Sailors"),
+  P("Rudy Khairullah", "GK", 31, 50, 62, 68, 66, "Geylang International"),
+  // Centre-backs
+  P("Irfan Fandi", "CB", 28, 66, 70, 80, 74, "Port FC (Thailand)"),
+  P("Safuwan Baharudin", "CB", 34, 58, 68, 80, 78, "Selangor (Malaysia)"),
+  P("Lionel Tan", "CB", 28, 62, 66, 76, 70, "Lion City Sailors"),
+  P("Amirul Adli", "CB", 30, 58, 64, 76, 70, "Negeri Sembilan (Malaysia)"),
+  P("Shakir Hamzah", "CB", 33, 56, 64, 78, 72, "Geylang International"),
+  P("Irfan Najeeb", "CB", 26, 64, 64, 73, 64, "BG Tampines Rovers"),
+  P("Taufik Suparno", "CB", 30, 62, 64, 74, 66, "BG Tampines Rovers"),
+  P("Nazari Naz", "CB", 25, 64, 64, 74, 66, "Tampines Rovers"),
+  // Full-backs
+  P("Ryhan Stewart", "RB", 26, 76, 68, 68, 68, "Kanchanaburi (Thailand)"),
+  P("Christopher van Huizen", "LB", 33, 66, 70, 66, 72, "Lion City Sailors"),
+  P("Nur Adam Abdullah", "LB", 24, 78, 66, 64, 66, "Lion City Sailors"),
+  P("Shah Shahiran", "LB", 26, 70, 64, 68, 66, "BG Tampines Rovers"),
+  P("Akram Azman", "RB", 25, 72, 66, 66, 66, "Lion City Sailors"),
+  P("Aniq Raushan", "RB", 22, 74, 64, 64, 62, "Lion City Sailors"),
+  P("Raoul Suhaimi", "RB", 20, 74, 66, 62, 60, "BG Tampines Rovers"),
+  // Defensive / central midfield
+  P("Hariss Harun", "DM", 35, 54, 72, 74, 84, "Lion City Sailors", { captain: true }),
+  P("Hami Syahin", "CM", 27, 68, 74, 70, 74, "Lion City Sailors"),
+  P("Song Ui-young", "CM", 32, 66, 78, 70, 78, "Lion City Sailors", { naturalised: true }),
+  P("Anumanthan Kumar", "DM", 30, 64, 70, 74, 72, "BG Tampines Rovers"),
+  P("Saifullah Akbar", "CM", 27, 70, 74, 66, 70, "Hougang United"),
+  P("Kan Kobata", "CM", 26, 64, 72, 66, 70, "BG Tampines Rovers", { naturalised: true }),
+  P("Jacob Mahler", "CM", 22, 70, 70, 64, 66, "Muangthong (Thailand)"),
+  P("Joel Chew", "CM", 26, 66, 70, 68, 66, "BG Tampines Rovers"),
+  P("Syed Firdaus", "CM", 27, 66, 68, 66, 66, "BG Tampines Rovers"),
+  P("Huzaifah Aziz", "DM", 28, 62, 68, 72, 68, "Hougang United"),
+  P("Harhys Stewart", "CM", 20, 74, 68, 66, 62, "Uthai Thani (Thailand)"),
+  P("Rezza Rezky", "AM", 25, 70, 70, 62, 62, "Tampines Rovers"),
+  // Wingers
+  P("Zulqarnaen Suzliman", "RW", 27, 74, 70, 66, 66, "Albirex Niigata (S)"),
+  P("Glenn Kweh", "RW", 26, 76, 70, 64, 66, "BG Tampines Rovers"),
+  P("Faris Ramli", "LW", 33, 70, 74, 64, 72, "BG Tampines Rovers"),
+  P("Naqiuddin Eunos", "RW", 25, 74, 66, 64, 62, "Geylang International"),
+  P("Haiqal Pashia", "LW", 27, 74, 68, 64, 64, "Hougang United"),
+  P("Farhan Zulkifli", "LW", 24, 74, 66, 62, 62, "Young Lions"),
+  P("Daniel Goh", "RW", 26, 72, 68, 64, 64, "Balestier Khalsa"),
+  // Forwards
+  P("Ikhsan Fandi", "ST", 27, 74, 72, 78, 74, "BG Pathum (Thailand)"),
+  P("Ilhan Fandi", "ST", 23, 78, 72, 74, 72, "Buriram United (Thailand)", { hero: true }),
+  P("Shawal Anuar", "ST", 33, 70, 72, 70, 76, "Lion City Sailors", { hero: true }),
+  P("Khairin Nadim", "RW", 21, 78, 70, 62, 62, "Vizela (Portugal)"),
+  P("Ong Yu En", "CM", 22, 70, 70, 62, 62, "Young Lions"),
+  // further SPL-based locals (real players across the league)
+  P("Zaiful Nizam", "GK", 36, 46, 62, 68, 70, "Tanjong Pagar Utd"),
+  P("Faizal Roslan", "CB", 30, 60, 62, 72, 66, "Tanjong Pagar Utd"),
+  P("Syahrul Sazali", "CB", 27, 64, 62, 72, 64, "Tanjong Pagar Utd"),
+  P("Emmeric Ong", "RB", 23, 72, 64, 64, 62, "Tanjong Pagar Utd"),
+  P("Aloysius Pang", "CM", 24, 68, 70, 64, 62, "Tanjong Pagar Utd"),
+  P("Azim Akbar", "DM", 24, 64, 68, 70, 64, "Tanjong Pagar Utd"),
+  P("Naufal Ilham", "CM", 23, 68, 68, 64, 62, "Tanjong Pagar Utd"),
+  P("Syahadat Masnawi", "ST", 24, 74, 66, 66, 60, "Tanjong Pagar Utd"),
+  P("Saiful Azhar", "ST", 25, 72, 66, 68, 62, "Tanjong Pagar Utd"),
+  P("Aqil Yazid", "GK", 24, 50, 60, 66, 62, "Young Lions"),
+  P("Nicky Melvin Singh", "CM", 22, 70, 68, 64, 62, "Young Lions"),
+  P("Nur Muhaimin", "CB", 23, 64, 62, 72, 62, "Young Lions"),
+  P("Amir Syafiz", "CM", 22, 70, 68, 62, 62, "Young Lions"),
+  P("Raihan Rahman", "LW", 24, 74, 66, 60, 60, "Tanjong Pagar Utd"),
+  P("Darren Teh", "CB", 28, 62, 64, 72, 64, "Balestier Khalsa"),
+  P("Ammirul Emmran", "LB", 30, 66, 64, 66, 64, "Balestier Khalsa"),
+  P("Huzaifah Ismail", "LB", 26, 70, 64, 64, 62, "Geylang International"),
+  // additional confirmed current internationals (2025-26 call-ups)
+  P("Jordan Emaviwe", "ST", 25, 76, 68, 72, 64, "Chiangrai (Thailand)"),
+  P("Jared Gallagher", "CM", 24, 70, 72, 70, 66, "Nakhon Ratchasima (Thailand)"),
+  P("Nathan Mao", "ST", 18, 78, 66, 64, 60, "Young Lions"),
+  P("Ryaan Sanizal", "CB", 24, 66, 62, 72, 62, "Hougang United"),
+  P("Abdul Rasaq Akeem", "ST", 24, 76, 66, 72, 62, "Albirex Niigata (S)"),
+  P("Ignatius Ang", "ST", 33, 70, 66, 66, 66, "Balestier Khalsa"),
+  P("Fairuz Fazli", "CM", 21, 72, 68, 62, 60, "Young Lions"),
+];
+
+// ---------- REAL eligible / heritage targets (expanded, many young) ----------
+// declared = has publicly signalled interest (easier). level sets prestige pull-cost.
+const HERITAGE_TARGETS = [
+  { n: "Perry Ng", pos: "RB", age: 30, pac: 74, tec: 78, phy: 76, men: 80, from: "Cardiff City", level: "League One", declared: true,
+    note: "The dream call-up. Reportedly only needs the Pink IC. Most likely of the lot." },
+  { n: "Kai Whitmore", pos: "CM", age: 25, pac: 72, tec: 74, phy: 72, men: 72, from: "Newport County", level: "League Two", declared: true,
+    note: "Already linked with Young Lions and keen. The realistic, gettable one." },
+  { n: "Sonny Aljofree", pos: "CB", age: 21, pac: 74, tec: 72, phy: 78, men: 66, from: "Man Utd (loan: Notts County)", level: "Prem", declared: true,
+    note: "Man Utd academy CB, eligible via grandfather. Young, big ceiling, England is the rival pull." },
+  { n: "Daniel Au-Yeong", pos: "LW", age: 22, pac: 84, tec: 76, phy: 62, men: 64, from: "Austria Lustenau", level: "Austria 2",
+    note: "Son of ex-Lions captain Au-yeong Pak Kuan. Capped by Austria youth. Electric winger." },
+  { n: "Harry Birtwistle", pos: "RB", age: 22, pac: 78, tec: 72, phy: 68, men: 64, from: "Wacker Burghausen", level: "Germany 4",
+    note: "SG-born wing-back. Real NS complication clouds his switch, but the talent is there." },
+  { n: "Andreas Jungdal", pos: "GK", age: 24, pac: 58, tec: 74, phy: 80, men: 76, from: "Westerlo (Belgium)", level: "Belgium 1",
+    note: "Ex-AC Milan youth keeper. Would instantly fix an ageing goalkeeper department." },
+  { n: "Armin Maier", pos: "CM", age: 23, pac: 70, tec: 74, phy: 72, men: 68, from: "FC 07 Albstadt", level: "Germany 5",
+    note: "German-based midfielder of Singaporean heritage. Raw but willing." },
+  { n: "Emyl Leclercq", pos: "AM", age: 23, pac: 74, tec: 78, phy: 64, men: 68, from: "SO Cholet (France)", level: "France 3",
+    note: "Technical French-based playmaker. Heritage link, would add creativity." },
+  { n: "Cristiano Fitzgerald", pos: "ST", age: 21, pac: 78, tec: 72, phy: 72, men: 64, from: "Xavier University (USA)", level: "US college",
+    note: "Young US-college forward of Singaporean descent. A project, but pacey." },
+  { n: "Hari McCoy", pos: "ST", age: 22, pac: 76, tec: 70, phy: 74, men: 64, from: "free agent", level: "Non-league",
+    note: "English-based striker, brother of Max. Looking for a club and a cause." },
+  { n: "Max McCoy", pos: "CB", age: 24, pac: 68, tec: 68, phy: 76, men: 68, from: "Balestier Khalsa", level: "SPL",
+    note: "Already in the SPL, England-born. Knows local football, settled." },
+  { n: "Shuya Yamashita", pos: "AM", age: 26, pac: 72, tec: 80, phy: 66, men: 74, from: "Tampines Rovers", level: "SPL", declared: true,
+    note: "J-quality playmaker in the SPL, months from residency eligibility. A pure upgrade." },
+  { n: "Shodai Nishikawa", pos: "DM", age: 25, pac: 68, tec: 76, phy: 74, men: 74, from: "Tanjong Pagar", level: "SPL",
+    note: "Holding midfielder plying his trade locally, a year or so from qualifying." },
+  { n: "Kodai Tanaka", pos: "ST", age: 26, pac: 74, tec: 74, phy: 72, men: 70, from: "Tampines Rovers", level: "SPL",
+    note: "Forward in the SPL nearing eligibility. Knows where the net is." },
+  { n: "Iskandar Radewaldt", pos: "CM", age: 22, pac: 72, tec: 74, phy: 70, men: 66, from: "FC Bad Wörishofen (Germany)", level: "Germany 5",
+    note: "German-Singaporean midfielder. Raw, but a real heritage option worth a punt." },
+  { n: "Moritz Radewaldt", pos: "RB", age: 24, pac: 76, tec: 70, phy: 70, men: 66, from: "FC Bad Wörishofen (Germany)", level: "Germany 5",
+    note: "Iskandar's brother, an energetic full-back. A two-for-one heritage gamble." },
+  { n: "Jorg Schreuders", pos: "DM", age: 23, pac: 68, tec: 74, phy: 74, men: 70, from: "FC Groningen (Netherlands)", level: "Eredivisie",
+    note: "Born in Singapore, in a Dutch top-flight setup. A genuine quality upgrade if landed." },
+  { n: "Joshua de Souza", pos: "GK", age: 22, pac: 56, tec: 72, phy: 78, men: 68, from: "Nelson Suburbs (NZ)", level: "NZ",
+    note: "Singaporean-heritage keeper in New Zealand. Depth for an ageing GK department." },
+  { n: "Matin Ilhan", pos: "LW", age: 21, pac: 80, tec: 72, phy: 62, men: 62, from: "Salgueiros (Portugal)", level: "Portugal 2",
+    note: "Pacey Portuguese-based winger with Singapore heritage. Electric if he commits." },
+  { n: "Nur Muhammad Asis", pos: "CB", age: 22, pac: 70, tec: 70, phy: 76, men: 64, from: "Estrela (Portugal)", level: "Portugal",
+    note: "Heritage centre-back developing in Portugal. One for the future." },
+];
+
+// ---------- Real young Singaporean prospects (intake when veterans retire) ----------
+// Actual youngsters from current SPL youth setups and the Fandi line. They enter
+// raw and improve toward a hidden ceiling, shown by a green arrow next to the rating.
+const REAL_PROSPECTS = [
+  { n: "Iryan Fandi", pos: "ST", from: "BG Pathum (Thailand)", base: 58, ceil: 80 },
+  { n: "Jonan Tan", pos: "AM", from: "Lion City Sailors U21", base: 57, ceil: 79 },
+  { n: "Harith Luth", pos: "CM", from: "Lion City Sailors U21", base: 54, ceil: 80 },
+  { n: "Kaiden Ng", pos: "GK", from: "Lion City Sailors U21", base: 53, ceil: 76 },
+  { n: "Ashman Saravanan", pos: "CM", from: "JDT Academy", base: 55, ceil: 78 },
+  { n: "Ewan Seddon", pos: "ST", from: "Lion City Sailors U21", base: 54, ceil: 77 },
+  { n: "Yasir Nizamudin", pos: "CM", from: "Lion City Sailors U21", base: 55, ceil: 74 },
+  { n: "Danish Qayyum", pos: "AM", from: "Young Lions", base: 58, ceil: 76 },
+  { n: "Nur Muhaimin", pos: "CB", from: "Young Lions", base: 54, ceil: 76 },
+  { n: "Glenn Ong", pos: "RB", from: "Young Lions", base: 55, ceil: 73 },
+  { n: "Akmal Azman", pos: "LB", from: "Lion City Sailors U21", base: 54, ceil: 73 },
+  { n: "Farrel Mohammad", pos: "AM", from: "Lion City Sailors U21", base: 52, ceil: 78 },
+  { n: "Ilyasin Zayan", pos: "ST", from: "Lion City Sailors U21", base: 53, ceil: 75 },
+  { n: "Marcus Moses", pos: "CB", from: "Lion City Sailors U21", base: 54, ceil: 74 },
+  { n: "Joshua Little", pos: "CM", from: "Lion City Sailors U21", base: 53, ceil: 73 },
+];
+
+const OPP = {
+  "Hong Kong": 68, India: 64, Bangladesh: 58, Malaysia: 66, Thailand: 71, Vietnam: 71,
+  Indonesia: 70, Philippines: 65, Oman: 76, Jordan: 77, UAE: 74, Iraq: 78, China: 75,
+  Uzbekistan: 80, "Saudi Arabia": 82, Japan: 88, "South Korea": 86, Australia: 84, Qatar: 80, Iran: 83,
+  Kuwait: 66, Palestine: 68, Bahrain: 72, "North Korea": 70, Syria: 74, Kyrgyzstan: 70, Tajikistan: 71, Yemen: 60,
+};
+const FLAG = {
+  "Hong Kong": "🇭🇰", India: "🇮🇳", Bangladesh: "🇧🇩", Malaysia: "🇲🇾", Thailand: "🇹🇭", Vietnam: "🇻🇳",
+  Indonesia: "🇮🇩", Philippines: "🇵🇭", Oman: "🇴🇲", Jordan: "🇯🇴", UAE: "🇦🇪", Iraq: "🇮🇶", China: "🇨🇳",
+  Uzbekistan: "🇺🇿", "Saudi Arabia": "🇸🇦", Japan: "🇯🇵", "South Korea": "🇰🇷", Australia: "🇦🇺", Qatar: "🇶🇦", Iran: "🇮🇷",
+  Kuwait: "🇰🇼", Palestine: "🇵🇸", Bahrain: "🇧🇭", "North Korea": "🇰🇵", Syria: "🇸🇾", Kyrgyzstan: "🇰🇬", Tajikistan: "🇹🇯", Yemen: "🇾🇪",
+};
+// approximate real FIFA world rankings, for display in fixtures
+const WRANK = {
+  Japan: 17, "South Korea": 23, Iran: 18, Australia: 26, Qatar: 36, "Saudi Arabia": 58,
+  Iraq: 58, Uzbekistan: 50, UAE: 65, Jordan: 62, Oman: 76, China: 90, Bahrain: 81,
+  Syria: 91, Palestine: 95, "North Korea": 110, Kyrgyzstan: 100, Tajikistan: 99,
+  Vietnam: 113, Thailand: 99, Indonesia: 118, Philippines: 145, Malaysia: 130,
+  "Hong Kong": 148, India: 133, Kuwait: 137, Yemen: 160, Bangladesh: 184,
+};
+const wrank = (t) => (WRANK[t] ? `#${WRANK[t]}` : "");
+// The real, confirmed 2027 Asian Cup group draw (Singapore in Group D).
+const ASIAN_CUP_GROUPS = {
+  A: ["Saudi Arabia", "Kuwait", "Oman", "Palestine"],
+  B: ["Uzbekistan", "Bahrain", "North Korea", "Jordan"],
+  C: ["Iran", "Syria", "Kyrgyzstan", "China"],
+  D: ["Australia", "Tajikistan", "Iraq", "Singapore"],
+  E: ["South Korea", "UAE", "Vietnam", "Yemen"],
+  F: ["Japan", "Qatar", "Thailand", "Indonesia"],
+};
+
+// real-life mini-bios for senior players who can retire (concise, real achievements)
+const BIOS = {
+  "Hassan Sunny": "Cult-hero keeper whose heroics for Thailand vs Indonesia once went viral worldwide. 100+ Singapore caps, an AFF Championship winner, beloved at 42.",
+  "Hariss Harun": "The captain. Most-capped Lion in history and the youngest player ever to debut for Singapore at 16, an ASEAN Championship winner and one-club symbol of the modern era.",
+  "Shawal Anuar": "Late-blooming poacher who scored the equaliser in the Hong Kong qualifier miracle. Proof you can break through at any age.",
+  "Safuwan Baharudin": "Versatile warrior, Malaysia Super League title winner with JDT, a defender who could play anywhere across the back and midfield.",
+  "Izwan Mahbud": "Shot-stopper who famously kept Japan at bay in a 2015 World Cup qualifier, one of the great individual Lions performances.",
+  "Christopher van Huizen": "Tricky wide man turned full-back, a fan favourite who gave a decade of energy down the flank for club and country.",
+  "Ikhsan Fandi": "Son of the legendary Fandi Ahmad, prolific striker who took his game abroad to Thailand and carried the family name forward.",
+  "Shakir Hamzah": "No-nonsense centre-half, an old-school stopper who never gave a striker an easy afternoon.",
+  "Ilhan Fandi": "The youngest of the Fandi dynasty and the matchwinner who fired Singapore to this Asian Cup, scoring the clincher against Hong Kong with his weaker foot from outside the box.",
+  "Irfan Fandi": "Eldest of the Fandi brothers, a commanding centre-back who became the first Singaporean to win the Thai League title. A leader at the back.",
+  "Song Ui-young": "Korean-born and a naturalised Singaporean by choice, a tireless, goal-scoring midfield engine whose double in Goa helped seal Asian Cup qualification.",
+  "Hami Syahin": "A combative, all-action central midfielder and a mainstay of the Lion City Sailors and national midfield. Wins the ball and keeps things ticking.",
+  "Faris Ramli": "Tricky, left-footed forward with 90-plus caps, famous for his header against China just eight seconds after kick-off. A creative spark for over a decade.",
+  "Lionel Tan": "A composed, ball-playing centre-back who has grown into a national-team regular, comfortable bringing the ball out from the back.",
+  "Glenn Kweh": "Pacey, direct winger who came through the Young Lions setup, known for his bursts of energy and a brace against Thailand.",
+  "Jacob Mahler": "Copenhagen-born defensive midfielder of Singaporean heritage, once the Young Lions captain and the nation's youngest goalscorer.",
+  "Harhys Stewart": "Versatile, adventurous midfielder who became the first Singaporean to sign for a club in Kosovo before returning to Thai football, and scored the goal that ended the qualifiers unbeaten.",
+  "Ryhan Stewart": "Energetic full-back, one of several Singaporeans to ply their trade in Thailand's top flight. Brother of Harhys.",
+  "Amirul Adli": "Reliable, versatile defender now testing himself in Malaysian football, with over 40 caps to his name.",
+};
+const GENERIC_BIO = "A dependable servant of the Lions through a transitional era, the kind of pro every dressing room needs.";
+
+// real-ish fun facts about specific players, used for goalscorer titbits and richer retirements
+const PLAYER_FACTS = {
+  "Hassan Sunny": "His save-everything display for Thailand against Indonesia at the 2024 Asian Cup went so viral that grateful fans flooded his Singapore business with five-star reviews.",
+  "Hariss Harun": "Became Singapore's youngest international at just 16, and has captained the Lions for the better part of a decade.",
+  "Ikhsan Fandi": "Once scored a hat-trick in 11 minutes against Liverpool's U15s as a teenager, sharing the pitch with future first-teamers.",
+  "Ilhan Fandi": "The youngest of the Fandi footballing dynasty, he scored in the very qualifier that sent Singapore to this Asian Cup.",
+  "Irfan Fandi": "The first Singaporean to win the Thai League 1 title, reinventing himself from striker's son into a commanding centre-back.",
+  "Shawal Anuar": "A famous late bloomer who only became a regular international in his thirties, then refused to stop scoring.",
+  "Faris Ramli": "Scored a header against China just eight seconds after kick-off, one of the fastest goals in Lions history.",
+  "Izwan Mahbud": "Produced a goalkeeping masterclass against Japan in 2015 that the Japanese press themselves called heroic.",
+  "Ryhan Stewart": "One of three Singaporeans to play for Thai giants BG Pathum, alongside the Fandi brothers.",
+  "Harhys Stewart": "Briefly became the first Singaporean to play club football in Kosovo before heading back to Thailand.",
+  "Song Ui-young": "Korean-born but a naturalised Singaporean who chose the Lions, a midfield metronome for Lion City Sailors.",
+  "Safuwan Baharudin": "A Swiss-army-knife footballer who has started matches at centre-back, midfield and even up front.",
+  "Glenn Kweh": "Came through the Young Lions development side before establishing himself as a tricky senior winger.",
+  "Hami Syahin": "A tenacious, all-action midfielder who rarely loses a duel he commits to.",
+};
+// funny-but-plausible fallback facts when no real one exists
+const FUNNY_FACTS = [
+  "reportedly has the squad's worst taste in music, and the loudest Bluetooth speaker.",
+  "is said to eat exactly the same chicken rice order before every single match.",
+  "once got lost driving to the National Stadium despite having played there fifty times.",
+  "is the undisputed FIFA champion of the dressing room, and never lets anyone forget it.",
+  "is famous among teammates for an inexplicable fear of the team mascot.",
+  "supposedly trains in the same lucky socks he's owned since his youth days.",
+  "holds the unofficial squad record for most kopi consumed in a single day.",
+  "is the only player who shows up to training a full hour early, every time.",
+  "is rumoured to give the best, and longest, post-match speeches nobody asked for.",
+  "once celebrated a goal so hard he pulled a muscle, allegedly.",
+];
+function playerFact(name) { return PLAYER_FACTS[name] || null; }
+const COOL_JOBS = [
+  "opening a nasi lemak empire with branches in three countries",
+  "becoming a competitive drone-racing pilot",
+  "hosting a chaotic football podcast nobody asked for but everyone loves",
+  "training to free-dive with whale sharks in the Philippines",
+  "launching a artisanal kaya-toast cafe in the Cotswolds",
+  "going full influencer with a vintage-watch flipping channel",
+  "retraining as a wildlife photographer in Borneo",
+  "buying a non-league club and managing it himself",
+  "becoming a part-time stand-up comedian on the SG circuit",
+  "starting a durian-export business to the Middle East",
+  "competing on a celebrity cooking show (and somehow winning)",
+  "opening a muay thai gym and fighting on the amateur card",
+];
+// position ordering for the squad list: GK, then defenders, mids, forwards
+const POS_ORDER = { GK: 0, RB: 1, CB: 1, LB: 1, DM: 2, CM: 2, AM: 2, RW: 3, LW: 3, ST: 3 };
+const POS_RANK = { GK: 0, LB: 1, CB: 2, RB: 3, DM: 4, CM: 5, AM: 6, LW: 7, RW: 8, ST: 9 };
+// group a position into GK/DEF/MID/ATT via a direct lookup (faster and defined once)
+const POS_BUCKET = { GK: "GK", RB: "DEF", LB: "DEF", CB: "DEF", DM: "MID", CM: "MID", AM: "MID", RW: "ATT", LW: "ATT", ST: "ATT" };
+const posBucketG = (pos) => POS_BUCKET[pos] || "ATT";
+
+// position weights for the overall() rating calc, defined once at module scope
+const OVR_WEIGHTS = {
+  GK: [0.1, 0.3, 0.25, 0.35], CB: [0.2, 0.2, 0.35, 0.25], LB: [0.3, 0.25, 0.25, 0.2], RB: [0.3, 0.25, 0.25, 0.2],
+  DM: [0.15, 0.3, 0.3, 0.25], CM: [0.2, 0.35, 0.2, 0.25], AM: [0.25, 0.4, 0.15, 0.2],
+  LW: [0.35, 0.35, 0.15, 0.15], RW: [0.35, 0.35, 0.15, 0.15], ST: [0.3, 0.3, 0.25, 0.15],
+};
+const OVR_DEFAULT = [0.25, 0.25, 0.25, 0.25];
+function overall(p) {
+  const w = OVR_WEIGHTS[p.pos] || OVR_DEFAULT;
+  return Math.round(p.pac * w[0] + p.tec * w[1] + p.phy * w[2] + p.men * w[3]);
+}
+
+// real Singapore senior caps for documented players (as of mid-2026); others estimated by age in makeReal
+const REAL_CAPS = {
+  "Hariss Harun": 147, "Hassan Sunny": 115, "Safuwan Baharudin": 131, "Shahril Ishak": 138,
+  "Izwan Mahbud": 72, "Shawal Anuar": 50, "Ikhsan Fandi": 47, "Ilhan Fandi": 24,
+  "Song Ui-young": 32, "Hami Syahin": 39, "Christopher van Huizen": 28, "Shakir Hamzah": 38,
+  "Faris Ramli": 92, "Irfan Fandi": 50, "Lionel Tan": 27, "Anumanthan Kumar": 30,
+  "Saifullah Akbar": 5, "Glenn Kweh": 29, "Zulqarnaen Suzliman": 27, "Nur Adam Abdullah": 11,
+  "Amirul Adli": 41, "Shah Shahiran": 39, "Ryhan Stewart": 32, "Nazari Naz": 68,
+  "Harhys Stewart": 15, "Jacob Mahler": 16, "Naqiuddin Eunos": 5, "Daniel Goh": 10,
+  "Irfan Najeeb": 14, "Joel Chew": 8, "Farhan Zulkifli": 9, "Akram Azman": 3,
+  "Joshua Pereira": 6, "Syed Firdaus": 1, "Taufik Suparno": 14, "Jordan Emaviwe": 11,
+  "Nathan Mao": 1, "Ryaan Sanizal": 3, "Abdul Rasaq Akeem": 6, "Amir Syafiz": 2,
+  "Syazwan Buhari": 3, "Darren Teh": 3,
+};
+function realCaps(seed) {
+  if (REAL_CAPS[seed.n] != null) return REAL_CAPS[seed.n];
+  if (seed.youth || seed.depth) return ri(0, 6);
+  // estimate from age for undocumented seniors: roughly 3 caps a year after 18
+  return clamp(Math.round((seed.age - 18) * ri(2, 4)), 2, 80);
+}
+function makeReal(seed) { return { id: UID++, ...seed, form: ri(-3, 3), caps: realCaps(seed), retired: false, clubForm: ri(-2, 2) }; }
+
+// real young prospect: enters raw, improves toward ceiling each window.
+// growthArrow holds last window's overall gain so the UI can show a green arrow.
+function makeProspect() {
+  const r = pick(REAL_PROSPECTS);
+  const core = r.base;
+  const j = () => cap(core + ri(-4, 4));
+  return {
+    id: UID++, n: r.n, pos: r.pos, club: r.from, age: ri(17, 20),
+    pac: j(), tec: j(), phy: j(), men: j(),
+    real: true, youth: true, form: 0, caps: 0, retired: false,
+    _ceiling: r.ceil, _devType: pick(["fast", "fast", "steady", "steady", "steady", "late", "bust"]),
+    growthArrow: 0, clubForm: ri(-2, 3),
+  };
+}
+
+// ---------- formations (slot roles only; placement is manual) ----------
+const FORMATIONS = {
+  "4-3-3": ["GK", "LB", "CB", "CB", "RB", "CM", "CM", "CM", "LW", "ST", "RW"],
+  "4-4-2": ["GK", "LB", "CB", "CB", "RB", "LW", "CM", "CM", "RW", "ST", "ST"],
+  "4-2-3-1": ["GK", "LB", "CB", "CB", "RB", "DM", "DM", "LW", "AM", "RW", "ST"],
+  "3-5-2": ["GK", "CB", "CB", "CB", "LB", "CM", "DM", "CM", "RB", "ST", "ST"],
+  "5-3-2": ["GK", "LB", "CB", "CB", "CB", "RB", "CM", "CM", "CM", "ST", "ST"],
+};
+// pitch coordinates per formation (x%, y%) aligned to the role array above
+const COORDS = {
+  "4-3-3": [[50,92],[18,72],[38,76],[62,76],[82,72],[30,50],[50,54],[70,50],[20,24],[50,18],[80,24]],
+  "4-4-2": [[50,92],[18,72],[38,76],[62,76],[82,72],[18,46],[40,50],[60,50],[82,46],[38,20],[62,20]],
+  "4-2-3-1": [[50,92],[18,72],[38,76],[62,76],[82,72],[38,56],[62,56],[20,34],[50,38],[80,34],[50,16]],
+  "3-5-2": [[50,92],[30,76],[50,78],[70,76],[12,50],[36,52],[50,58],[64,52],[88,50],[38,20],[62,20]],
+  "5-3-2": [[50,92],[12,66],[32,76],[50,78],[68,76],[88,66],[32,48],[50,52],[68,48],[38,20],[62,20]],
+};
+const POS_GROUP = {
+  GK: ["GK"], CB: ["CB", "RB", "LB", "DM"], LB: ["LB", "CB", "LW"], RB: ["RB", "CB", "RW"],
+  DM: ["DM", "CM", "CB"], CM: ["CM", "DM", "AM"], AM: ["AM", "CM", "LW", "RW"],
+  LW: ["LW", "AM", "RW", "ST"], RW: ["RW", "AM", "LW", "ST"], ST: ["ST", "AM", "LW", "RW"],
+};
+function slotFit(playerPos, slotRole) {
+  if (playerPos === slotRole) return 1.0;
+  if ((POS_GROUP[slotRole] || []).includes(playerPos)) return 0.85;
+  return 0.62;
+}
+
+const TACTICS = {
+  "Low Block": { d: "Defend deep, frustrate. Best vs stronger sides.", atk: -1, def: 2 },
+  "Balanced": { d: "Even shape. Safe vs anyone.", atk: 0, def: 0 },
+  "Front Foot": { d: "Press and attack. Great vs weaker sides, exposed vs strong.", atk: 2, def: -1 },
+};
+
+const BASE_SCHEDULE = [
+  { w: 1, opp: "Bangladesh", type: "qualifier", note: "Final Group C qualifier (top spot already secured)" },
+  { w: 2, opp: null, type: "friendly_slot" },
+  { w: 3, opp: "Malaysia", type: "friendly", note: "Causeway derby friendly" },
+  { w: 4, opp: null, type: "friendly_slot" },
+  { w: 5, opp: "Vietnam", type: "friendly", note: "Regional test vs a top-100 side" },
+  { w: 6, opp: null, type: "friendly_slot" },
+  { w: 7, opp: "Philippines", type: "friendly", note: "ASEAN tune-up" },
+  { w: 8, opp: null, type: "friendly_slot" },
+  { w: 9, opp: "Oman", type: "friendly", note: "West Asian opposition, Asian Cup-level" },
+  { w: 10, opp: null, type: "friendly_slot" },
+  { w: 11, opp: "China", type: "friendly", note: "Continental heavyweight test" },
+  { w: 12, opp: null, type: "friendly_slot" },
+  { w: 13, opp: "UAE", type: "friendly", note: "Gulf acclimatisation friendly" },
+  { w: 14, opp: "Jordan", type: "friendly", note: "Final serious tune-up" },
+  { w: 15, opp: "Thailand", type: "friendly", note: "Last warm-up before Saudi" },
+];
+const TOTAL_WINDOWS = 10;
+const FRIENDLY_OPTIONS = ["Malaysia", "Indonesia", "India", "Iraq", "Uzbekistan", "Qatar", "Japan", "Bahrain", "South Korea"];
+
+// a small, light-hearted fun fact for each possible opponent
+const COUNTRY_FACTS = {
+  "Malaysia": "Home of the original Milo dinosaur and our eternal Causeway rivals. Beat them and the bragging rights last a lifetime.",
+  "Indonesia": "Over 17,000 islands, and seemingly all of them have a passionate football ultra group. The away atmosphere is no joke.",
+  "India": "Cricket-mad nation of 1.4 billion, but football fever runs deep in Kerala and Bengal. The Blue Tigers vs the Lions, big-cat derby.",
+  "Iraq": "The Lions of Mesopotamia stunned Asia by winning the 2007 Asian Cup. Never underestimate them.",
+  "Uzbekistan": "Landlocked in Central Asia and famous for Samarkand's Silk Road splendour. Their footballers are tall, technical and tricky.",
+  "Qatar": "Tiny, gas-rich, and reigning back-to-back Asian champions (2019, 2023). Punching massively above their population.",
+  "Japan": "Samurai Blue, the gold standard of Asian football. Also the birthplace of Captain Tsubasa, which probably explains a lot.",
+  "Bahrain": "A Gulf island nation smaller than Singapore by population, but a stubborn, well-drilled side that loves a low block.",
+  "South Korea": "Son Heung-min's nation, four-time World Cup knockout regulars and serial Asian Cup contenders. A proper test.",
+  "Australia": "The Socceroos: big, fast and physical. Technically they're in Asia now, and they bring a World Cup pedigree.",
+  "Tajikistan": "Central Asia's rising underdogs who reached the Asian Cup knockouts on debut in 2024. Don't sleep on them.",
+  "Thailand": "The War Elephants, Southeast Asia's powerhouse and a familiar regional foe. Always a spicy fixture.",
+  "China": "1.4 billion people still chasing a footballing breakthrough, but huge investment and never an easy night.",
+  "Hong Kong": "The team Singapore beat to reach this Asian Cup. A neighbourly rivalry with real history.",
+};
+
+const INFLUENCE_START = 3;   // courting points each window
+
+// rare, light-hearted injuries (never anything grim)
+const INJURY_REASONS = [
+  "tweaked his ankle celebrating a goal a bit too hard",
+  "pulled a hamstring showing off a rabona in training",
+  "strained his back carrying the team's luggage at the airport",
+  "rolled an ankle on a stray cone during the warm-up",
+  "bruised his heel from brand-new boots he insisted on wearing",
+  "knocked his knee tripping over the physio's water bottle",
+  "stubbed his toe on the dressing-room bench",
+  "got a stiff neck sleeping awkwardly on the team bus",
+  "tweaked a calf doing the post-match TikTok dance",
+  "sprained a wrist signing too many autographs",
+];
+// the physio's mock-serious medical assessment and bedside-manner sign-off
+const PHYSIO_NOTES = [
+  "Scans are clear, ego slightly bruised. He'll live.",
+  "Ice, rest, and a stern talking-to from me. Standard protocol.",
+  "Nothing torn except his pride. We've started rehab and group therapy.",
+  "I've prescribed two weeks of light duties and zero showing off.",
+  "Minor strain. I've confiscated the item responsible, for everyone's safety.",
+  "He cried a little. I won't say more to protect his dignity.",
+  "We're monitoring it daily. Mostly so I can say 'I told you so'.",
+  "Recovery is going well, no thanks to his life choices.",
+];
+const PHYSIO_SIGNOFF = "— Naomi Nadine, Team Physio";
+
+// real-bio snippets for the manager's welcome note when a heritage player commits.
+// keyed by name; falls back to a generic message for anyone not listed.
+const NATURALISATION_PROFILES = {
+  "Perry Ng": "Liverpool-born and eligible through his late Singaporean paternal grandfather James, Perry's a two-time Cardiff City Player of the Year, a composed right-back who can also slot in at centre-back. Right-footed, calm on the ball, and a real leader. He slots straight in alongside our overlapping full-backs and lets Hariss sit deeper. He's dreamed of walking out at the National Stadium for years, the lads will love his professionalism.",
+  "Luke O'Nien": "Sunderland's versatile warrior, eligible via his late Singaporean grandfather Lim Cheng Siong. He can play across midfield or defence, all energy, aggression and leadership. Drop him next to our deep-lying midfielders and he'll do the dirty work that frees up our creators. A born organiser who'll lift the dressing room.",
+  "Sonny Aljofree": "A young Manchester United academy centre-back out on loan gaining senior minutes. Quick, brave and left-footed, exactly the profile we're short of at the back. Pair him with Irfan Fandi and we've got a mobile, balanced central defence for years. One for the present and the future.",
+  "Daniel Au-Yeong": "A pacey winger who came through the Austria Wien setup and is eligible through his father, former Singapore captain Au-yeong Pak Kuan. Direct, two-footed and fearless. He gives our front line a genuine wide threat and an emotional homecoming story the fans will adore.",
+  "Jorg Schreuders": "Singapore-born and developing in the Dutch system, a tidy, disciplined holding midfielder. He brings continental coaching and composure to our engine room, and pairs beautifully with our box-to-box runners. Quietly, a real quality upgrade.",
+};
+const NATURALISATION_GENERIC = "A genuine heritage talent who's chosen to commit to the Lions. He brings real pedigree from his overseas football and slots neatly into our system. The squad will welcome him, and his ambition raises the bar for everyone around him.";
+
+// between-turns side events: feasible, harmless, funny. effect is flavour-only unless noted.
+const SIDE_EVENTS = [
+  { t: "Stadium hijacked by a diva", d: "Your next match has been bumped from the 55,000-seat National Stadium to the 6,000-seat Jalan Besar Stadium because a global primadonna pop diva booked the Sports Hub for a six-night concert residency. Capacity cut from 55,000 to 6,000. The lads will have to settle for a cosier, sweatier Kallang roar.", capacity: 6000 },
+  { t: "Viral moment", d: "A clip of the squad's keepie-uppie warm-up goes viral on local football TikTok. The nation is buzzing." },
+  { t: "Kopitiam summit", d: "Half the squad is spotted having a 3am supper at a Geylang kopitiam. Team chemistry reportedly through the roof." },
+  { t: "Durian incident", d: "A team-bonding durian feast gets out of hand. Nobody is injured, but the bus smells incredible for a week." },
+  { t: "Mascot mishap", d: "The Kallang mascot trips during a hype reel and goes viral. Merch sales spike. Morale up." },
+  { t: "Hawker hero", d: "A player's uncle's chicken rice stall starts a 'Lions special'. Queues round the block. Wholesome." },
+  { t: "Boot deal buzz", d: "A young call-up lands a modest boot sponsorship and won't stop talking about it. The lads are merciless." },
+  { t: "FIFA night", d: "A squad FIFA tournament ends in friendly chaos when the captain rage-quits. Bragging rights claimed." },
+  { t: "Fan mural", d: "Supporters paint a giant Lions mural near Jalan Besar overnight. The players are genuinely touched." },
+  { t: "Karaoke legend", d: "A veteran's heroic karaoke rendition becomes the unofficial team anthem. Spirits soaring." },
+  { t: "Lost luggage", d: "An away trip's kit gets briefly lost; the team trains in borrowed neon bibs. Photos are tremendous." },
+  { t: "Cat adopts team", d: "A stray cat wanders into training and refuses to leave. Now the unofficial team pet. Vibes immaculate." },
+  { t: "Coach's haircut", d: "The coaching staff lose a bet and get matching bowl cuts. The squad cannot stop laughing." },
+  // ---- more local-flavour Singapore events ----
+  { t: "MRT breakdown chaos", d: "The East-West Line picked the worst possible day to die. One of your players was stuck between stations and physically could not reach the match in time. He misses the game. Classic.", missPlayer: true },
+  { t: "ERP ate his pay", d: "A player drove to training and the ERP gantries absolutely fleeced him. He's now campaigning for a team carpool. Morale steady, wallet not." },
+  { t: "Kiasu queue", d: "The squad spotted a snaking queue outside a bubble tea shop and joined it on instinct, before realising none of them knew what it was for. Peak Singapore." },
+  { t: "Town council fine", d: "Someone left a bicycle in the void deck and the town council issued a sternly-worded notice to the whole team. Discipline meeting called." },
+  { t: "Chilli crab carnage", d: "A team chilli crab dinner turned competitive. Three players have minor sauce-related eye injuries. Naomi Nadine is not amused." },
+  { t: "NS recall scare", d: "A player briefly thought he got an NS reservist call-up letter. False alarm, it was a Lazada parcel. The relief was immense." },
+  { t: "Kopi order meltdown", d: "A new call-up confidently ordered 'kopi' and got something he did not expect. The veterans have not let it go. Bonding achieved." },
+  { t: "HDB lift upgrade", d: "A player's block lift is under upgrading, so he's been climbing 14 floors daily. Accidentally the fittest he's ever been. Coach delighted." },
+  { t: "Wet market wisdom", d: "The captain's auntie gave the whole squad unsolicited life advice at the wet market. Strangely motivational. Spirits up." },
+  { t: "Singlish press gaffe", d: "A player's 'confirm plus chop' interview quote goes viral and confuses the international press. The nation is delighted." },
+  { t: "Void deck wedding", d: "Half the squad got roped into helping at a teammate's void deck wedding. Great vibes, mild exhaustion, excellent catering." },
+  { t: "Durian ban drama", d: "A hotel on an away trip banned the squad's durian stash at reception. A diplomatic incident was narrowly avoided. Smells linger." },
+  { t: "Haze day", d: "The haze rolled in and training moved indoors. The lads played futsal in the gym and somebody put it on YouTube. Decent numbers." },
+  { t: "Lepak session", d: "An impromptu lepak session at the void deck turned into a three-hour tactics chat over kacang putih. Team understanding up." },
+];
+
+// pre-match team talks, Singaporean flavour, each with an upside and a downside risk.
+// a fresh random subset is shown each match so it never feels identical.
+const TEAM_TALKS = [
+  { label: "\"Steady lah, just play your game\"", note: "Calm and grounded. Reliable, no drama.", effGood: "Settled nerves, a small steady lift.", effBad: "Maybe too relaxed, no spark either way.", atk: 0, def: 1, formAll: 0 },
+  { label: "\"Confirm chop we win this one!\"", note: "Pure swagger. Could fire them up or jinx it.", effGood: "Bristling with belief, attack boosted.", effBad: "Overconfidence, switched off at the back.", atk: 2, def: -2, formAll: 0 },
+  { label: "\"Don't paiseh, show them the Kallang Roar!\"", note: "Heart-on-sleeve passion. Risky but rousing.", effGood: "Players run through walls, big morale lift.", effBad: "Too pumped up, discipline goes out the window.", atk: 1, def: -1, formAll: 1 },
+  { label: "\"Aiyoh, don't kena scolded by the fans ah\"", note: "Fear-based motivation. The classic uncle approach.", effGood: "Focus sharpens, they defend for their lives.", effBad: "Tense and tentative, afraid to express themselves.", atk: -1, def: 2, formAll: 0 },
+  { label: "\"Win and I belanja everyone chicken rice\"", note: "Bribery. Surprisingly effective in Singapore.", effGood: "Stomachs and hearts united, all-round lift.", effBad: "Distracted thinking about lunch, bit sloppy.", atk: 1, def: 0, formAll: 1 },
+  { label: "\"Play like your auntie is watching from the stand\"", note: "Guilt-powered. Nobody wants to disappoint auntie.", effGood: "Extra effort all over the pitch.", effBad: "Overthinking every touch, a bit stiff.", atk: 1, def: 1, formAll: 0 },
+  { label: "\"No stress, treat it like a kampong kickabout\"", note: "Loosen them up, take the fear away.", effGood: "Free-flowing, expressive football.", effBad: "Too casual, switch off at the wrong moment.", atk: 2, def: -1, formAll: 0 },
+  { label: "\"Lim kopi later, first we lim their soul\"", note: "Pure intensity. All gas, no brakes.", effGood: "Ferocious press, opponents rattled.", effBad: "Burn out early, leave gaps at the back.", atk: 1, def: -2, formAll: 1 },
+  { label: "\"Defend like it's the last MRT home\"", note: "Desperate, do-or-die energy at the back.", effGood: "Rock solid, nothing gets through.", effBad: "So deep we never threaten going forward.", atk: -2, def: 3, formAll: 0 },
+  { label: "\"Make the whole island proud tonight, boys\"", note: "Patriotic and stirring. High risk, high reward.", effGood: "Chests puffed out, inspired performance.", effBad: "Weight of expectation makes legs heavy.", atk: 1, def: 1, formAll: 1 },
+  { label: "\"Whoever scores, supper is on me\"", note: "More bribery. It keeps working, somehow.", effGood: "Strikers sharpen up, goals flow.", effBad: "Everyone wants to shoot, nobody passes.", atk: 2, def: 0, formAll: 0 },
+  { label: "\"Just don't embarrass us on live TV ah\"", note: "Mild threat, maximum kiasu energy.", effGood: "Disciplined, switched-on, no silly errors.", effBad: "Plays it safe, no ambition, dull stuff.", atk: -1, def: 1, formAll: 0 },
+];
+
+// dressing-room verdict fragments, combined for huge variety (rarely repeats)
+const VERDICT_BUILD = {
+  bigWin: { lead: ["Absolute scenes.", "Get the durians out.", "A statement, underlined twice.", "Pure Kallang euphoria.", "Textbook demolition."], tail: ["The opposition are still chasing shadows.", "Somewhere a pundit is choking on his kaya toast.", "The away end applauded, honestly.", "Frame this one and hang it in the void deck.", "Even the mascot was doing keepie-uppies."] },
+  win: { lead: ["A win's a win, lah.", "Job done, no fuss.", "Three imaginary points banked.", "Not pretty, but who cares.", "Grinded it out, uncle-style."], tail: ["Bank it and move on.", "Teh tarik football, went down a treat.", "We'll take it and say terima kasih.", "Efficient, like a hawker auntie at lunch rush.", "Nobody said it had to be art."] },
+  draw: { lead: ["Shared the spoils.", "A point apiece.", "Honours even.", "Can lah, okay lah.", "Stalemate by the river."], tail: ["Nobody's happy, nobody's crying. Very Singaporean.", "The footballing version of 'up to you'.", "Kopi-o without sugar: fine, missing something.", "We'll call it tactically mature and move on.", "A draw nobody will remember by supper."] },
+  loss: { lead: ["Not our day.", "Defeat, sigh.", "One to forget.", "Aiyoh.", "Came up short."], tail: ["Quick, blame the referee and the humidity.", "We do not talk about this at the kopitiam.", "Even the mascot looked embarrassed.", "File under 'character building', never mention again.", "The group chat will be very quiet tonight."] },
+  bigLoss: { lead: ["A hammering.", "Comprehensively schooled.", "That was rough.", "Outclassed, plain and simple.", "A long evening."], tail: ["Hide the newspapers from the lads tomorrow.", "The bus home will be deathly silent.", "Back to the drawing board, and a longer warm-up.", "We'll take the moral victory. There isn't one.", "Some nights you just bow and say well played."] },
+};
+
+// press conference: a question, three answers, each producing a funny headline for the end-screen scrapbook
+const PRESSERS = [
+  {
+    q: "Reporter: Coach, the fans want trophies. Your response?",
+    a: [
+      { label: "\"Trophies? I want my players to come back alive first.\"", headline: "GAFFER SETS BAR LOW, SURVIVAL OF SQUAD 'A WIN IN ITSELF'" },
+      { label: "\"We take it one kopi at a time.\"", headline: "COACH UNVEILS BOLD 'ONE KOPI AT A TIME' PHILOSOPHY" },
+      { label: "\"Manifesting it, bro. Speak it into existence.\"", headline: "MANAGER 'MANIFESTING' ASIAN CUP GLORY, FANS UNSURE" },
+    ],
+  },
+  {
+    q: "Reporter: Any message for our rivals across the Causeway?",
+    a: [
+      { label: "\"Malaysia who? Never heard of them.\"", headline: "LIONS BOSS CLAIMS TO HAVE 'NEVER HEARD OF' MALAYSIA" },
+      { label: "\"We respect them. From a safe distance.\"", headline: "COACH OFFERS RIVALS 'RESPECT FROM A SAFE DISTANCE'" },
+      { label: "\"Bring it on, lah.\"", headline: "'BRING IT ON LAH': GAFFER FANS CAUSEWAY FLAMES" },
+    ],
+  },
+  {
+    q: "Reporter: Your tactics confused everyone today. Care to explain?",
+    a: [
+      { label: "\"If you're confused, imagine the opponents.\"", headline: "COACH INSISTS CONFUSION 'WAS THE PLAN ALL ALONG'" },
+      { label: "\"It's called total football. Look it up.\"", headline: "MANAGER NAME-DROPS 'TOTAL FOOTBALL', PUNDITS BAFFLED" },
+      { label: "\"I also don't know, honestly.\"", headline: "REFRESHINGLY HONEST GAFFER ADMITS HE 'ALSO DON'T KNOW'" },
+    ],
+  },
+  {
+    q: "Reporter: One player keeps getting injured doing silly things. Worried?",
+    a: [
+      { label: "\"I've banned the TikTok dances. Mostly.\"", headline: "BOSS BANS DRESSING-ROOM TIKTOK AFTER INJURY EPIDEMIC" },
+      { label: "\"He's fragile like kaya toast. We protect him.\"", headline: "COACH LIKENS STAR TO 'KAYA TOAST', VOWS TO PROTECT HIM" },
+      { label: "\"Bubble wrap budget has been approved.\"", headline: "FAS REPORTEDLY APPROVES 'BUBBLE WRAP BUDGET' FOR SQUAD" },
+    ],
+  },
+  {
+    q: "Reporter: How do you handle the pressure of a nation's hopes?",
+    a: [
+      { label: "\"Pressure? I have three kids and a HDB loan.\"", headline: "GAFFER: 'REAL PRESSURE IS THE HDB LOAN, NOT FOOTBALL'" },
+      { label: "\"I just blast Dick Lee in the car.\"", headline: "COACH CREDITS DICK LEE PLAYLIST FOR INNER CALM" },
+      { label: "\"What pressure? We're already heroes for qualifying.\"", headline: "MANAGER DECLARES SQUAD 'ALREADY HEROES', LOWERS STAKES" },
+    ],
+  },
+  {
+    q: "Reporter: The youngsters look raw. Are they ready for this stage?",
+    a: [
+      { label: "\"They're babies. Talented babies, but babies.\"", headline: "COACH BRANDS PROMISING YOUTH 'TALENTED BABIES'" },
+      { label: "\"Raw is good. Raw fish is a delicacy, what.\"", headline: "GAFFER COMPARES RAW YOUNGSTERS TO SASHIMI, SOMEHOW" },
+      { label: "\"They'll learn, or they'll do NS. Their choice.\"", headline: "BOSS ISSUES YOUTH ULTIMATUM: 'LEARN OR ENLIST'" },
+    ],
+  },
+  {
+    q: "Reporter: Critics say the squad lacks experience. Fair?",
+    a: [
+      { label: "\"Experience is overrated. So is sleep.\"", headline: "COACH DECLARES EXPERIENCE 'OVERRATED, LIKE SLEEP'" },
+      { label: "\"We have plenty of experience. Of losing. Useful.\"", headline: "GAFFER FINDS SILVER LINING IN 'EXPERIENCE OF LOSING'" },
+      { label: "\"Ask me after we win. Then it's a masterstroke.\"", headline: "MANAGER PRE-BOOKS 'MASTERSTROKE' LABEL FOR LATER" },
+    ],
+  },
+  {
+    q: "Reporter: What's the secret to the team's recent form?",
+    a: [
+      { label: "\"Chicken rice. Lots of it. Don't overthink it.\"", headline: "COACH CREDITS FORM TO INDUSTRIAL CHICKEN RICE INTAKE" },
+      { label: "\"We train hard and lepak harder.\"", headline: "GAFFER'S 'TRAIN HARD, LEPAK HARDER' PHILOSOPHY GOES VIRAL" },
+      { label: "\"Honestly? Vibes. Pure vibes.\"", headline: "BOSS ATTRIBUTES WINNING RUN TO 'PURE VIBES'" },
+    ],
+  },
+  {
+    q: "Reporter: Heritage players or homegrown, which matters more?",
+    a: [
+      { label: "\"A Lion is a Lion. End of discussion.\"", headline: "COACH SHUTS DOWN HERITAGE DEBATE: 'A LION IS A LION'" },
+      { label: "\"I pick the best. The passport is admin.\"", headline: "GAFFER CALLS NATIONALITY ROW 'JUST ADMIN'" },
+      { label: "\"Whoever sings the anthem loudest, plays.\"", headline: "MANAGER'S SELECTION POLICY: 'LOUDEST ANTHEM SINGER PLAYS'" },
+    ],
+  },
+  {
+    q: "Reporter: The Asian Cup draw looks brutal. Thoughts?",
+    a: [
+      { label: "\"Good. Nobody remembers an easy group.\"", headline: "COACH WELCOMES 'GROUP OF DEATH', SHRUGS AT ODDS" },
+      { label: "\"We've survived the MRT at rush hour. We'll cope.\"", headline: "GAFFER: 'IF WE SURVIVE RUSH-HOUR MRT, WE SURVIVE ANYTHING'" },
+      { label: "\"Brutal? Have you queued for Bak Kut Teh on a Sunday?\"", headline: "BOSS DOWNPLAYS DRAW VERSUS 'SUNDAY BAK KUT TEH QUEUE'" },
+    ],
+  },
+  {
+    q: "Reporter: Fans are dreaming big. Are you managing expectations?",
+    a: [
+      { label: "\"Dream big, but bring an umbrella. Always.\"", headline: "COACH'S ADVICE TO DREAMERS: 'BRING AN UMBRELLA'" },
+      { label: "\"Let them dream. Dreams are free, parking isn't.\"", headline: "GAFFER: 'DREAMS ARE FREE, PARKING ISN'T'" },
+      { label: "\"Expectations? I expect lunch. Anything else is bonus.\"", headline: "MANAGER SETS ONLY EXPECTATION AS 'LUNCH'" },
+    ],
+  },
+  {
+    q: "Reporter: Any superstitions before a big match?",
+    a: [
+      { label: "\"Same kopi-o, same uncle, same seat. Non-negotiable.\"", headline: "COACH'S PRE-MATCH KOPI RITUAL REVEALED, FANS DELIGHTED" },
+      { label: "\"I don't do superstition. I do quietly panicking.\"", headline: "GAFFER ADMITS RITUAL IS 'QUIETLY PANICKING'" },
+      { label: "\"I wear lucky slippers under my shoes. Don't tell FAS.\"", headline: "BOSS CONFESSES TO SECRET 'LUCKY SLIPPERS', FAS UNAWARE" },
+    ],
+  },
+];
+
+function Tip({ text, children }) {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    if (!show) return;
+    const close = () => setShow(false);
+    const t = setTimeout(close, 4000);
+    document.addEventListener("click", close);
+    return () => { clearTimeout(t); document.removeEventListener("click", close); };
+  }, [show]);
+  function onTap(e) {
+    // don't hijack taps on actual controls (Court/Offer buttons) wrapped by the tip
+    if (e.target.closest("button")) return;
+    e.stopPropagation();
+    setShow((s) => !s);
+  }
+  return (
+    <span className={`tip ${show ? "show" : ""}`} onClick={onTap}>
+      {children}<span className="tiptext">{text}</span>
+    </span>
+  );
+}
+
+// ----- non-repeating pickers: cycle a pool without repeats until exhausted -----
+function makeCycler(pool) {
+  let bag = [];
+  return () => {
+    if (bag.length === 0) bag = [...pool].sort(() => Math.random() - 0.5);
+    return bag.pop();
+  };
+}
+
+// real, living Singapore football legends who can drop by as a mentor
+const LEGENDS = [
+  { n: "Fandi Ahmad", bio: "The most iconic name in Singapore football. 101 caps, a record 15 goals (since passed), and the first Singaporean to play in Europe with FC Groningen. A genuine national legend." },
+  { n: "V. Sundramoorthy", bio: "\"The Dazzler.\" A forward of dizzying flair and bicycle-kick brilliance, the second Singaporean to play in Europe, and later national team head coach." },
+  { n: "Malek Awab", bio: "Tireless midfield engine and former record cap-holder with 121 for the Lions. Backbone of the 1994 Malaysia Cup-winning side, now coaches kids in Kaki Bukit." },
+  { n: "Nazri Nasir", bio: "Combative midfield warrior and inspirational captain of the 1998 Tiger Cup-winning Lions. The heartbeat of a golden generation." },
+  { n: "Lim Tong Hai", bio: "Rock-solid centre-back and leader at the heart of Singapore's 1990s defence. A model professional of the Malaysia Cup glory years." },
+  { n: "Indra Sahdan", bio: "Prolific Lions striker of the 2000s and a two-time AFF Championship winner. One of the S-League era's deadliest finishers." },
+];
+
+// builds a short, varied newspaper-style match report from the result
+function makeMatchReport({ opp, og, ag, outcome, scorerLine, motm, tactic, causewayBonus }) {
+  const margin = Math.abs(og - ag);
+  const lead = (() => {
+    if (causewayBonus) return `The Causeway roared red and white as Singapore got the better of old rivals ${opp}.`;
+    if (outcome === "W" && margin >= 3) return `A statement performance. Singapore swept ${opp} aside with real authority.`;
+    if (outcome === "W" && margin === 2) return `A controlled, confident win for the Lions against ${opp}.`;
+    if (outcome === "W") return `Singapore edged a tight one past ${opp}, grinding out the result.`;
+    if (outcome === "D" && og >= 2) return `An entertaining share of the spoils as Singapore and ${opp} traded blows.`;
+    if (outcome === "D") return `A cagey, hard-fought stalemate between Singapore and ${opp}.`;
+    if (outcome === "L" && margin >= 3) return `A chastening afternoon for the Lions, outclassed by ${opp}.`;
+    if (outcome === "L" && margin === 2) return `${opp} had the edge, and Singapore couldn't quite respond.`;
+    return `Heartbreak by the odd goal as ${opp} nicked it against a battling Singapore.`;
+  })();
+  const mid = (() => {
+    if (outcome === "W") return scorerLine ? `${scorerLine} did the damage on the scoresheet.` : `The Lions found a way without their names headlining the goals.`;
+    if (outcome === "D") return scorerLine ? `${scorerLine} kept Singapore in it.` : `Chances came and went, but the net stayed unkind.`;
+    return scorerLine ? `${scorerLine} offered hope, but it wasn't enough.` : `The Lions huffed and puffed but couldn't break through.`;
+  })();
+  const tac = `Set up to ${tactic === "Front Foot" ? "press high and attack" : tactic === "Low Block" ? "sit deep and frustrate" : "stay balanced"}, the gaffer's plan ${outcome === "W" ? "paid off handsomely" : outcome === "D" ? "earned a point" : "didn't come off this time"}.`;
+  const motmLine = motm ? `${motm.n} was the standout, rated ${motm.rating.toFixed(1)} and named Man of the Match.` : "";
+  return { lead, mid, tac, motmLine };
+}
+
+// end-screen flavour: how the dressing room and the fans feel about your run
+const PLAYER_QUOTES_GOOD = [
+  "\"Gaffer's a genius. I'd run through a wall for him. Possibly literally, my ankles are wrecked.\" — a defender",
+  "\"He picked me when nobody else would. I'd name my firstborn after him if my wife allowed it.\" — a late call-up",
+  "\"Tactically? Unreal. Also he buys the kopi after training. National treasure.\" — a midfielder",
+  "\"I've played under big names. None of them got us THIS far. Respect, boss.\" — the captain",
+];
+const PLAYER_QUOTES_BAD = [
+  "\"Lovely bloke. Team selection? We do not talk about the team selection.\" — a benched striker",
+  "\"He told me to track back. I'm a goalkeeper. Make of that what you will.\" — a keeper",
+  "\"Great vibes in camp. Shame about the, you know, results.\" — a defender",
+  "\"I learned a lot this campaign. Mostly about how to lose narrowly.\" — a midfielder",
+];
+const FAN_QUOTES_GOOD = [
+  "The SingaBrigade have started a chant with your name in it. It does not rhyme, but the passion is real.",
+  "A hawker in Bedok renamed his laksa 'The Gaffer Special'. This is the highest honour the nation can bestow.",
+  "Fans are calling local radio demanding you get a statue outside Jalan Besar.",
+  "Your face is now on at least four unlicensed t-shirts at the Kallang night market. You've made it.",
+];
+const FAN_QUOTES_BAD = [
+  "The fan forums have opinions. Strong ones. In all caps. Maybe don't read the replies.",
+  "One supporter held up a banner reading 'WE STILL LOVE YOU (mostly)'. It's the thought that counts.",
+  "A radio caller said you 'tried your best, lah'. In Singapore, that's both a compliment and a sentence.",
+  "Ticket sales for the next campaign are described as 'cautiously optimistic'. So is the mood.",
+];
+const RUN_ADVICE = [
+  "Court your heritage targets early, declared (KEEN) players are far cheaper to land than the prestige names.",
+  "Play your young prospects in friendlies. High match ratings make them develop faster toward their ceiling.",
+  "Book the toughest friendlies you can survive, beating stronger sides launches you up the FIFA ladder.",
+  "Don't ignore club form on selection day, a hot squad player can outperform a bigger name who's cold.",
+  "Win the Causeway Challenge against Malaysia for that cheeky bonus boost when you need momentum.",
+  "Balance the squad, the 'where the squad needs help' box on the naturalisation page tells you where to spend.",
+];
+
+function App() {
+  const [screen, setScreen] = useState("intro");
+  const [w, setW] = useState(1);
+  const [pool, setPool] = useState([]);
+  const [targets, setTargets] = useState([]);
+  const [formation, setFormation] = useState("4-3-3");
+  const [lineup, setLineup] = useState({});   // slotIdx -> playerId
+  const [held, setHeld] = useState(null);
+  const [tactic, setTactic] = useState("Balanced");
+  const [results, setResults] = useState([]);
+  const [schedule, setSchedule] = useState([]);
+  const [baseline, setBaseline] = useState(0);
+  const [ranking, setRanking] = useState(148);
+  const [influence, setInfluence] = useState(INFLUENCE_START);
+  const [msg, setMsg] = useState("");
+  const [events, setEvents] = useState(null);
+  const [prophecy, setProphecy] = useState(null);
+  const [lastMatch, setLastMatch] = useState(null);
+  const [selected, setSelected] = useState(new Set()); // the 25-man squad chosen this window
+  const [hallOfFame, setHallOfFame] = useState([]);
+  const [savedRun, setSavedRun] = useState(false);
+  const [managerName, setManagerName] = useState("");
+  const [teamTalk, setTeamTalk] = useState(null); // chosen pre-match talk index
+  const [presser, setPresser] = useState(null); // {q, a:[...]} shown after a match
+  const [naturalisedMsg, setNaturalisedMsg] = useState(null); // Naomi Nadine welcome box
+  const [xiTally, setXiTally] = useState({ local: 0, heritage: 0 }); // cumulative XI starts by type
+  const [headlines, setHeadlines] = useState([]); // funny press headlines collected across the run
+  const [matchTalks, setMatchTalks] = useState([]); // the random subset of team talks shown this match
+  const [profilePlayer, setProfilePlayer] = useState(null); // selected player on Know Your Lions page
+  const [knowReturn, setKnowReturn] = useState("roar"); // where the Know Your Lions back button returns to
+  const [confirmRestart, setConfirmRestart] = useState(false);
+  const presserCycler = useRef(makeCycler(PRESSERS));
+  const funnyFactCycler = useRef(makeCycler(FUNNY_FACTS));
+  const SQUAD_MAX = 25;
+
+  const livePool = useMemo(() => pool.filter((p) => !p.retired), [pool]);
+  const squadPool = useMemo(() => livePool.filter((p) => selected.has(p.id)), [livePool, selected]);
+
+  // minimum players required per position group before a squad can be confirmed
+  const SQUAD_MINS = { GK: 2, DEF: 5, MID: 5, ATT: 3 };
+  const posBucket = posBucketG;
+  const squadCoverage = useMemo(() => {
+    const counts = { GK: 0, DEF: 0, MID: 0, ATT: 0 };
+    squadPool.forEach((p) => { counts[posBucket(p.pos)]++; });
+    const missing = [];
+    const LABEL = { GK: "goalkeeper", DEF: "defender", MID: "midfielder", ATT: "forward" };
+    Object.entries(SQUAD_MINS).forEach(([g, need]) => {
+      if (counts[g] < need) missing.push(`${need - counts[g]} more ${LABEL[g]}${need - counts[g] > 1 ? "s" : ""}`);
+    });
+    return { counts, missing, ok: missing.length === 0 };
+  }, [squadPool]);
+  // the best 50 players shown on the selection screen, with every position covered.
+  // club form is factored into the ranking so the 50 rotates as form shifts each turn.
+  const top50Pool = useMemo(() => {
+    if (livePool.length <= 50) return livePool;
+    const score = (p) => overall(p) + (p.clubForm || 0);
+    const bucket = posBucketG;
+    const minPer = { GK: 3, DEF: 8, MID: 8, ATT: 5 }; // guarantee coverage
+    const byGroup = { GK: [], DEF: [], MID: [], ATT: [] };
+    const ranked = [...livePool].sort((a, b) => score(b) - score(a)); // sort once, reuse
+    ranked.forEach((p) => byGroup[bucket(p.pos)].push(p));
+    const chosen = new Set();
+    Object.entries(minPer).forEach(([g, n]) => byGroup[g].slice(0, n).forEach((p) => chosen.add(p.id)));
+    // fill remaining slots up to 50 with the best leftover by score
+    ranked.forEach((p) => { if (chosen.size < 50) chosen.add(p.id); });
+    return livePool.filter((p) => chosen.has(p.id));
+  }, [livePool]);
+  // grade how much each position group needs reinforcing (fewer + weaker = more need)
+  const squadNeeds = useMemo(() => {
+    const groups = { GK: "Goalkeeper", DEF: "Defence", MID: "Midfield", ATT: "Attack" };
+    const bucket = posBucketG;
+    const ideal = { GK: 3, DEF: 8, MID: 7, ATT: 6 }; // healthy depth per group
+    const out = [];
+    for (const key of Object.keys(groups)) {
+      const players = livePool.filter((p) => bucket(p.pos) === key);
+      const count = players.length;
+      const ratings = players.map((p) => overall(p)).sort((a, b) => b - a);
+      const top = ratings.length ? ratings[0] : 0; // best player in the group
+      const topAvg = ratings.length ? avg(ratings.slice(0, ideal[key])) : 0;
+      // is there an uncommitted heritage target who would be the new best here?
+      const upgrade = targets
+        .filter((t) => t.status !== "committed" && bucket(t.pos) === key)
+        .map((t) => ({ n: t.n, ovr: overall(t) }))
+        .filter((t) => t.ovr > top)
+        .sort((a, b) => b.ovr - a.ovr)[0] || null;
+      const depthGap = Math.max(0, ideal[key] - count);
+      const qualGap = Math.max(0, 72 - topAvg);
+      const need = depthGap * 6 + qualGap;
+      out.push({ key, label: groups[key], count, top: Math.round(top), topAvg: Math.round(topAvg), need, upgrade });
+    }
+    return out.sort((a, b) => b.need - a.need);
+  }, [livePool, targets]);
+  const teamRating = useMemo(() => {
+    const sorted = [...livePool].map((p) => overall(p) + (p.form || 0)).sort((a, b) => b - a).slice(0, 11);
+    return Math.round(avg(sorted));
+  }, [livePool]);
+  const recentForm = useMemo(() => {
+    const last = results.slice(-4);
+    if (!last.length) return 0.5;
+    return avg(last.map((r) => (r.outcome === "W" ? 1 : r.outcome === "D" ? 0.5 : 0)));
+  }, [results]);
+  const friendliesPlayed = useMemo(() => results.filter((r) => r.type !== "qualifier").length, [results]);
+  const coachRecord = useMemo(() => {
+    const all = [...results];
+    return {
+      played: all.length,
+      won: all.filter((r) => r && r.outcome === "W").length,
+      drawn: all.filter((r) => r && r.outcome === "D").length,
+      lost: all.filter((r) => r && r.outcome === "L").length,
+    };
+  }, [results]);
+  const slots = FORMATIONS[formation];
+  const coords = COORDS[formation];
+  const fixture = schedule.find((s) => s.w === w);
+  const playerById = (id) => pool.find((p) => p.id === id);
+  const placed = useMemo(() => new Set(Object.values(lineup)), [lineup]);
+  const lineupCount = Object.keys(lineup).length;
+
+  function restartGame() {
+    setConfirmRestart(true);
+  }
+  function doRestart() {
+    setConfirmRestart(false);
+    setSavedRun(false); setManagerName(""); setProfilePlayer(null); setScreen("intro");
+  }
+
+  function start() {
+    UID = 1;
+    const p = REAL_POOL.map(makeReal);
+    const y = [makeProspect(), makeProspect()];
+    const all = [...p, ...y];
+    setPool(all);
+    setTargets(HERITAGE_TARGETS.map((t) => ({
+      ...t, id: UID++, pac: cap(t.pac), tec: cap(t.tec), phy: cap(t.phy), men: cap(t.men),
+      courting: 0, status: "open",
+    })));
+    setSchedule(BASE_SCHEDULE.map((s) => ({ ...s })));
+    setW(1); setResults([]); setLineup({}); setHeld(null); setFormation("4-3-3"); setTactic("Balanced");
+    setInfluence(INFLUENCE_START); setMsg(""); setEvents(null); setProphecy(null);
+    setHeadlines([]); setPresser(null); setTeamTalk(null); setNaturalisedMsg(null); setXiTally({ local: 0, heritage: 0 }); setMatchTalks([]);
+    presserCycler.current = makeCycler(PRESSERS);
+    funnyFactCycler.current = makeCycler(FUNNY_FACTS);
+    const startSorted = all.map((pl) => overall(pl)).sort((a, b) => b - a).slice(0, 11);
+    setBaseline(Math.round(avg(startSorted)));
+    setRanking(148);
+    // preselect the best 25 to start (player can change it on the selection screen)
+    setSelected(autoPick25(all));
+    setScreen("howto");
+  }
+
+  // pick the strongest 25 across positions (from the coaches' top-50 shortlist), skipping injured
+  // ----- persistent hall of fame (best managers by final ranking) -----
+  useEffect(() => { loadHallOfFame(); }, []);
+  async function loadHallOfFame() {
+    try {
+      const res = await window.storage.get("halloffame");
+      if (res && res.value) setHallOfFame(JSON.parse(res.value));
+    } catch (e) { /* no entries yet */ }
+  }
+  async function saveToHallOfFame(name) {
+    if (savedRun || !prophecy) return;
+    const entry = {
+      name: (name || "Anonymous Gaffer").slice(0, 24),
+      rank: prophecy.finalRank,
+      finish: prophecy.finishLabel,
+      climb: prophecy.climb,
+      date: new Date().toISOString().slice(0, 10),
+    };
+    let list = [];
+    try { const res = await window.storage.get("halloffame"); if (res && res.value) list = JSON.parse(res.value); } catch (e) {}
+    list.push(entry);
+    // best ranking first (lower number = better), then bigger climb
+    list.sort((a, b) => a.rank - b.rank || b.climb - a.climb);
+    list = list.slice(0, 10);
+    try { await window.storage.set("halloffame", JSON.stringify(list)); } catch (e) {}
+    setHallOfFame(list); setSavedRun(true);
+  }
+
+  function autoPick25(players) {
+    const live = players.filter((pl) => !pl.retired && (pl.injuredUntil || 0) <= w);
+    const shortlist = live.length <= 50 ? live : top50Pool.filter((pl) => (pl.injuredUntil || 0) <= w);
+    const sorted = [...shortlist].sort((a, b) => (overall(b) + (b.clubForm || 0)) - (overall(a) + (a.clubForm || 0)));
+    const chosen = new Set();
+    // first guarantee the position minimums so the squad is always valid
+    Object.entries(SQUAD_MINS).forEach(([g, need]) => {
+      let added = 0;
+      for (const pl of sorted) {
+        if (added >= need) break;
+        if (posBucket(pl.pos) === g && !chosen.has(pl.id)) { chosen.add(pl.id); added++; }
+      }
+    });
+    // then fill the rest with the best available up to the cap
+    for (const pl of sorted) { if (chosen.size >= SQUAD_MAX) break; chosen.add(pl.id); }
+    return chosen;
+  }
+
+  // ----- recruitment with limited influence + can fail -----
+  function targetChance(t) {
+    const ratingPull = clamp((teamRating - 55) * 1.4, -8, 22);
+    const formPull = (recentForm - 0.5) * 30;
+    const friendlyPull = Math.min(friendliesPlayed * 3.5, 21);
+    const courtPull = t.courting * 9;
+    const declaredBoost = t.declared ? 18 : 0;
+    const prestige = t.level === "Prem" ? -16 : t.level === "Championship" ? -8 : t.level === "Belgium 1" ? -6 : t.level === "SPL" ? 6 : 0;
+    return clamp(Math.round(14 + ratingPull + formPull + friendlyPull + courtPull + declaredBoost + prestige), 3, 96);
+  }
+  function court(t) {
+    if (influence <= 0) { setMsg("No Influence left this window. Win games to earn more, or wait for the next window."); return; }
+    // courting itself can fail (player snubs the approach)
+    const courtSuccess = ri(1, 100) <= 62 + t.courting * 6;
+    setInfluence((i) => i - 1);
+    if (courtSuccess) {
+      setTargets((cur) => cur.map((x) => x.id === t.id ? { ...x, courting: Math.min(x.courting + 1, 4) } : x));
+      setMsg(`Good meeting with ${t.n}. He's more receptive now (+1 courting). Influence left: ${influence - 1}.`);
+    } else {
+      setMsg(`${t.n}'s camp was lukewarm, the approach didn't land this time. Influence spent. Left: ${influence - 1}.`);
+    }
+  }
+  function makeOffer(t) {
+    if (influence <= 0) { setMsg("Making a formal offer costs 1 Influence and you have none left this window."); return; }
+    setInfluence((i) => i - 1);
+    const chance = targetChance(t);
+    const roll = ri(1, 100);
+    if (roll <= chance) {
+      const np = makeReal({ n: t.n, pos: t.pos, age: t.age, pac: t.pac, tec: t.tec, phy: t.phy, men: t.men, club: t.from, naturalised: true });
+      setPool((cur) => [...cur, np]);
+      setSelected((cur) => { if (cur.size >= SQUAD_MAX) return cur; const nx = new Set(cur); nx.add(np.id); return nx; });
+      setTargets((cur) => cur.map((x) => x.id === t.id ? { ...x, status: "joined" } : x));
+      setMsg(`🎉 ${t.n} commits to Singapore! (rolled ${roll} vs ${chance}%). He's in your selection pool, ready to be picked.`);
+      setNaturalisedMsg({ n: t.n, pos: t.pos, from: t.from, body: NATURALISATION_PROFILES[t.n] || NATURALISATION_GENERIC });
+    } else {
+      setTargets((cur) => cur.map((x) => x.id === t.id ? { ...x, status: "declined" } : x));
+      setMsg(`${t.n} says not yet (rolled ${roll} vs ${chance}%). Build a stronger case; he may reopen if you're winning.`);
+    }
+  }
+
+  // ----- XI placement -----
+  function tapPlayer(id) {
+    const p = playerById(id);
+    setHeld((h) => (h === id ? null : id));
+    setMsg("");
+  }
+  function tapSlot(idx) {
+    if (held == null) { setMsg("Tap a player below first, then tap a position to place him."); return; }
+    setLineup((cur) => {
+      const nx = { ...cur };
+      for (const k of Object.keys(nx)) if (nx[k] === held) delete nx[k]; // move if already placed
+      nx[idx] = held;
+      return nx;
+    });
+    setHeld(null);
+  }
+  function clearSlot(idx, e) { e && e.stopPropagation(); setLineup((cur) => { const nx = { ...cur }; delete nx[idx]; return nx; }); }
+  function autoFill() {
+    const avail = [...squadPool].sort((a, b) => overall(b) - overall(a));
+    const used = new Set(); const nx = {};
+    slots.forEach((role, idx) => {
+      let best = null, bs = -1;
+      avail.forEach((p) => { if (used.has(p.id)) return; const sc = (overall(p) + (p.form || 0)) * slotFit(p.pos, role); if (sc > bs) { bs = sc; best = p; } });
+      if (best) { nx[idx] = best.id; used.add(best.id); }
+    });
+    setLineup(nx); setHeld(null); setMsg("");
+  }
+
+  function play() {
+    if (!fixture || !fixture.opp) { setMsg("Pick a friendly opponent for this window first."); return; }
+    if (lineupCount < 11) { setMsg(`Fill all 11 positions first (${11 - lineupCount} to go).`); return; }
+    const oppStr = OPP[fixture.opp];
+    const xiList = slots.map((role, idx) => ({ role, p: playerById(lineup[idx]) })).filter((x) => x.p);
+    // tally XI composition by type (heritage = naturalised, local = everyone else)
+    const xiLocal = xiList.filter((x) => !x.p.naturalised).length;
+    const xiHeritage = xiList.filter((x) => x.p.naturalised).length;
+    setXiTally((t) => ({ local: t.local + xiLocal, heritage: t.heritage + xiHeritage }));
+    let sum = 0;
+    xiList.forEach(({ role, p }) => { sum += (overall(p) + (p.form || 0)) * slotFit(p.pos, role); });
+    let our = sum / 11;
+    const t = TACTICS[tactic];
+    let adj = 0;
+    if (tactic === "Low Block") adj = oppStr > our ? 4 : -2;
+    if (tactic === "Front Foot") adj = oppStr < our ? 4 : -5;
+    our += adj;
+
+    // pre-match team talk: each has an upside and a downside, resolved 50/50
+    let talkAtk = 0, talkDef = 0, talkResult = null;
+    if (teamTalk) {
+      const tt = teamTalk;
+      const good = Math.random() < 0.55; // slight edge to it working
+      if (good) { talkAtk = Math.max(0, tt.atk); talkDef = Math.max(0, tt.def); }
+      else { talkAtk = Math.min(0, tt.atk); talkDef = Math.min(0, tt.def); }
+      // formAll applies regardless (the rousing ones lift morale either way)
+      talkResult = { good, label: tt.label, effect: good ? tt.effGood : tt.effBad };
+    }
+
+    const diff = our - oppStr;
+    const og = clamp(Math.round(rnd(0, 2.3) + diff / 11 + t.atk * 0.3 + talkAtk * 0.4), 0, 6);
+    const ag = clamp(Math.round(rnd(0, 2.3) - diff / 11 - t.def * 0.3 - talkDef * 0.4), 0, 6);
+    const outcome = og > ag ? "W" : og < ag ? "L" : "D";
+
+    // --- assign goalscorers, weighted toward attackers ---
+    const scoreWeight = (p) => ({ ST: 10, RW: 6, LW: 6, AM: 6, CM: 3, RB: 1.5, LB: 1.5, DM: 1.5, CB: 1, GK: 0 }[p.pos] || 2);
+    const scorers = [];
+    const scorerFullNames = [];
+    const attackers = xiList.map((x) => x.p);
+    for (let i = 0; i < og; i++) {
+      const totalW = attackers.reduce((s, p) => s + scoreWeight(p), 0);
+      let r = rnd(0, totalW), chosen = attackers[0];
+      for (const p of attackers) { r -= scoreWeight(p); if (r <= 0) { chosen = p; break; } }
+      scorers.push(chosen.n.split(" ").slice(-1)[0]);
+      scorerFullNames.push(chosen.n);
+    }
+    // tally for display: "Ilhan x2, Shawal"
+    const tally = {};
+    scorers.forEach((n) => { tally[n] = (tally[n] || 0) + 1; });
+    const scorerLine = Object.entries(tally).map(([n, c]) => c > 1 ? `${n} ×${c}` : n).join(", ");
+    // pick a fun fact about one of the goalscorers (real if known, funny fallback otherwise)
+    let scorerFact = null;
+    if (scorerFullNames.length) {
+      const withReal = scorerFullNames.find((n) => playerFact(n));
+      const factName = withReal || pick(scorerFullNames);
+      const factText = playerFact(factName) || `${factName.split(" ").slice(-1)[0]} ${funnyFactCycler.current()}`;
+      scorerFact = { name: factName, text: factText };
+    }
+
+    // --- per-player match ratings (6.0-9.5), drive development ---
+    const matchRatings = {};
+    xiList.forEach(({ role, p }) => {
+      const fit = slotFit(p.pos, role);
+      let r = 6.5 + (outcome === "W" ? 0.6 : outcome === "D" ? 0 : -0.6);
+      r += (fit - 0.85) * 2;               // playing in position helps
+      r += rnd(-0.8, 0.9);                  // variance
+      if (scorers.includes(p.n.split(" ").slice(-1)[0])) r += 0.8; // scored
+      // GK / defenders rewarded for clean sheets
+      if ((p.pos === "GK" || p.pos === "CB") && ag === 0) r += 0.6;
+      matchRatings[p.id] = clamp(Math.round(r * 10) / 10, 5.0, 9.7);
+    });
+
+    const xiSet = new Set(Object.values(lineup));
+
+    // --- rare, funny injury (about 12% a match, only to someone who played) ---
+    let injury = null;
+    if (Math.random() < 0.12) {
+      const xiPlayers = [...xiSet].map((id) => playerById(id)).filter(Boolean);
+      const victim = pick(xiPlayers);
+      if (victim) {
+        const weeks = ri(1, 2);
+        injury = { id: victim.id, n: victim.n, pos: victim.pos, until: w + weeks, reason: pick(INJURY_REASONS), physio: pick(PHYSIO_NOTES) };
+      }
+    }
+
+    setPool((cur) => cur.map((p) => {
+      if (!xiSet.has(p.id)) return p;
+      const df = outcome === "W" ? ri(0, 3) : outcome === "D" ? ri(-1, 2) : ri(-3, 1);
+      const inj = injury && injury.id === p.id ? { injuredUntil: injury.until, injuryReason: injury.reason } : {};
+      return { ...p, form: clamp((p.form || 0) + df, -6, 8), caps: p.caps + 1, lastRating: matchRatings[p.id], ...inj };
+    }));
+
+    // --- FIFA ranking movement: beating stronger sides climbs faster ---
+    const gap = oppStr - our; // positive = opponent was stronger
+    let rankDelta = 0;
+    if (outcome === "W") {
+      // bigger jump the tougher the opponent; qualifiers and clear upsets jump hardest
+      rankDelta = -(2 + Math.max(0, Math.round(gap / 2)) + (fixture.type === "qualifier" ? 2 : 0));
+      if (gap >= 8) rankDelta -= 3; // statement upset bonus
+    } else if (outcome === "D") {
+      rankDelta = gap > 6 ? -2 : gap > 0 ? -1 : 0;
+    } else {
+      rankDelta = oppStr < our ? 3 : 1; // losing to weaker sides hurts more
+    }
+    // Causeway Challenge easter egg: beating Malaysia is worth a little extra
+    const causewayBonus = (fixture.opp === "Malaysia" && outcome === "W");
+    if (causewayBonus) rankDelta -= 2;
+    const newRanking = clamp(ranking + rankDelta, 1, 200);
+    setRanking(newRanking);
+
+    const infGain = (outcome === "W" ? 2 : outcome === "D" ? 1 : 0) + (causewayBonus ? 1 : 0);
+
+    // --- man of the match: highest match rating among the XI, gets a small form bonus ---
+    let motm = null;
+    const ratedEntries = Object.entries(matchRatings).map(([id, r]) => ({ p: playerById(Number(id)), r })).filter((x) => x.p);
+    if (ratedEntries.length) {
+      ratedEntries.sort((a, b) => b.r - a.r);
+      const top = ratedEntries[0];
+      motm = { id: top.p.id, n: top.p.n, pos: top.p.pos, rating: top.r };
+      setPool((cur) => cur.map((p) => p.id === top.p.id ? { ...p, form: clamp((p.form || 0) + 2, -6, 8) } : p));
+    }
+
+    // --- short auto-generated match report ---
+    const report = makeMatchReport({ opp: fixture.opp, og, ag, outcome, scorerLine, motm, tactic, causewayBonus });
+    const vmargin = Math.abs(og - ag);
+    const vkey = outcome === "W" ? (vmargin >= 3 ? "bigWin" : "win") : outcome === "D" ? "draw" : (vmargin >= 3 ? "bigLoss" : "loss");
+    const vb = VERDICT_BUILD[vkey];
+    const verdict = `${pick(vb.lead)} ${pick(vb.tail)}`;
+
+    setLastMatch({ w, opp: fixture.opp, type: fixture.type, og, ag, outcome, tactic, formation, infGain, scorerLine, rankBefore: ranking, rankAfter: newRanking, matchRatings, injury, causewayBonus, motm, report, talkResult, verdict, scorerFact });
+    setTeamTalk(null);
+    // press conference appears ~50% of matches, never repeating a question within a run
+    setPresser(Math.random() < 0.5 ? presserCycler.current() : null);
+    setScreen("matchresult");
+  }
+
+  function chooseFriendly(opp) {
+    setSchedule((cur) => cur.map((s) => s.w === w ? { ...s, opp, type: "friendly", note: "Self-arranged friendly (recruitment signal)" } : s));
+    if (opp === "Malaysia") {
+      setMsg("🔥 THE CAUSEWAY CHALLENGE! Singapore vs Malaysia is a must-win for Kallang Roar pride. Beat the old rivals and you'll get a small bonus boost (Influence + a bigger ranking jump). Don't you dare lose this one.");
+    } else {
+      setMsg(`Friendly vs ${opp} booked. Heritage targets are watching your ambition.`);
+    }
+  }
+
+  function toggleSelect(id) {
+    setSelected((cur) => {
+      const nx = new Set(cur);
+      if (nx.has(id)) nx.delete(id);
+      else { if (nx.size >= SQUAD_MAX) { setMsg(`Squad is full at ${SQUAD_MAX}. Drop someone first.`); return nx; } nx.add(id); }
+      return nx;
+    });
+  }
+
+  function confirmSquad() {
+    if (selected.size === 0 || selected.size > SQUAD_MAX) return;
+    if (!squadCoverage.ok) { setMsg(`Your squad needs ${squadCoverage.missing.join(", ")} before you can confirm.`); return; }
+    // fresh random set of 5 team talks for this match, so the hub never looks identical
+    setMatchTalks([...TEAM_TALKS].sort(() => Math.random() - 0.5).slice(0, 5));
+    // clear any XI placements for players not in the 25
+    setLineup((cur) => { const nx = {}; for (const k of Object.keys(cur)) if (selected.has(cur[k])) nx[k] = cur[k]; return nx; });
+    setHeld(null); setMsg("");
+    setScreen("hub");
+  }
+
+  function advance() {
+    // record result now
+    setResults((r) => [...r, lastMatch]);
+    if (w >= TOTAL_WINDOWS) { buildProphecy(); setScreen("prophecy"); return; }
+
+    const retired = [], devNews = [], intakeNews = [];
+    let next = pool.map((p) => {
+      if (p.retired) return p;
+      let np = { ...p, age: p.age + (w % 2 === 0 ? 1 : 0) };
+      // match-rating multiplier: a 7.0 is neutral, higher accelerates growth, lower stalls it
+      const perfMult = p.lastRating ? clamp(0.5 + (p.lastRating - 7.0) * 0.4, 0.3, 1.8) : 1;
+      if (p.youth) {
+        const before = overall(p);
+        const gap = p._ceiling - before;
+        let g = 0;
+        if (p._devType === "fast") g = gap * rnd(0.22, 0.4);
+        else if (p._devType === "steady") g = gap * rnd(0.1, 0.22);
+        else if (p._devType === "late") g = w > 7 ? gap * rnd(0.18, 0.34) : gap * rnd(0.02, 0.07);
+        else g = gap * rnd(-0.04, 0.07); // bust
+        g *= perfMult; // playing well speeds development, warming the bench slows it
+        np.pac = cap(np.pac + g * 0.9 + ri(-1, 1));
+        np.tec = cap(np.tec + g * 1.0 + ri(-1, 1));
+        np.phy = cap(np.phy + g * 0.9 + ri(-1, 1));
+        np.men = cap(np.men + g * 1.1 + ri(-1, 1));
+        np.growthArrow = overall(np) - before;
+        if (Math.abs(g) > 3) devNews.push({ n: np.n, up: g > 0, ovr: overall(np), bust: p._devType === "bust" && g <= 0 });
+      } else if (p.lastRating && p.lastRating >= 7.6 && p.age < 31 && overall(p) < 84) {
+        // in-form senior players sharpen slightly (peak years only)
+        const before = overall(p);
+        np.tec = cap(np.tec + 1); np.men = cap(np.men + 1);
+        np.growthArrow = overall(np) - before;
+        if (np.growthArrow > 0) devNews.push({ n: np.n, up: true, ovr: overall(np), bust: false });
+      } else {
+        np.growthArrow = 0;
+      }
+      np.lastRating = undefined; // consumed
+      const rc = np.age >= 40 ? 0.5 : np.age >= 36 ? 0.22 : np.age >= 34 ? 0.08 : 0;
+      if (!np.youth && Math.random() < rc) {
+        np.retired = true;
+        retired.push({ n: np.n, age: np.age, caps: np.caps, pos: np.pos, bio: BIOS[np.n] || GENERIC_BIO, job: pick(COOL_JOBS), fact: playerFact(np.n) || `${np.n.split(" ").slice(-1)[0]} ${funnyFactCycler.current()}` });
+      }
+      return np;
+    });
+    // simulate each player's club form for the upcoming window (drives selection arrows)
+    next = next.map((p) => {
+      if (p.retired) return p;
+      const drift = ri(-3, 3) + (p.youth ? 1 : 0); // youngsters trend up at club level
+      const cf = clamp((p.clubForm || 0) * 0.4 + drift, -6, 7);
+      return { ...p, clubForm: Math.round(cf), prevClubForm: p.clubForm || 0 };
+    });
+    const havePros = new Set(next.filter((p) => !p.retired).map((p) => p.n));
+    const intake = [];
+    let guard = 0;
+    while (intake.length < ri(2, 3) && guard < 40) {
+      guard++;
+      const cand = makeProspect();
+      if (havePros.has(cand.n) || intake.find((x) => x.n === cand.n)) continue;
+      havePros.add(cand.n); intake.push(cand);
+      intakeNews.push({ n: cand.n, pos: cand.pos, age: cand.age, ovr: overall(cand), ceil: cand._ceiling });
+    }
+    next = [...next, ...intake];
+
+    setTargets((cur) => cur.map((t) => t.status === "declined" && recentForm > 0.6 && Math.random() < 0.5 ? { ...t, status: "open" } : t));
+
+    // legend mentor visit (~22%): a Singapore great drops by, lifts the whole squad a touch
+    let legendVisit = null;
+    if (Math.random() < 0.22) {
+      const L = pick(LEGENDS);
+      legendVisit = { n: L.n, bio: L.bio };
+      next = next.map((p) => p.retired ? p : { ...p, form: clamp((p.form || 0) + 1, -6, 8) });
+    }
+
+    // clear retired/placed from lineup
+    const live = new Set(next.filter((p) => !p.retired).map((p) => p.id));
+    setLineup((cur) => { const nx = {}; for (const k of Object.keys(cur)) if (live.has(cur[k])) nx[k] = cur[k]; return nx; });
+
+    // roll a side event; if it's the MRT breakdown, a random available player misses the next match
+    const sideEvent = Math.random() < 0.7 ? pick(SIDE_EVENTS) : null;
+    if (sideEvent && sideEvent.missPlayer) {
+      const available = next.filter((p) => !p.retired && (p.injuredUntil || 0) <= w + 1);
+      const unlucky = pick(available);
+      if (unlucky) {
+        sideEvent.missName = unlucky.n;
+        next = next.map((p) => p.id === unlucky.id ? { ...p, injuredUntil: w + 2, injuryReason: "was stranded by the MRT breakdown" } : p);
+      }
+    }
+
+    setPool(next);
+    setEvents({ retired, devNews, intakeNews, sideEvent, legendVisit });
+    setInfluence(INFLUENCE_START + ((lastMatch && lastMatch.infGain) || 0)); // refill + win bonus
+    setHeld(null); setMsg("");
+    setW(w + 1);
+    setScreen("windownews");
+  }
+
+  function buildProphecy() {
+    const finalR = teamRating;
+    const climb = finalR - baseline;
+    const climbPct = baseline ? Math.round((climb / baseline) * 100) : 0;
+    const heritageJoined = pool.filter((p) => p.naturalised && !REAL_POOL.find((r) => r.n === p.n)).length;
+    const youthBreakout = pool.filter((p) => p.youth && !p.retired && overall(p) >= 70).length;
+    const wins = [...results, lastMatch].filter((r) => r && r.outcome === "W").length;
+
+    // strength lookup: Singapore uses YOUR built rating; everyone else their real-anchored rating
+    const strOf = (team) => (team === "Singapore" ? finalR : (OPP[team] != null ? OPP[team] : 65));
+    // sim one match, returns {og, ag} from teamA's perspective; knockout forces a winner
+    function sim(a, b, knockout) {
+      const diff = strOf(a) - strOf(b);
+      let ag = clamp(Math.round(rnd(0, 2.1) + diff / 13), 0, 5);
+      let bg = clamp(Math.round(rnd(0, 2.1) - diff / 13), 0, 5);
+      if (knockout && ag === bg) {
+        // extra time / pens nudge toward the stronger side but leave room for an upset
+        if (rnd(0, 1) < clamp(0.5 + diff / 30, 0.15, 0.85)) ag += 1; else bg += 1;
+      }
+      return { ag, bg };
+    }
+
+    // --- Group D: Singapore's real group ---
+    const groupRivals = ASIAN_CUP_GROUPS.D.filter((t) => t !== "Singapore"); // Australia, Tajikistan, Iraq
+    const games = groupRivals.map((opp) => {
+      const { ag, bg } = sim("Singapore", opp, false);
+      const res = ag > bg ? "W" : ag < bg ? "L" : "D";
+      return { opp, og: ag, ag: bg, res, pts: res === "W" ? 3 : res === "D" ? 1 : 0 };
+    });
+    const pts = games.reduce((s, g) => s + g.pts, 0);
+    const gd = games.reduce((s, g) => s + (g.og - g.ag), 0);
+    const gf = games.reduce((s, g) => s + g.og, 0);
+
+    // simple model of the rivals' own mini-table to place Singapore 1st-4th
+    // approximate each rival's expected points from their strength vs the group
+    const groupTeams = ASIAN_CUP_GROUPS.D.map((t) => {
+      if (t === "Singapore") return { t, pts, gd, gf };
+      // rival expected points: sim them vs the other two non-SG teams + their result vs us (inverse)
+      let rp = 0, rgd = 0, rgf = 0;
+      ASIAN_CUP_GROUPS.D.forEach((o) => {
+        if (o === t) return;
+        if (o === "Singapore") {
+          const ours = games.find((g) => g.opp === t);
+          const r = ours.res === "W" ? "L" : ours.res === "L" ? "W" : "D";
+          rp += r === "W" ? 3 : r === "D" ? 1 : 0; rgd += ours.ag - ours.og; rgf += ours.ag;
+        } else {
+          const { ag, bg } = sim(t, o, false);
+          rp += ag > bg ? 3 : ag === bg ? 1 : 0; rgd += ag - bg; rgf += ag;
+        }
+      });
+      return { t, pts: rp, gd: rgd, gf: rgf };
+    });
+    groupTeams.sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf);
+    const placeIdx = groupTeams.findIndex((x) => x.t === "Singapore");
+    const placing = ["1st", "2nd", "3rd", "4th"][placeIdx];
+
+    // advancement: top 2 always; 3rd qualifies as one of 4 best thirds (~60% if competitive)
+    let advanced = false, bestThird = false;
+    if (placeIdx <= 1) advanced = true;
+    else if (placeIdx === 2) { bestThird = pts >= 4 || (pts === 3 && gd >= 0); advanced = bestThird; }
+
+    // --- knockout run (only if advanced) ---
+    const knockout = [];
+    let alive = advanced, roundsWon = 0;
+    if (advanced) {
+      // plausible real opponents by round, scaling in difficulty
+      const ko = [
+        { round: "Round of 16", opp: placeIdx === 0 ? "Vietnam" : "South Korea" },
+        { round: "Quarter-final", opp: "Iran" },
+        { round: "Semi-final", opp: "Saudi Arabia" },
+        { round: "Final", opp: "Japan" },
+      ];
+      for (const tie of ko) {
+        if (!alive) break;
+        const { ag, bg } = sim("Singapore", tie.opp, true);
+        const win = ag > bg;
+        knockout.push({ ...tie, og: ag, ag: bg, win });
+        if (win) roundsWon++; else { alive = false; }
+      }
+    }
+
+    // headline based on how deep the run went
+    let headline, tone, finishLabel;
+    const wonFinal = knockout.length === 4 && knockout[3].win;
+    if (wonFinal) { headline = "CHAMPIONS OF ASIA"; finishLabel = "Winners"; tone = "Do not adjust your screen. Singapore, ranked outside the world's top 140 a year ago, are CHAMPIONS OF ASIA. The single greatest story in the history of the Asian game. Gavin Lee has built a miracle."; }
+    else if (knockout.length === 4) { headline = "RUNNERS-UP — UNTHINKABLE"; finishLabel = "Final"; tone = "Singapore reached the final of the Asian Cup. Beaten at the last, but a fairytale beyond anyone's wildest dreams. A nation will never forget this team."; }
+    else if (roundsWon >= 2) { headline = "INTO THE SEMI-FINALS"; finishLabel = "Semi-final"; tone = "The Lions roared into the last four of Asia. Pure history, the kind of run that rewrites what a small footballing nation believes is possible."; }
+    else if (roundsWon === 1) { headline = "QUARTER-FINAL HEROES"; finishLabel = "Quarter-final"; tone = "A knockout win and a place in the last eight of the continent. Singapore announced themselves on the biggest stage."; }
+    else if (advanced) { headline = "THROUGH THE GROUP — HISTORY MADE"; finishLabel = "Round of 16"; tone = "Out of a group with Australia and Iraq, Singapore reached the Asian Cup knockouts for the first time ever. The bus home will be loud."; }
+    else if (pts >= 3) { headline = "PROUD BUT EDGED OUT"; finishLabel = "Group stage"; tone = "Real points against a brutal group, but the Lions bow out at the first stage with their heads held very high."; }
+    else if (pts >= 1) { headline = "A POINT TO BUILD ON"; finishLabel = "Group stage"; tone = "Outgunned by Australia, Iraq and a tricky Tajikistan, but the Lions never stopped competing and took something home."; }
+    else { headline = "THE EDUCATION OF A NATION"; finishLabel = "Group stage"; tone = "Three hard lessons against elite opposition. No points, but priceless experience for a young core."; }
+
+    setProphecy({
+      finalR, baseline, climb, climbPct, heritageJoined, youthBreakout, wins,
+      groupName: "D", groupRivals, games, pts, gd, placing, advanced, bestThird,
+      knockout, finishLabel, headline, tone, groupTable: groupTeams,
+      finalRank: ranking,
+    });
+  }
+
+  // ================= RENDER =================
+  return (
+    <div className="wrap">
+      <style>{css}</style>
+
+      {confirmRestart && (
+        <div className="modalback" onClick={() => setConfirmRestart(false)}>
+          <div className="modalbox" onClick={(e) => e.stopPropagation()}>
+            <div className="modalttl">Restart the game?</div>
+            <p className="modaltxt">Your current run will be lost and you'll head back to the start.</p>
+            <div className="modalbtns">
+              <button className="modalcancel" onClick={() => setConfirmRestart(false)}>Keep playing</button>
+              <button className="modalconfirm" onClick={doRestart}>Restart</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {screen === "intro" && (
+        <div className="screen intro">
+          <div className="monogram flag"><span>🇸🇬</span><div className="mline" /></div>
+          <div className="kicker">10 TURNS</div>
+          <h1>Lions<span> Rising</span></h1>
+          <p className="tagline">A mini football manager game celebrating Singapore's maiden Asian Cup qualification.</p>
+          <p className="lede">You are Singapore's new coach. <strong>10 turns</strong> to build the Lions before their first <strong>Asian Cup</strong>. Pick, recruit, win, and see how far you can take them.</p>
+          <p className="ledesub">A quick take on Football Manager, inspired by 38and0 with a local twist.</p>
+          <div className="goalshd">Your mission</div>
+          <div className="pillars">
+            <div className="pillar"><span className="pnum">01</span><b>How far can you take the Lions?</b><p>Lift Singapore's rating and ranking as high as you can before the Asian Cup kicks off.</p></div>
+            <div className="pillar"><span className="pnum">02</span><b>Naturalisation route or local route?</b><p>Chase heritage stars from abroad, build through homegrown talent, or blend both. Your call.</p></div>
+            <div className="pillar"><span className="pnum">03</span><b>Know our boys better</b><p>Real Singapore players, real clubs. Get to know the squad as you pick, develop and lead them.</p></div>
+          </div>
+          <button className="bigbtn" onClick={start}>Begin the road →</button>
+          <button className="bigbtn knowbtn" onClick={() => { setProfilePlayer(null); setKnowReturn("intro"); setScreen("knowlions"); }}>Know Your Lions</button>
+          <p className="foot">All events are fictional. I hope as f*** we go as far as we can. Make us proud, boys!</p>
+        </div>
+      )}
+
+      {screen === "howto" && (
+        <div className="screen">
+          <div className="httag">Before you kick off</div>
+          <h2 className="htttl">The 30-second team talk</h2>
+          <p className="htintro">No manuals, lah. Here's everything you need, then we play.</p>
+
+          <div className="htcard">
+            <div className="htnum">1</div>
+            <div><b>The objective</b><p>You have 10 turns before the Asian Cup. Each turn: build your squad, play a match, climb the FIFA ranking. Get the Lions as high as you can, then survive the tournament. No pressure. Okay, a little pressure.</p></div>
+          </div>
+
+          <div className="htcard">
+            <div className="htnum">2</div>
+            <div><b>Naturalisation & heritage</b><p>First stop each turn. Real players with Singaporean roots (think Perry Ng at Cardiff) can be courted using Influence. Spend it to convince them to wear the Lion. They might say yes, they might ghost you. Quality costs more.</p></div>
+          </div>
+
+          <div className="htcard">
+            <div className="htnum">3</div>
+            <div><b>The 25-man selection</b><p>Your coaches shortlist the best 50, you trim to 25. You must cover every position (min 2 GK, 5 DEF, 5 MID, 3 ATT) or you can't confirm. Injured or stranded players are greyed out. Tap "Best 25" if you trust the staff.</p></div>
+          </div>
+
+          <div className="htcard">
+            <div className="htnum">4</div>
+            <div><b>Formation, XI & tactics</b><p>Pick a shape (4-3-3, 4-4-2, etc), fill your 11, and choose a tactic from Park the Bus to All-Out Attack. Then a team talk: every option can fire them up or backfire spectacularly. Choose your kopitiam wisdom wisely.</p></div>
+          </div>
+
+          <div className="htcard">
+            <div className="htnum">5</div>
+            <div><b>Then just play</b><p>Watch the match, read the tabloid headlines, handle the press, ride the chaos. Win or lose, you move to the next turn. After turn 10, the Asian Cup awaits. Majulah!</p></div>
+          </div>
+
+          <button className="bigbtn" onClick={() => setScreen("eligibility")}>Got it, let's go →</button>
+          <button className="bigbtn knowbtn" onClick={() => { setProfilePlayer(null); setKnowReturn("howto"); setScreen("knowlions"); }}>Know Your Lions first</button>
+        </div>
+      )}
+
+      {screen === "eligibility" && (
+        <div className="screen">
+          <TopBar w={w} teamRating={teamRating} baseline={baseline} influence={influence} ranking={ranking} onRestart={restartGame} />
+          {fixture && (
+            <div className={`fixture ${fixture.type}`}>
+              <div className="fxlabel">{fixture.type === "qualifier" ? "Competitive" : "Friendly"} · Turn {w}</div>
+              {fixture.opp ? (
+                <div className="fxmain">{FLAG[fixture.opp]} Singapore vs {fixture.opp} <span className="oppstr">world rank {wrank(fixture.opp) || "n/a"}</span></div>
+              ) : (
+                <div className="fxchoose">
+                  <div className="fxmain dim">Pick an opponent for a friendly match - Turn {w} (booking a game signals ambition to your naturalisation targets, win and they might change their minds easier):</div>
+                  <div className="fxopts">{FRIENDLY_OPTIONS.map((o) => <button key={o} className="fxopt" onClick={() => chooseFriendly(o)}>{FLAG[o]} {o} <i>{wrank(o)}</i></button>)}</div>
+                </div>
+              )}
+              {fixture.note && <div className="fxnote">{fixture.note}</div>}
+            </div>
+          )}
+          {msg && <div className="msg">{msg}</div>}
+
+          {naturalisedMsg && (
+            <div className="natmsg">
+              <div className="natmsghd">
+                <span className="natavatar">NN</span>
+                <div>
+                  <div className="natfrom">Message from Naomi Nadine</div>
+                  <div className="natrole">National Team Manager</div>
+                </div>
+              </div>
+              <p className="natwelcome">Welcome aboard, <b>{naturalisedMsg.n}</b> ({naturalisedMsg.pos}, from {naturalisedMsg.from}). 🇸🇬</p>
+              <p className="natbody">{naturalisedMsg.body}</p>
+              <button className="natdismiss" onClick={() => setNaturalisedMsg(null)}>Thanks, boss ✓</button>
+            </div>
+          )}
+
+          <div className="section">
+            <div className="needsbox">
+              <div className="needshd">Squad strength by position</div>
+              <div className="needsrow">
+                {squadNeeds.map((n) => (
+                  <div key={n.key} className={`needcell ${n.upgrade ? "upgr" : ""}`}>
+                    <div className="needtop">
+                      <span className="needpos">{n.label}</span>
+                      <span className="needrating">{n.top}</span>
+                    </div>
+                    <span className="needmeta">{n.count} players in pool</span>
+                    {n.upgrade
+                      ? <span className="needup">↑ {n.upgrade.n} ({n.upgrade.ovr}) would upgrade this</span>
+                      : <span className="needok">Solid, no upgrade available</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <h3>Naturalisation efforts <span className="infpill">Influence {influence}/{INFLUENCE_START}{(lastMatch && lastMatch.infGain) ? ` (+${lastMatch.infGain} win bonus)` : ""}</span>
+              <Tip text="Each Court or Offer costs 1 Influence. You get a fresh allowance each window, plus bonus Influence for winning. Players who commit here drop straight into your selection pool."><span className="iglyph">How it works ⓘ</span></Tip></h3>
+            <p className="screenintro">Spend Influence chasing eligible heritage players. Anyone who commits joins your selection pool on the next screen.</p>
+            <div className="targets">
+              {(() => {
+                const bucket = (pos) => pos === "GK" ? 0 : ["RB", "LB", "CB"].includes(pos) ? 1 : ["DM", "CM", "AM"].includes(pos) ? 2 : 3;
+                const GROUP_LABEL = ["Goalkeepers", "Defenders", "Midfielders", "Forwards"];
+                const sorted = [...targets].sort((a, b) => (POS_RANK[a.pos] != null ? POS_RANK[a.pos] : 99) - (POS_RANK[b.pos] != null ? POS_RANK[b.pos] : 99));
+                // best still-gettable target in each group (highest overall, not yet joined/declined)
+                const bestPerGroup = {};
+                targets.forEach((t) => {
+                  if (t.status === "joined" || t.status === "declined") return;
+                  const b = bucket(t.pos);
+                  if (!bestPerGroup[b] || overall(t) > overall(bestPerGroup[b])) bestPerGroup[b] = t;
+                });
+                let lastBucket = -1;
+                const out = [];
+                sorted.forEach((t) => {
+                  const b = bucket(t.pos);
+                  if (b !== lastBucket) { out.push(<div key={`hdr-${b}`} className="tgrouphd">{GROUP_LABEL[b]}</div>); lastBucket = b; }
+                  const isBest = bestPerGroup[b] && bestPerGroup[b].id === t.id;
+                  const chance = targetChance(t);
+                  out.push(
+                    <div key={t.id} className={`tcard ${t.status} ${isBest ? "best" : ""}`}>
+                      <div className="trow">
+                        <div className="tnamewrap">
+                          <span className="tn">{t.n}</span>
+                          <div className="ttags">{t.declared && <em className="dectag">Keen</em>}{isBest && <em className="besttag">Top pick</em>}</div>
+                        </div>
+                        <span className="tovr">{overall(t)}</span>
+                      </div>
+                      <div className="tmeta">{t.pos} · {t.age}y · {t.from} <span className="lvl">{t.level}</span></div>
+                      <p className="tnote">{t.note}</p>
+                      {t.status === "open" && (
+                        <>
+                          <div className="chancewrap">
+                            <div className="chancelabel"><span>Chance to commit</span><b>{chance}%</b></div>
+                            <div className="chancebar"><div className="chancefill" style={{ width: `${chance}%` }} /></div>
+                          </div>
+                          <div className="tbtns">
+                            <Tip text="Costs 1 Influence. Builds his interest over time, nudging his odds up one step each time (max 4). Patient route.">
+                              <button className="court" disabled={influence <= 0} onClick={() => court(t)}>
+                                <span className="btnlabel">Court</span>
+                                <span className="btnsub">1⚡ · {t.courting}/4</span>
+                              </button></Tip>
+                            <Tip text="Costs 1 Influence. Rolls the dice at the current %. Win and he joins on the spot; lose and he may reopen later.">
+                              <button className="offer" disabled={influence <= 0} onClick={() => makeOffer(t)}>
+                                <span className="btnlabel">Make offer</span>
+                                <span className="btnsub">1⚡ · gamble</span>
+                              </button></Tip>
+                          </div>
+                        </>
+                      )}
+                      {t.status === "joined" && <div className="tstatus joined">Committed, now in your selection pool</div>}
+                      {t.status === "declined" && <div className="tstatus declined">Declined for now (may reopen if you keep winning)</div>}
+                    </div>
+                  );
+                });
+                return out;
+              })()}
+            </div>
+          </div>
+          <button className="bigbtn" onClick={() => { setNaturalisedMsg(null); setSelected(autoPick25(pool)); setScreen("selection"); }}>To squad selection →</button>
+        </div>
+      )}
+
+      {screen === "selection" && (
+        <div className="screen">
+          <TopBar w={w} teamRating={teamRating} baseline={baseline} influence={influence} ranking={ranking} onRestart={restartGame} />
+          <div className="sechead">
+            <h3>Pick your squad <span className={`xicount ${selected.size > SQUAD_MAX ? "over" : ""}`}>{selected.size}/{SQUAD_MAX}</span>
+              <Tip text="Tap to add or drop a player. Max 25. Club form (green up / red down) is simulated each turn and nudges match performance. Only these 25 are available to pick your XI from."><span className="iglyph">how ⓘ</span></Tip></h3>
+            <div className="setupctrls">
+              <Tip text="Auto-pick the strongest 25 across all positions by current ability and club form."><button className="autobtn" onClick={() => setSelected(autoPick25(pool))}>Best 25</button></Tip>
+            </div>
+          </div>
+          <p className="screenintro">Your coaches have pre-selected the strongest 50 (every position covered) based on current club form. Sorted by position, pick your 25 for this turn. Form arrows show how each player is doing at his club right now.</p>
+          {fixture && fixture.opp && (
+            <div className="oppbanner">
+              <div className="oppbannertop">
+                <span className="oppflag">{FLAG[fixture.opp]}</span>
+                <div className="oppinfo">
+                  <div className="opplabel">Next up{fixture.type === "qualifier" ? " (competitive)" : " (friendly)"}</div>
+                  <div className="oppname">Singapore vs {fixture.opp}</div>
+                </div>
+                <div className="opprank"><span>World rank</span><b>{wrank(fixture.opp) || "n/a"}</b></div>
+              </div>
+              {COUNTRY_FACTS[fixture.opp] && <p className="oppfact">{COUNTRY_FACTS[fixture.opp]}</p>}
+            </div>
+          )}
+          <div className="plist selectlist">
+            {(() => {
+              const GROUP_LABEL = ["Goalkeepers", "Defenders", "Midfielders", "Forwards"];
+              const sorted = [...top50Pool].sort((a, b) => (POS_RANK[a.pos] - POS_RANK[b.pos]) || ((overall(b) + (b.clubForm || 0)) - (overall(a) + (a.clubForm || 0))));
+              let lastGroup = -1;
+              const rows = [];
+              sorted.forEach((p) => {
+                const g = POS_ORDER[p.pos];
+                if (g !== lastGroup) { rows.push(<div key={`h${g}`} className="grouphead">{GROUP_LABEL[g]}</div>); lastGroup = g; }
+                const isSel = selected.has(p.id);
+                const cf = p.clubForm || 0;
+                const injured = (p.injuredUntil || 0) > w;
+                rows.push(
+                  <div key={p.id} className={`prow selrow ${isSel ? "sel" : ""} ${p.youth ? "yth" : ""} ${p.naturalised ? "nat" : ""} ${injured ? "injured" : ""}`} onClick={() => !injured && toggleSelect(p.id)}>
+                    <span className="selbox">{injured ? "✚" : isSel ? "✓" : "+"}</span>
+                    <span className="ppos">{p.pos}</span>
+                    <span className="pn">{p.naturalised && "🛂 "}{p.n}{p.captain && " ©"}{p.hero && " ⭐"}<i className="pcl">{injured ? `${p.injuryReason && p.injuryReason.includes("MRT") ? "🚇 stranded" : "🤕 injured"} (back Turn ${p.injuredUntil})` : p.youth ? `prospect · ${p.age}y` : `${p.club} · ${p.age}y`}</i></span>
+                    <span className="pe">{overall(p)}</span>
+                    <span className={`cf ${cf > 0 ? "up" : cf < 0 ? "down" : "flat"}`}>{cf > 0 ? `▲${cf}` : cf < 0 ? `▼${-cf}` : "–"}</span>
+                  </div>
+                );
+              });
+              return rows;
+            })()}
+          </div>
+          {selected.size > SQUAD_MAX && <div className="msg warn">Too many selected. Drop {selected.size - SQUAD_MAX} to continue.</div>}
+          {selected.size <= SQUAD_MAX && !squadCoverage.ok && (
+            <div className="msg warn">Squad needs {squadCoverage.missing.join(", ")} (min {SQUAD_MINS.GK} GK, {SQUAD_MINS.DEF} DEF, {SQUAD_MINS.MID} MID, {SQUAD_MINS.ATT} ATT).</div>
+          )}
+          <button className="bigbtn" disabled={selected.size === 0 || selected.size > SQUAD_MAX || !squadCoverage.ok} onClick={confirmSquad}>
+            {!squadCoverage.ok ? "Cover every position to continue" : `Confirm ${selected.size}-man squad →`}
+          </button>
+        </div>
+      )}
+
+      {screen === "hub" && (
+        <div className="screen">
+          <TopBar w={w} teamRating={teamRating} baseline={baseline} influence={influence} ranking={ranking} onRestart={restartGame} />
+          {fixture && (
+            <div className={`fixture ${fixture.type}`}>
+              <div className="fxlabel">{fixture.type === "qualifier" ? "Competitive" : "Friendly"} · Turn {w}</div>
+              {fixture.opp ? (
+                <div className="fxmain">{FLAG[fixture.opp]} Singapore vs {fixture.opp} <span className="oppstr">world rank {wrank(fixture.opp) || "n/a"}</span></div>
+              ) : (
+                <div className="fxchoose">
+                  <div className="fxmain dim">Pick an opponent for a friendly match - Turn {w}:</div>
+                  <div className="fxopts">{FRIENDLY_OPTIONS.map((o) => <button key={o} className="fxopt" onClick={() => chooseFriendly(o)}>{FLAG[o]} {o} <i>{wrank(o)}</i></button>)}</div>
+                </div>
+              )}
+              {fixture.note && <div className="fxnote">{fixture.note}</div>}
+            </div>
+          )}
+          {msg && <div className="msg">{msg}</div>}
+
+          {/* formation + pitch */}
+          <div className="section">
+            <div className="sechead">
+              <h3>🧩 Build your XI <span className="xicount">{lineupCount}/11</span>
+                <Tip text="Tap a name in the squad list, then tap a spot on the pitch. Put a striker at the back if you fancy chaos, but his rating will cry."><span className="iglyph">how ⓘ</span></Tip></h3>
+              <div className="setupctrls">
+                <Tip text="The shape you line up in. No wrong answer, but a back five against Japan beats a back five against Bangladesh.">
+                  <select value={formation} onChange={(e) => { setFormation(e.target.value); setLineup({}); setHeld(null); }}>
+                    {Object.keys(FORMATIONS).map((f) => <option key={f}>{f}</option>)}
+                  </select></Tip>
+                <Tip text="Lazy-but-smart button. Fills all 11 spots with your best fits. Then tweak to taste."><button className="autobtn" onClick={autoFill}>Auto-fill</button></Tip>
+              </div>
+            </div>
+            <div className="tacticpick">
+              {Object.keys(TACTICS).map((tc) => <Tip key={tc} text={TACTICS[tc].d}><button className={`tacbtn ${tactic === tc ? "on" : ""}`} onClick={() => setTactic(tc)}>{tc}</button></Tip>)}
+              <Tip text="Pick the vibe. Low Block = park the bus and nick a draw. Front Foot = brave, glorious, occasionally suicidal. Balanced = no notes."><span className="iglyph">tactics ⓘ</span></Tip>
+            </div>
+
+            <div className="board">
+              <div className="pitch">
+                <div className="centre" /><div className="cspot" /><div className="pbox top" /><div className="pbox bot" />
+                {slots.map((role, idx) => {
+                  const p = playerById(lineup[idx]);
+                  const fit = p ? slotFit(p.pos, role) : 1;
+                  const [x, y] = coords[idx];
+                  return (
+                    <div key={idx} className={`slot ${p ? "filled" : "empty"} ${held != null ? "active" : ""}`} style={{ left: `${x}%`, top: `${y}%` }} onClick={() => tapSlot(idx)}>
+                      {p ? (
+                        <div className={`token ${fit < 0.85 ? "misfit" : ""} ${p.naturalised ? "nat" : ""} ${p.youth ? "yth" : ""}`} onClick={(e) => clearSlot(idx, e)}>
+                          <span className="tnum">{Math.round((overall(p) + (p.form || 0)) * fit)}</span>
+                          <span className="tname">{p.n.split(" ").slice(-1)[0]}</span>
+                          <span className="trole">{role}{fit < 0.85 ? "!" : ""}</span>
+                        </div>
+                      ) : <div className="ghost"><span>{role}</span></div>}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="side">
+                <div className="listhead"><span>Squad · {squadPool.length}/{SQUAD_MAX}</span><span className="hint">tap player → tap a spot</span></div>
+                <div className="plist">
+                  {(() => {
+                    const GROUP_LABEL = ["Goalkeepers", "Defenders", "Midfielders", "Forwards"];
+                    const sorted = [...squadPool].sort((a, b) => (POS_RANK[a.pos] - POS_RANK[b.pos]) || (overall(b) - overall(a)));
+                    let lastGroup = -1;
+                    const rows = [];
+                    sorted.forEach((p) => {
+                      const g = POS_ORDER[p.pos];
+                      if (g !== lastGroup) { rows.push(<div key={`h${g}`} className="grouphead">{GROUP_LABEL[g]}</div>); lastGroup = g; }
+                      const isHeld = held === p.id, isPlaced = placed.has(p.id);
+                      rows.push(
+                        <div key={p.id} className={`prow ${isHeld ? "held" : ""} ${isPlaced ? "placed" : ""} ${p.youth ? "yth" : ""} ${p.naturalised ? "nat" : ""}`} onClick={() => tapPlayer(p.id)}>
+                          <span className="ppos">{p.pos}</span>
+                          <span className="pn">{p.naturalised && "🛂 "}{p.n}{p.captain && " ©"}{p.hero && " ⭐"}<i className="pcl">{p.youth ? `prospect · ${p.age}y` : `${p.club} · ${p.age}y`}</i></span>
+                          <span className="pe">{overall(p)}</span>
+                          {p.youth && p.growthArrow > 0 ? <Tip text={`Improving: +${p.growthArrow} overall last window. Keep playing him and he'll climb toward his ceiling.`}><span className="grow">▲{p.growthArrow}</span></Tip> : null}
+                          {p.form ? <span className={`pf ${p.form > 0 ? "h" : "c"}`}>{p.form > 0 ? `+${p.form}` : p.form}</span> : null}
+                          {isPlaced && <span className="pdot">●</span>}
+                        </div>
+                      );
+                    });
+                    return rows;
+                  })()}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {fixture && fixture.opp && lineupCount >= 11 && (
+            <div className="teamtalk">
+              <div className="tthd">Team talk before kickoff <span className="ttsub">(pick your words wisely, every approach can backfire)</span></div>
+              <div className="ttopts">
+                {(matchTalks.length ? matchTalks : TEAM_TALKS.slice(0, 5)).map((tt, i) => (
+                  <button key={i} className={`ttbtn ${teamTalk && teamTalk.label === tt.label ? "on" : ""}`} onClick={() => setTeamTalk(teamTalk && teamTalk.label === tt.label ? null : tt)}>
+                    <span className="ttlabel">{tt.label}</span>
+                    <span className="ttnote">{tt.note}</span>
+                  </button>
+                ))}
+              </div>
+              {!teamTalk && <div className="ttskip">Or say nothing and let them play (no effect).</div>}
+            </div>
+          )}
+
+          <button className="bigbtn" disabled={!(fixture && fixture.opp) || lineupCount < 11} onClick={play}>
+            {!(fixture && fixture.opp) ? "Pick an opponent first" : lineupCount < 11 ? `Place ${11 - lineupCount} more` : `Play ${fixture.opp} (auto-sim) →`}
+          </button>
+        </div>
+      )}
+
+      {screen === "matchresult" && lastMatch && (
+        <div className="screen">
+          <TopBar w={w} teamRating={teamRating} baseline={baseline} influence={influence} ranking={ranking} onRestart={restartGame} />
+          <div className={`scoreboard ${lastMatch.outcome === "W" ? "win" : lastMatch.outcome === "D" ? "draw" : "loss"}`}>
+            <div className="sbteams"><span>🇸🇬 Singapore</span><span className="sbscore">{lastMatch.og} – {lastMatch.ag}</span><span>{FLAG[lastMatch.opp]} {lastMatch.opp}</span></div>
+            <div className="sbtag">{lastMatch.type === "qualifier" ? "Competitive" : "Friendly"} · {lastMatch.formation} · {lastMatch.tactic}</div>
+            {lastMatch.scorerLine && <div className="scorers">{lastMatch.scorerLine}</div>}
+          </div>
+
+          {lastMatch.verdict && <div className="verdict">"{lastMatch.verdict}"</div>}
+
+          {lastMatch.talkResult && (
+            <div className={`talkresult ${lastMatch.talkResult.good ? "good" : "bad"}`}>
+              <span className="trtag">Your team talk: {lastMatch.talkResult.label}</span>
+              <p>{lastMatch.talkResult.good ? "✓ It landed. " : "✗ It backfired. "}{lastMatch.talkResult.effect}</p>
+            </div>
+          )}
+
+          {lastMatch.causewayBonus && (
+            <div className="causeway">CAUSEWAY CHALLENGE WON! Kallang Roar pride intact. Bonus boost applied: extra Influence and a bigger jump up the FIFA ladder. The bragging rights are ours.</div>
+          )}
+
+          {lastMatch.injury && (
+            <div className="injurynews">
+              <div className="injurytag">🩺 Medical bulletin</div>
+              <p className="injuryline"><b>{lastMatch.injury.n}</b> ({lastMatch.injury.pos}) {lastMatch.injury.reason}, and is out until Turn {lastMatch.injury.until}.</p>
+              <p className="physionote">"{lastMatch.injury.physio} Pick a same-position replacement at the next squad selection." <span className="physiosign">{PHYSIO_SIGNOFF}</span></p>
+            </div>
+          )}
+
+          <div className="rankrow">
+            <span>FIFA ranking</span>
+            <b>{lastMatch.rankBefore}{lastMatch.rankAfter !== lastMatch.rankBefore && <em className={lastMatch.rankAfter < lastMatch.rankBefore ? "up" : "down"}> → {lastMatch.rankAfter} {lastMatch.rankAfter < lastMatch.rankBefore ? "▲" : "▼"}</em>}{lastMatch.rankAfter === lastMatch.rankBefore && <em className="flat"> → {lastMatch.rankAfter}</em>}</b>
+          </div>
+
+          {(() => {
+            const rated = Object.entries(lastMatch.matchRatings || {})
+              .map(([id, r]) => ({ p: playerById(Number(id)), r }))
+              .filter((x) => x.p).sort((a, b) => b.r - a.r).slice(0, 3);
+            if (!rated.length) return null;
+            return (
+              <div className="perfbox">
+                <div className="perfhd">Top performers</div>
+                {rated.map(({ p, r }, i) => (
+                  <div key={i} className="perfrow">
+                    <span className="perfname">{i === 0 ? "⭐ " : ""}{p.n} <i>{p.pos}</i></span>
+                    <span className={`perfrate ${r >= 7.5 ? "hi" : r >= 6.5 ? "ok" : "lo"}`}>{r.toFixed(1)}</span>
+                  </div>
+                ))}
+                <div className="perfnote">High ratings speed up player development next window.</div>
+              </div>
+            );
+          })()}
+
+          <div className="resnote">
+            {lastMatch.outcome === "W" && `A win the heritage targets will notice.${lastMatch.infGain ? ` (+${lastMatch.infGain} Influence next window)` : ""}`}
+            {lastMatch.outcome === "D" && `A solid point.${lastMatch.infGain ? ` (+${lastMatch.infGain} Influence next window)` : ""}`}
+            {lastMatch.outcome === "L" && "A setback, no Influence bonus, but friendlies are for learning."}
+          </div>
+          {w < TOTAL_WINDOWS && (
+            <div className="coachnews">
+              <div className="coachnewstag">Backroom update</div>
+              <p>Next turn you'll need to pick an opponent for a friendly. Your coaches have already pre-selected the top 50 players (every position covered) for you to narrow down to a 25-man squad.</p>
+            </div>
+          )}
+          {presser && (
+            <div className="presser">
+              <div className="pressertag">🎙️ Post-match press conference</div>
+              <p className="presserq">{presser.q}</p>
+              <div className="presseropts">
+                {presser.a.map((opt, i) => (
+                  <button key={i} className="presserbtn" onClick={() => { setHeadlines((h) => [...h, opt.headline]); setPresser(null); }}>
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <button className="bigbtn" disabled={!!presser} onClick={advance}>{presser ? "Answer the press first…" : w >= TOTAL_WINDOWS ? "Hear the prophecy →" : "Continue →"}</button>
+        </div>
+      )}
+
+      {screen === "windownews" && events && (
+        <div className="screen">
+          <TopBar w={w} teamRating={teamRating} baseline={baseline} influence={influence} ranking={ranking} onRestart={restartGame} />
+          <div className="newspaper">
+            <div className="npmast">
+              <span className="npname">THE KALLANG ROAR</span>
+              <span className="npmeta">Singapore's football paper · Turn {w - 1} report</span>
+            </div>
+
+            {lastMatch && (
+              <div className="npbody">
+                <div className="npmain">
+                  <div className="npscoreline">🇸🇬 Singapore <b>{lastMatch.og} – {lastMatch.ag}</b> {FLAG[lastMatch.opp]} {lastMatch.opp}</div>
+                  <h2 className="nphead">{(lastMatch.report && lastMatch.report.lead)}</h2>
+                  <p className="nptext">{(lastMatch.report && lastMatch.report.mid)} {(lastMatch.report && lastMatch.report.tac)}</p>
+                  {lastMatch.scorerLine && <p className="npscorers">Scorers: {lastMatch.scorerLine}</p>}
+                  {lastMatch.scorerFact && <p className="npfact">Did you know? {lastMatch.scorerFact.text}</p>}
+                  {lastMatch.motm && (
+                    <div className="npmotm">
+                      <span className="npmotmtag">⭐ Man of the Match</span>
+                      <span className="npmotmname">{lastMatch.motm.n} <i>{lastMatch.motm.pos} · rated {lastMatch.motm.rating.toFixed(1)}</i></span>
+                      <span className="npmotmbonus">+2 form bonus</span>
+                    </div>
+                  )}
+                </div>
+                <div className="npside">
+                  <div className="npsidehd">The Gaffer's Record</div>
+                  <div className="nprec">
+                    <div className="nprecrow"><span>Played</span><b>{coachRecord.played}</b></div>
+                    <div className="nprecrow w"><span>Won</span><b>{coachRecord.won}</b></div>
+                    <div className="nprecrow d"><span>Drawn</span><b>{coachRecord.drawn}</b></div>
+                    <div className="nprecrow l"><span>Lost</span><b>{coachRecord.lost}</b></div>
+                  </div>
+                  <div className="npwinpct">{coachRecord.played ? Math.round((coachRecord.won / coachRecord.played) * 100) : 0}% win rate</div>
+                </div>
+              </div>
+            )}
+
+            {events.legendVisit && (
+              <div className="npstrip legend">
+                <span className="npstriptag">🌟 LEGEND IN CAMP — {events.legendVisit.n} drops by</span>
+                <p>{events.legendVisit.bio} He spent the session passing on wisdom to the young Lions, and the whole squad walks taller for it. <b>Squad-wide +1 form boost.</b></p>
+              </div>
+            )}
+
+            {events.sideEvent && (
+              <div className="npstrip">
+                <span className="npstriptag">📰 {events.sideEvent.t}</span>
+                <p>{events.sideEvent.d}{events.sideEvent.missName ? ` Unlucky man: ${events.sideEvent.missName}, ruled out of the next match.` : ""}</p>
+              </div>
+            )}
+
+            {events.retired.length > 0 && events.retired.map((r, i) => (
+              <div key={i} className="npstrip ret">
+                <span className="npstriptag">🚨 RETIREMENT — {r.n} ({r.pos}, {r.age}, {r.caps} caps)</span>
+                <p>{r.bio}{r.fact ? ` Fun fact: ${r.fact}` : ""} Next chapter: he's <b>{r.job}</b>.</p>
+              </div>
+            ))}
+
+            <div className="npcolumns">
+              <div className="npcol"><h4>Development desk</h4>{events.devNews.length === 0 ? <p className="quiet">No big movers this turn.</p> : <ul>{events.devNews.map((d, i) => <li key={i}><b>{d.n}</b> {d.up ? "is kicking on" : "has stalled"} (now {d.ovr}){d.bust ? ", looking a bust" : ""}.</li>)}</ul>}</div>
+              <div className="npcol"><h4>Academy watch</h4><ul>{events.intakeNews.map((p, i) => <li key={i}><b>{p.n}</b> ({p.pos}, {p.age}) · {p.ovr} now <span className="pothint">▲ will grow if you play him</span></li>)}</ul></div>
+            </div>
+          </div>
+          <button className="bigbtn" onClick={() => { setSelected(autoPick25(pool)); setScreen("eligibility"); }}>To Turn {w} →</button>
+        </div>
+      )}
+
+      {screen === "prophecy" && prophecy && (
+        <div className="screen">
+          <div className="kicker">FULL TIME ON THE ROAD · YOU MADE IT TO SAUDI</div>
+          <h1>Asian Cup <span>Reckoning</span></h1>
+          <p className="lede">Congratulations, you got Singapore to its first Asian Cup on merit. 10 turns done. We simulated the whole tournament in the background, here's how your Lions did.</p>
+
+          <div className="finalrankbox">
+            <span className="frlabel">Final FIFA World Ranking</span>
+            <b className="frnum">#{prophecy.finalRank}</b>
+            <span className={`frmove ${prophecy.finalRank < 148 ? "up" : prophecy.finalRank > 148 ? "down" : "flat"}`}>
+              {prophecy.finalRank < 148 ? `▲ up ${148 - prophecy.finalRank} from #148` : prophecy.finalRank > 148 ? `▼ down ${prophecy.finalRank - 148}` : "level with where you started"}
+            </span>
+          </div>
+
+          <h2 className="thead">Group D · Australia, Iraq, Tajikistan, Singapore</h2>
+          <div className="simbox">
+            {prophecy.games.map((g, i) => (
+              <div key={i} className={`simrow ${g.res === "W" ? "w" : g.res === "D" ? "d" : "l"}`}>
+                <span className="simopp">🇸🇬 SGP vs {FLAG[g.opp]} {g.opp}</span>
+                <span className="simscore">{g.og} – {g.ag}</span>
+                <span className="simres">{g.res}</span>
+              </div>
+            ))}
+            <div className="grouptable">
+              {prophecy.groupTable.map((t, i) => (
+                <div key={t.t} className={`gtrow ${t.t === "Singapore" ? "me" : ""}`}>
+                  <span className="gtpos">{i + 1}</span>
+                  <span className="gtname">{FLAG[t.t === "Singapore" ? "Singapore" : t.t] || "🇸🇬"} {t.t}</span>
+                  <span className="gtpts">{t.pts} pts</span>
+                  <span className="gtgd">{t.gd >= 0 ? "+" : ""}{t.gd}</span>
+                </div>
+              ))}
+            </div>
+            <div className="simtotal">Singapore finished <b>{prophecy.placing}</b> ({prophecy.pts} pts){prophecy.bestThird ? " — through as a best third-placed side!" : prophecy.advanced ? " — qualified!" : " — eliminated in the group."}</div>
+          </div>
+
+          {prophecy.knockout.length > 0 && (
+            <>
+              <h2 className="thead">Knockout run</h2>
+              <div className="simbox">
+                {prophecy.knockout.map((k, i) => (
+                  <div key={i} className={`simrow ${k.win ? "w" : "l"}`}>
+                    <span className="simopp"><b>{k.round}</b> · vs {FLAG[k.opp]} {k.opp}</span>
+                    <span className="simscore">{k.og} – {k.ag}</span>
+                    <span className="simres">{k.win ? "W" : "OUT"}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          <div className={`verdictcard ${prophecy.finishLabel === "Winners" || prophecy.finishLabel === "Final" ? "v4" : prophecy.advanced ? "v4" : prophecy.pts >= 3 ? "v2" : "v1"}`}>
+            <div className="verdicttag">{prophecy.headline}</div>
+            <p className="verdicttone">{prophecy.tone}</p>
+            <div className="finishtag">Final finish: {prophecy.finishLabel}</div>
+          </div>
+
+          <div className="propstats">
+            <div><b>{prophecy.heritageJoined}</b><span>heritage signings</span></div>
+            <div><b>{prophecy.youthBreakout}</b><span>youth at 70+</span></div>
+            <div><b>{prophecy.wins}</b><span>wins on the road</span></div>
+          </div>
+          <p className="simnote">Group D is the real, confirmed 2027 Asian Cup draw. Knockout opponents are plausible bracket matchups; rival strength is anchored to each nation's actual standing.</p>
+          <button className="bigbtn" onClick={() => setScreen("roar")}>Finish →</button>
+        </div>
+      )}
+
+      {screen === "roar" && prophecy && (
+        <div className="screen roarscreen">
+          <div className="monogram flag"><span>🇸🇬</span><div className="mline" /></div>
+          <div className="roarfinish">{prophecy.finishLabel === "Winners" ? "CHAMPIONS OF ASIA" : `Asian Cup: ${prophecy.finishLabel}`}</div>
+          <h1 className="roarttl">YOUR ROAR<span> MATTERS</span></h1>
+          <p className="roarsub">From outside the world's top 140 to the Asian Cup in Saudi Arabia. You finished <b>#{prophecy.finalRank}</b> in the world and took the Lions to the <b>{prophecy.finishLabel}</b>.</p>
+
+          <div className="roarcard">
+            <div className="roarcardhd">{prophecy.climb > 0 ? "How you improved the nation" : prophecy.climb < 0 ? "How it went backwards" : "How the year held steady"}</div>
+            <p className="roarline">
+              {prophecy.climb > 0
+                ? `You lifted the team rating by ${prophecy.climb} points (${prophecy.climbPct}%) and climbed ${Math.max(0, 148 - prophecy.finalRank)} places up the world ranking. A genuine step forward for Singapore football.`
+                : prophecy.climb < 0
+                ? `The rating actually dropped ${-prophecy.climb} points and the ranking slipped. A tough campaign, the rebuild clearly has more road left in it.`
+                : `The rating barely moved. Steady, but the next gaffer will want to find another gear.`}
+            </p>
+          </div>
+
+          {(() => {
+            const joined = targets.filter((t) => t.status === "joined").length;
+            const total = xiTally.local + xiTally.heritage;
+            const heritagePct = total ? Math.round((xiTally.heritage / total) * 100) : 0;
+            const localPct = 100 - heritagePct;
+            const lean = heritagePct >= 60 ? "You went the NATURALISATION route, building your XI around imported heritage stars."
+              : heritagePct >= 35 ? "You ran a BLENDED squad, mixing homegrown Lions with heritage recruits."
+              : "You stayed loyal to the LOCAL route, trusting Singapore's own. Old-school and proud.";
+            return (
+              <div className="roarcard stats">
+                <div className="roarcardhd">Your campaign by the numbers</div>
+                <div className="statgrid">
+                  <div className="statbox"><b>{joined}</b><span>players naturalised</span></div>
+                  <div className="statbox"><b>{prophecy.wins}</b><span>wins on the road</span></div>
+                  <div className="statbox"><b>{localPct}%</b><span>XI minutes to locals</span></div>
+                  <div className="statbox"><b>{heritagePct}%</b><span>XI minutes to heritage</span></div>
+                </div>
+                <div className="leanbar">
+                  <div className="leanfill local" style={{ width: `${localPct}%` }}>{localPct >= 18 ? "Local" : ""}</div>
+                  <div className="leanfill heritage" style={{ width: `${heritagePct}%` }}>{heritagePct >= 18 ? "Heritage" : ""}</div>
+                </div>
+                <p className="roarline leanverdict">{lean}</p>
+              </div>
+            );
+          })()}
+
+          <div className="roarcard">
+            <div className="roarcardhd">The dressing room</div>
+            <p className="roarquote">{prophecy.advanced ? pick(PLAYER_QUOTES_GOOD) : pick(PLAYER_QUOTES_BAD)}</p>
+          </div>
+
+          <div className="roarcard">
+            <div className="roarcardhd">The fans</div>
+            <p className="roarquote">{prophecy.advanced ? pick(FAN_QUOTES_GOOD) : pick(FAN_QUOTES_BAD)}</p>
+          </div>
+
+          {headlines.length > 0 && (
+            <div className="roarcard scrapbook">
+              <div className="roarcardhd">Your press conference scrapbook</div>
+              {[...new Set(headlines)].slice(0, 3).map((h, i) => <p key={i} className="scrapline">“{h}”</p>)}
+            </div>
+          )}
+
+          <div className="roarcard advice">
+            <div className="roarcardhd">For your next run</div>
+            {(() => {
+              const shuffled = [...RUN_ADVICE].sort(() => Math.random() - 0.5).slice(0, 2);
+              return shuffled.map((a, i) => <p key={i} className="roarline">{a}</p>);
+            })()}
+            <p className="roarnudge">Play again and push that ranking even higher, #{prophecy.finalRank} is a record to beat, not a ceiling.</p>
+          </div>
+
+          <div className="roarcard hof">
+            <div className="roarcardhd">Hall of Fame — best managers</div>
+            {!savedRun ? (
+              <div className="hofsave">
+                <p className="roarline">Save your run to the permanent Hall of Fame (ranked by final world ranking):</p>
+                <input className="hofinput" type="text" placeholder="Your manager name" value={managerName} maxLength={24} onChange={(e) => setManagerName(e.target.value)} />
+                <button className="hofbtn" onClick={() => saveToHallOfFame(managerName)}>Save to Hall of Fame</button>
+              </div>
+            ) : (
+              <p className="roarline saved">✓ Saved. You're in the books.</p>
+            )}
+            {hallOfFame.length > 0 && (
+              <div className="hoflist">
+                {hallOfFame.map((h, i) => (
+                  <div key={i} className={`hofrow ${i === 0 ? "top" : ""}`}>
+                    <span className="hofpos">{i + 1}</span>
+                    <span className="hofname">{h.name}</span>
+                    <span className="hoffinish">{h.finish}</span>
+                    <span className="hofrank">#{h.rank}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <p className="roartag">Majulah. Make us proud, boys.</p>
+          <button className="bigbtn knowbtn" onClick={() => { setProfilePlayer(null); setKnowReturn("roar"); setScreen("knowlions"); }}>Know Your Lions →</button>
+          <button className="bigbtn" onClick={() => { setSavedRun(false); setManagerName(""); setScreen("intro"); }}>Play again →</button>
+          <p className="foot">All events are fictional. Built for the love of the Kallang Roar.</p>
+        </div>
+      )}
+
+      {screen === "knowlions" && (
+        <div className="screen">
+          <div className="klhead">
+            <div>
+              <div className="kltag">KNOW YOUR LIONS</div>
+              <h2 className="klttl">{profilePlayer ? profilePlayer.n : "The Squad"}</h2>
+            </div>
+            <button className="klback" onClick={() => profilePlayer ? setProfilePlayer(null) : setScreen(knowReturn)}>{profilePlayer ? "← All players" : "← Back"}</button>
+          </div>
+
+          {!profilePlayer && (
+            <>
+              <p className="screenintro">Singapore's real footballers, the players who carry the Lions. Tap any name to learn their story.</p>
+              <div className="klgrid">
+                {(() => {
+                  const GROUP_LABEL = ["Goalkeepers", "Defenders", "Midfielders", "Forwards"];
+                  const all = [...REAL_POOL].sort((a, b) => (POS_RANK[a.pos] != null ? POS_RANK[a.pos] : 99) - (POS_RANK[b.pos] != null ? POS_RANK[b.pos] : 99));
+                  let last = -1; const out = [];
+                  all.forEach((p) => {
+                    const g = POS_ORDER[p.pos];
+                    if (g !== last) { out.push(<div key={`h${g}`} className="klgrouphd">{GROUP_LABEL[g]}</div>); last = g; }
+                    out.push(
+                      <button key={p.n} className="klcard" onClick={() => setProfilePlayer(p)}>
+                        <span className="klpos">{p.pos}</span>
+                        <span className="klname">{p.n}{p.captain && " ©"}{p.hero && " ⭐"}{p.naturalised && " 🛂"}</span>
+                        <span className="klclub">{p.club}</span>
+                        <span className="klovr">{overall(p)}</span>
+                      </button>
+                    );
+                  });
+                  return out;
+                })()}
+              </div>
+            </>
+          )}
+
+          {profilePlayer && (() => {
+            const p = profilePlayer;
+            const caps = REAL_CAPS[p.n];
+            const bio = BIOS[p.n];
+            const fact = PLAYER_FACTS[p.n];
+            const roleDesc = { GK: "Goalkeeper", CB: "Centre-back", RB: "Right-back", LB: "Left-back", DM: "Defensive midfielder", CM: "Central midfielder", AM: "Attacking midfielder", RW: "Right winger", LW: "Left winger", ST: "Striker" }[p.pos] || p.pos;
+            return (
+              <div className="klprofile">
+                <div className="klphero">
+                  <div className="klpovr">{overall(p)}</div>
+                  <div className="klpmain">
+                    <div className="klpname">{p.n}{p.captain && " ©"}{p.hero && " ⭐"}</div>
+                    <div className="klprole">{roleDesc} · {p.age} years old</div>
+                    <div className="klpclub">{p.club}</div>
+                    {p.naturalised && <div className="klpnat">🛂 Naturalised / heritage Lion</div>}
+                  </div>
+                </div>
+
+                <div className="klattrs">
+                  {[["Pace", p.pac], ["Technique", p.tec], ["Physical", p.phy], ["Mental", p.men]].map(([label, val]) => (
+                    <div key={label} className="klattr">
+                      <div className="klattrtop"><span>{label}</span><b>{val}</b></div>
+                      <div className="klbar"><div className="klbarfill" style={{ width: `${val}%` }} /></div>
+                    </div>
+                  ))}
+                </div>
+
+                {caps != null && <div className="klcaps"><b>{caps}</b> Singapore caps</div>}
+                {bio && <div className="klsection"><h4>Who he is</h4><p>{bio}</p></div>}
+                {fact && <div className="klsection"><h4>Did you know?</h4><p>{fact}</p></div>}
+                {!bio && !fact && <div className="klsection"><p className="quiet">A real member of the Singapore footballing family, carrying the Lions forward.</p></div>}
+              </div>
+            );
+          })()}
+
+          {knowReturn === "intro"
+            ? <button className="bigbtn" onClick={start}>Begin the road →</button>
+            : knowReturn === "howto"
+            ? <button className="bigbtn" onClick={() => setScreen("howto")}>← Back to the guide</button>
+            : <button className="bigbtn" onClick={() => { setSavedRun(false); setManagerName(""); setScreen("intro"); }}>Play again →</button>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TopBar({ w, teamRating, baseline, influence, ranking, onRestart }) {
+  const climb = baseline ? teamRating - baseline : 0;
+  const rankClimb = ranking != null ? 148 - ranking : 0;
+  return (
+    <div className="hudwrap">
+      <div className="titlebar">
+        <div className="tbleft"><span className="tbmono flag">🇸🇬</span><div><div className="tbtitle">10 Turns: Lions Rising</div><div className="tbsub">A Mini Football Manager Game</div></div></div>
+        <div className="tbright">
+          <div className="tbrank">
+            <span>World Rank</span>
+            <b>#{ranking != null ? ranking : 148}{rankClimb > 0 ? <em className="up"> ▲{rankClimb}</em> : rankClimb < 0 ? <em className="down"> ▼{-rankClimb}</em> : null}</b>
+          </div>
+          {onRestart && <button className="restartbtn" onClick={onRestart} title="Restart game">↺</button>}
+        </div>
+      </div>
+      <div className="topbar">
+        <div className="tb"><span>Turn</span><b>{w}<i>/{TOTAL_WINDOWS}</i></b></div>
+        <div className="tb"><span>Turns to Asian Cup</span><b>{TOTAL_WINDOWS - w}<i> left</i></b></div>
+        <div className="tb rating"><span>Team Rating</span><b>{teamRating}{baseline ? <em className={climb >= 0 ? "up" : "down"}> {climb >= 0 ? "+" : ""}{climb}</em> : null}</b></div>
+        <div className="tb inf"><span>Influence</span><b className="infv">⚡{influence}</b></div>
+      </div>
+    </div>
+  );
+}
+
+const css = `
+  @import url('https://fonts.googleapis.com/css2?family=Anton&family=Inter:wght@400;500;600;700;800&display=swap');
+  * { box-sizing:border-box; }
+  .wrap { --bg:#05080c; --bg2:#0b1016; --card:#10161f; --card2:#141c27; --line:#1f2935; --red:#e23b3b; --redb:#ff4d4d;
+    --gold:#f0bd3f; --green:#2ed573; --txt:#f3f6fa; --dim:#76828f; --accent:#15e0b0; --accent2:#0fb893;
+    font-family:'Inter',system-ui,sans-serif; color:var(--txt);
+    background:
+      radial-gradient(120% 70% at 50% -15%, #14222b 0%, rgba(8,13,18,0) 60%),
+      linear-gradient(180deg, #070b10 0%, #05080c 100%),
+      var(--bg);
+    background-attachment:fixed;
+    min-height:100vh; padding:14px; line-height:1.45; }
+  .screen { max-width:1000px; margin:0 auto; }
+  h1 { font-family:'Anton',sans-serif; font-weight:400; letter-spacing:1px; font-size:clamp(30px,7vw,58px); line-height:.92; margin:6px 0 12px; text-transform:uppercase; }
+  h1 span { color:var(--accent); }
+  h2.thead { font-family:'Anton',sans-serif; font-weight:400; text-transform:uppercase; letter-spacing:1px; margin:8px 0 14px; }
+  h3 { font-size:15px; margin:0 0 10px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .monogram { width:84px; height:84px; margin:0 auto 14px; border:2px solid var(--accent); border-radius:18px; display:flex; flex-direction:column; align-items:center; justify-content:center; position:relative; background:linear-gradient(160deg,#13202a,#0a0f15); box-shadow:0 0 40px #15e0b033; }
+  .monogram span { font-family:'Anton',sans-serif; font-size:34px; letter-spacing:1px; color:var(--txt); line-height:1; }
+  .monogram.flag span { font-size:40px; letter-spacing:0; }
+  .monogram .mline { width:38px; height:3px; background:var(--accent); margin-top:5px; border-radius:2px; }
+  .kicker { font-size:11px; letter-spacing:3px; color:var(--accent); text-transform:uppercase; margin-bottom:4px; font-weight:700; }
+  .lede { font-size:16px; color:#c4ccd6; max-width:64ch; } .lede strong { color:var(--accent); }
+  .ledesub { font-size:12.5px; color:var(--dim); font-style:italic; max-width:60ch; margin:0 auto 16px; }
+  .tagline { font-size:14px; color:var(--gold); max-width:54ch; margin:0 auto 14px; font-weight:500; }
+  .intro { text-align:center; padding-top:22px; } .intro .lede { margin:0 auto 8px; }
+  .pillars { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:12px; margin:14px 0 20px; text-align:left; }
+  .pillar { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:15px; }
+  .goalshd { text-align:center; font-size:11px; letter-spacing:2.5px; text-transform:uppercase; color:var(--dim); margin:18px 0 10px; font-weight:600; }
+  .pillar .pnum { font-family:'Anton',sans-serif; font-size:22px; color:var(--accent); letter-spacing:1px; } .pillar b { display:block; margin:8px 0 4px; } .pillar p { font-size:13px; color:var(--dim); margin:0; }
+  .foot { font-size:12px; color:var(--dim); margin-top:14px; }
+  .bigbtn { font-family:'Anton',sans-serif; letter-spacing:1px; text-transform:uppercase; background:linear-gradient(135deg,var(--accent),var(--accent2)); color:#04130f; border:none; border-radius:12px; padding:16px 24px; font-size:17px; cursor:pointer; width:100%; margin-top:12px; transition:transform .12s,box-shadow .12s,filter .12s; box-shadow:0 6px 20px #15e0b022; }
+  .bigbtn:hover:not(:disabled){ filter:brightness(1.08); transform:translateY(-2px); box-shadow:0 10px 28px #15e0b033; }
+  .bigbtn:disabled{ background:#1b2531; color:#5d6b7a; cursor:not-allowed; box-shadow:none; }
+
+  .hudwrap { margin-bottom:14px; }
+  .titlebar { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 14px; margin-bottom:8px; border-radius:12px; background:linear-gradient(110deg,#10202b,#0a0f15); border:1px solid var(--line); }
+  .tbleft { display:flex; align-items:center; gap:11px; }
+  .tbmono { font-family:'Anton',sans-serif; font-size:22px; letter-spacing:1px; color:var(--txt); border:1.5px solid var(--accent); border-radius:9px; padding:2px 9px; line-height:1.1; }
+  .tbmono.flag { font-size:24px; letter-spacing:0; padding:3px 8px; }
+  .tbtitle { font-family:'Anton',sans-serif; font-size:18px; letter-spacing:.5px; text-transform:uppercase; line-height:1; }
+  .tbsub { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:var(--accent); margin-top:3px; }
+  .tbrank { text-align:right; } .tbrank span { display:block; font-size:9px; letter-spacing:1.5px; text-transform:uppercase; color:var(--dim); }
+  .tbright { display:flex; align-items:center; gap:10px; }
+  .restartbtn { background:var(--card); border:1px solid var(--line); color:var(--dim); width:34px; height:34px; border-radius:9px; font-size:18px; cursor:pointer; line-height:1; flex-shrink:0; transition:all .15s; }
+  .restartbtn:hover { color:var(--txt); border-color:var(--accent); }
+  .httag { font-size:11px; letter-spacing:2px; color:var(--accent); font-weight:700; margin-bottom:4px; }
+  .htttl { font-family:'Anton',sans-serif; font-size:26px; margin:0 0 4px; }
+  .htintro { font-size:14px; color:var(--dim); margin:0 0 16px; }
+  .htcard { display:flex; gap:13px; align-items:flex-start; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:13px 15px; margin-bottom:10px; }
+  .htnum { font-family:'Anton',sans-serif; font-size:18px; color:var(--accent); flex-shrink:0; width:34px; height:34px; display:flex; align-items:center; justify-content:center; background:var(--bg2); border:1px solid var(--line); border-radius:9px; line-height:1; }
+  .htcard b { font-size:15px; color:var(--txt); display:block; margin-bottom:3px; }
+  .htcard p { margin:0; font-size:13px; line-height:1.55; color:#c4ccd6; }
+  .tbrank b { font-family:'Anton',sans-serif; font-size:22px; } .tbrank em { font-size:12px; font-style:normal; } .tbrank em.up { color:var(--green); } .tbrank em.down { color:var(--redb); }
+  .topbar { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:14px; }
+  .scorers { margin-top:8px; font-size:14px; color:#dfe7ee; }
+  .rankrow { display:flex; align-items:center; justify-content:space-between; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:11px 14px; margin-bottom:8px; }
+  .rankrow span { font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--dim); }
+  .rankrow b { font-family:'Anton',sans-serif; font-size:20px; } .rankrow em { font-style:normal; font-size:15px; } .rankrow em.up { color:var(--green); } .rankrow em.down { color:var(--redb); } .rankrow em.flat { color:var(--dim); }
+  .perfbox { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:8px; }
+  .perfhd { font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--dim); margin-bottom:8px; }
+  .perfrow { display:flex; align-items:center; justify-content:space-between; padding:5px 0; border-top:1px solid #ffffff10; } .perfrow:first-of-type { border-top:none; }
+  .perfname { font-size:14px; font-weight:600; } .perfname i { color:var(--dim); font-style:normal; font-size:11px; margin-left:5px; }
+  .perfrate { font-family:'Anton',sans-serif; font-size:17px; } .perfrate.hi { color:var(--green); } .perfrate.ok { color:var(--gold); } .perfrate.lo { color:var(--dim); }
+  .perfnote { font-size:11px; color:var(--dim); font-style:italic; margin-top:8px; }
+  .tb { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:9px 12px; }
+  .tb span { font-size:10px; letter-spacing:1.2px; text-transform:uppercase; color:var(--dim); display:block; }
+  .tb b { font-family:'Anton',sans-serif; font-size:22px; font-weight:400; } .tb b i { font-size:11px; color:var(--dim); font-style:normal; }
+  .tb.rating b { color:var(--gold); } .tb b em { font-size:13px; font-style:normal; } .tb b em.up { color:var(--green); } .tb b em.down { color:var(--redb); }
+  .tb.inf .infv { color:var(--gold); }
+
+  .fixture { background:linear-gradient(180deg,#16294f,var(--card)); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:14px; }
+  .fixture.qualifier { border-color:var(--gold); }
+  .fxlabel { font-size:11px; text-transform:uppercase; letter-spacing:1.5px; color:var(--dim); margin-bottom:6px; }
+  .fxmain { font-size:18px; font-weight:700; } .fxmain.dim { color:var(--dim); font-size:14px; font-weight:500; margin-bottom:8px; }
+  .oppstr { font-size:12px; color:var(--dim); font-weight:500; margin-left:8px; }
+  .fxopts { display:flex; flex-wrap:wrap; gap:6px; }
+  .fxopt { background:var(--bg2); color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:7px 11px; cursor:pointer; font-size:13px; }
+  .fxopt i { color:var(--dim); font-style:normal; font-size:11px; } .fxopt:hover { background:#22407a; }
+  .fxnote { font-size:12px; color:var(--dim); margin-top:8px; font-style:italic; }
+  .msg { background:#3a2410; border:1px solid var(--gold); color:var(--gold); border-radius:8px; padding:9px 12px; font-size:13px; margin-bottom:12px; }
+
+  .section { margin-bottom:18px; }
+  .sechead { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+  .setupctrls { display:flex; gap:8px; }
+  .setupctrls select { background:var(--bg2); color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-family:inherit; font-size:14px; }
+  .infpill { font-size:11px; background:var(--bg2); border:1px solid var(--gold); color:var(--gold); border-radius:20px; padding:3px 10px; font-weight:600; }
+  .iglyph { font-size:11px; color:var(--gold); font-weight:600; cursor:help; text-transform:none; letter-spacing:0; }
+  .autobtn { background:#22407a; color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:8px 13px; font-size:13px; font-weight:600; cursor:pointer; }
+  .autobtn:hover { background:#2a4d92; }
+
+  .targets { display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:10px; }
+  .tgrouphd { grid-column:1 / -1; font-family:'Anton',sans-serif; font-size:13px; letter-spacing:1px; text-transform:uppercase; color:var(--accent); margin-top:8px; padding-bottom:4px; border-bottom:1px solid var(--line); }
+  .tgrouphd:first-child { margin-top:0; }
+  .oppbanner { background:linear-gradient(180deg,#10202b,var(--card)); border:1px solid var(--accent); border-radius:12px; padding:13px 15px; margin-bottom:14px; }
+  .oppbannertop { display:flex; align-items:center; gap:12px; }
+  .oppflag { font-size:30px; line-height:1; }
+  .oppinfo { flex:1; }
+  .opplabel { font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:var(--dim); }
+  .oppname { font-family:'Anton',sans-serif; font-size:19px; letter-spacing:.5px; }
+  .opprank { text-align:right; } .opprank span { display:block; font-size:9px; letter-spacing:1px; text-transform:uppercase; color:var(--dim); }
+  .opprank b { font-family:'Anton',sans-serif; font-size:22px; color:var(--accent); }
+  .oppfact { margin:10px 0 0; font-size:12.5px; line-height:1.5; color:#c4ccd6; border-top:1px solid var(--line); padding-top:9px; }
+  .tcard.best { border-color:var(--accent); background:linear-gradient(180deg,#10241f,var(--card)); box-shadow:inset 0 0 0 1px #15e0b033, 0 4px 18px #15e0b015; }
+  .besttag { font-size:9px; letter-spacing:.5px; text-transform:uppercase; color:#04130f; background:var(--accent); border-radius:4px; padding:2px 6px; font-style:normal; font-weight:800; }
+  .tcard { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }
+  .tcard.joined { border-color:var(--green); } .tcard.declined { opacity:.5; }
+  .tnamewrap { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .ttags { display:flex; gap:4px; }
+  .tn { font-weight:700; font-size:15px; }
+  .dectag { font-size:9px; background:var(--green); color:#06210f; padding:2px 6px; border-radius:4px; font-style:normal; font-weight:800; text-transform:uppercase; letter-spacing:.5px; }
+  .tovr { font-family:'Anton',sans-serif; font-size:26px; color:var(--gold); line-height:1; }
+  .trow { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:3px; }
+  .tmeta { font-size:11px; color:var(--dim); margin:2px 0; } .lvl { background:var(--bg2); border:1px solid var(--line); border-radius:4px; padding:1px 5px; margin-left:4px; }
+  .tnote { font-size:12px; color:#c3cfe8; font-style:italic; margin:6px 0 9px; }
+  .chancewrap { margin-bottom:11px; }
+  .chancelabel { display:flex; align-items:center; justify-content:space-between; margin-bottom:5px; }
+  .chancelabel span { font-size:10.5px; letter-spacing:.5px; text-transform:uppercase; color:var(--dim); font-weight:600; }
+  .chancelabel b { font-family:'Anton',sans-serif; font-size:16px; color:var(--txt); }
+  .chancebar { position:relative; height:8px; background:#0a1118; border-radius:5px; overflow:hidden; }
+  .chancefill { height:100%; background:linear-gradient(90deg,#e23b3b,var(--gold),var(--accent)); border-radius:5px; transition:width .3s ease; }
+  .tbtns { display:flex; gap:8px; } .tbtns .tip { flex:1; }
+  .court,.offer { width:100%; border:none; border-radius:10px; padding:9px 8px; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:1px; transition:transform .1s,filter .1s; }
+  .court:hover:not(:disabled),.offer:hover:not(:disabled) { transform:translateY(-1px); filter:brightness(1.08); }
+  .court { background:#1a2430; color:var(--txt); border:1px solid #2a3a4a; }
+  .offer { background:linear-gradient(135deg,var(--gold),#d89a2b); color:#1a1300; }
+  .btnlabel { font-family:'Anton',sans-serif; font-size:13px; letter-spacing:.5px; text-transform:uppercase; }
+  .btnsub { font-size:10px; opacity:.8; font-weight:600; }
+  .court:disabled,.offer:disabled { opacity:.35; cursor:not-allowed; }
+  .tstatus { font-size:12px; font-weight:600; margin-top:4px; padding:7px 10px; border-radius:8px; } .tstatus.joined { color:var(--green); background:#0e2417; } .tstatus.declined { color:var(--dim); background:var(--bg2); }
+
+  .tacticpick { display:flex; gap:7px; margin-bottom:10px; flex-wrap:wrap; }
+  .tacbtn { background:var(--bg2); color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:7px 13px; cursor:pointer; font-size:13px; font-weight:600; }
+  .tacbtn.on { background:var(--gold); color:#1a1300; border-color:var(--gold); }
+  .xicount { font-family:'Anton',sans-serif; color:var(--gold); font-size:18px; } .xicount.over { color:var(--redb); }
+  .screenintro { font-size:13px; color:var(--dim); margin:0 0 12px; }
+  .needsbox { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 15px; margin-bottom:14px; }
+  .needshd { font-size:10px; letter-spacing:2px; text-transform:uppercase; color:var(--dim); margin-bottom:11px; font-weight:700; }
+  .needsrow { display:grid; grid-template-columns:1fr 1fr; gap:9px; }
+  .needcell { border-radius:11px; padding:11px 12px; background:linear-gradient(180deg,var(--card2),var(--bg2)); border:1px solid var(--line); }
+  .needcell.upgr { border-color:#2a7d52; box-shadow:inset 0 0 0 1px #2ed57322; }
+  .needtop { display:flex; align-items:center; justify-content:space-between; }
+  .needpos { font-weight:700; font-size:13.5px; }
+  .needrating { font-family:'Anton',sans-serif; font-size:24px; color:var(--accent); line-height:1; }
+  .needmeta { display:block; font-size:10.5px; color:var(--dim); margin:3px 0 6px; }
+  .needup { display:block; font-size:11px; color:var(--green); font-weight:600; line-height:1.3; }
+  .needok { display:block; font-size:11px; color:var(--dim); }
+  .selectlist { max-height:none; }
+  .selrow { display:grid; grid-template-columns:26px 38px 1fr auto auto; gap:8px; align-items:center; cursor:pointer; }
+  .selrow.sel { background:#0e2233; outline:1px solid var(--accent); }
+  .selbox { width:22px; height:22px; border-radius:6px; border:1.5px solid var(--line); display:flex; align-items:center; justify-content:center; font-weight:700; color:var(--dim); }
+  .selrow.sel .selbox { background:var(--accent); color:#03070c; border-color:var(--accent); }
+  .cf { font-size:11px; font-weight:700; min-width:26px; text-align:right; } .cf.up { color:var(--green); } .cf.down { color:var(--redb); } .cf.flat { color:var(--dim); }
+  .depthtag { font-size:9px; letter-spacing:.5px; text-transform:uppercase; color:var(--dim); border:1px solid var(--line); border-radius:4px; padding:1px 4px; margin-left:6px; font-style:normal; }
+  .msg.warn { background:#241115; border-color:var(--red); color:#ffd9d9; }
+
+  .board { display:grid; grid-template-columns:1.2fr 1fr; gap:14px; }
+  @media (max-width:760px){ .board { grid-template-columns:1fr; } }
+  .pitch { position:relative; background:repeating-linear-gradient(0deg,#1b6b3a 0 8%,#178f3f33 8% 16%),linear-gradient(180deg,#1f7a42,#155f33); border:2px solid #2c8a4f; border-radius:12px; aspect-ratio:3/4; overflow:hidden; }
+  .centre { position:absolute; left:8%; right:8%; top:50%; height:2px; background:#ffffff55; }
+  .cspot { position:absolute; left:50%; top:50%; width:52px; height:52px; transform:translate(-50%,-50%); border:2px solid #ffffff44; border-radius:50%; }
+  .pbox { position:absolute; left:26%; right:26%; height:14%; border:2px solid #ffffff44; } .pbox.top { top:0; border-top:none; } .pbox.bot { bottom:0; border-bottom:none; }
+  .slot { position:absolute; transform:translate(-50%,-50%); cursor:pointer; }
+  .slot.active .ghost { border-color:var(--gold); box-shadow:0 0 0 3px #f5c54255; }
+  .ghost { width:50px; height:50px; border-radius:50%; border:2px dashed #ffffff77; display:flex; align-items:center; justify-content:center; font-size:11px; color:#fff; background:#0a162866; }
+  .token { width:56px; display:flex; flex-direction:column; align-items:center; gap:1px; }
+  .token .tnum { font-family:'Anton',sans-serif; font-size:17px; background:var(--card); color:var(--gold); border:2px solid var(--green); border-radius:50%; width:36px; height:36px; display:flex; align-items:center; justify-content:center; }
+  .token.nat .tnum { border-color:var(--gold); } .token.yth .tnum { border-color:#6fd0ff; } .token.misfit .tnum { border-color:var(--redb); color:var(--redb); }
+  .token .tname { font-size:10px; font-weight:700; color:#fff; text-shadow:0 1px 2px #000; max-width:60px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .token .trole { font-size:9px; color:#cfe; }
+
+  .side { display:flex; flex-direction:column; min-height:0; }
+  .listhead { display:flex; justify-content:space-between; font-size:11px; color:var(--dim); padding:4px 2px; } .hint { font-style:italic; }
+  .plist { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:5px; max-height:360px; overflow-y:auto; }
+  .prow { display:flex; align-items:center; gap:7px; padding:6px 8px; border-radius:7px; cursor:pointer; }
+  .prow:hover { background:#1a2c52; } .prow.held { background:#3a2f10; outline:1px solid var(--gold); } .prow.placed { opacity:.45; }
+  .prow.yth { border-left:3px solid #6fd0ff; } .prow.nat { border-left:3px solid var(--gold); }
+  .ppos { font-size:10px; font-weight:700; background:var(--bg2); border:1px solid var(--line); border-radius:4px; padding:2px 5px; color:var(--dim); min-width:32px; text-align:center; }
+  .pn { flex:1; font-size:13px; font-weight:600; } .pn .pcl { display:block; font-size:10px; color:var(--dim); font-weight:400; font-style:normal; }
+  .pe { font-family:'Anton',sans-serif; font-size:17px; color:var(--gold); }
+  .pf { font-size:10px; font-weight:700; } .pf.h { color:var(--green); } .pf.c { color:var(--redb); } .pdot { color:var(--green); font-size:9px; }
+
+  .scoreboard { border-radius:14px; padding:20px; text-align:center; margin-bottom:12px; border:2px solid; }
+  .scoreboard.win { background:#11331f; border-color:var(--green); } .scoreboard.draw { background:#2a2f10; border-color:var(--gold); } .scoreboard.loss { background:#331417; border-color:var(--red); }
+  .sbteams { display:flex; align-items:center; justify-content:center; gap:16px; font-size:17px; font-weight:700; flex-wrap:wrap; }
+  .sbscore { font-family:'Anton',sans-serif; font-size:42px; font-weight:400; }
+  .sbtag { font-size:11px; color:var(--dim); margin-top:8px; text-transform:uppercase; letter-spacing:1px; }
+  .resnote { text-align:center; color:var(--dim); font-size:14px; margin-bottom:6px; }
+  .coachnews { background:var(--card); border:1px solid var(--accent); border-radius:12px; padding:13px 15px; margin:8px 0 14px; }
+  .coachnewstag { display:inline-block; font-family:'Anton',sans-serif; letter-spacing:1.5px; font-size:11px; color:#03070c; background:var(--accent); padding:3px 9px; border-radius:5px; margin-bottom:8px; }
+  .coachnews p { margin:0; font-size:13px; color:#c4ccd6; }
+  .teamtalk { background:var(--card); border:1px solid var(--accent); border-radius:12px; padding:13px 15px; margin-bottom:12px; }
+  .tthd { font-size:13px; font-weight:600; margin-bottom:10px; } .ttsub { color:var(--dim); font-weight:400; font-size:11px; }
+  .ttopts { display:flex; flex-direction:column; gap:7px; }
+  .ttbtn { text-align:left; background:var(--bg2); border:1px solid var(--line); border-radius:9px; padding:9px 12px; cursor:pointer; color:var(--txt); display:flex; flex-direction:column; gap:2px; }
+  .ttbtn.on { border-color:var(--accent); background:#0e2233; }
+  .ttlabel { font-weight:600; font-size:13px; } .ttnote { font-size:11px; color:var(--dim); }
+  .ttskip { font-size:11px; color:var(--dim); font-style:italic; margin-top:8px; text-align:center; }
+  .talkresult { border-radius:12px; padding:11px 14px; margin:8px 0; border:1px solid; }
+  .talkresult.good { background:#0e2a1a; border-color:var(--green); } .talkresult.bad { background:#241115; border-color:var(--redb); }
+  .trtag { font-weight:600; font-size:12px; } .talkresult p { margin:5px 0 0; font-size:13px; color:#c4ccd6; }
+  .presser { background:var(--card); border:1px solid var(--gold); border-radius:12px; padding:13px 15px; margin:8px 0 12px; }
+  .pressertag { display:inline-block; font-family:'Anton',sans-serif; letter-spacing:1.5px; font-size:11px; color:#1a1408; background:var(--gold); padding:3px 9px; border-radius:5px; margin-bottom:8px; }
+  .presserq { font-size:14px; font-weight:600; margin:0 0 10px; }
+  .presseropts { display:flex; flex-direction:column; gap:7px; }
+  .presserbtn { text-align:left; background:var(--bg2); border:1px solid var(--line); border-radius:9px; padding:9px 12px; cursor:pointer; color:var(--txt); font-size:13px; }
+  .presserbtn:hover { border-color:var(--gold); background:#241f10; }
+  .npstrip.legend .npstriptag { color:#1a7a3a; }
+  .scrapbook { border-color:var(--gold) !important; }
+  .scrapline { font-family:'Georgia',serif; font-style:italic; font-size:13.5px; color:#d8c98a; margin:0 0 7px; border-left:2px solid var(--gold); padding-left:10px; } .scrapline:last-child { margin-bottom:0; }
+  .causeway { background:linear-gradient(180deg,#2a1410,#1a1210); border:1px solid var(--gold); border-radius:12px; padding:13px 15px; margin:8px 0; font-size:13px; color:#ffe9c2; text-align:center; }
+  .injurynews { background:var(--card); border:1px solid var(--redb); border-radius:12px; padding:12px 15px; margin:8px 0; }
+  .injurytag { display:inline-block; font-family:'Anton',sans-serif; letter-spacing:1.5px; font-size:11px; color:#fff; background:var(--red); padding:3px 9px; border-radius:5px; margin-bottom:8px; }
+  .injurynews p { margin:0; font-size:13px; color:#c4ccd6; }
+  .injuryline { margin-bottom:7px !important; }
+  .verdict { text-align:center; font-family:'Georgia',serif; font-style:italic; font-size:15px; color:var(--gold); margin:10px auto 12px; max-width:46ch; }
+  .roarcard.stats { border-color:var(--accent); }
+  .statgrid { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-bottom:12px; }
+  .statbox { background:var(--bg2); border:1px solid var(--line); border-radius:9px; padding:10px; text-align:center; }
+  .statbox b { display:block; font-family:'Anton',sans-serif; font-size:26px; color:var(--accent); line-height:1; }
+  .statbox span { font-size:11px; color:var(--dim); }
+  .leanbar { display:flex; height:26px; border-radius:8px; overflow:hidden; margin-bottom:10px; border:1px solid var(--line); }
+  .leanfill { display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; color:#03070c; white-space:nowrap; }
+  .leanfill.local { background:var(--accent); } .leanfill.heritage { background:var(--gold); }
+  .leanverdict { text-align:center; font-weight:600; color:var(--txt) !important; margin:0 !important; }
+  .physionote { font-style:italic; color:#aeb6c0 !important; border-left:2px solid var(--redb); padding-left:10px; }
+  .physiosign { display:block; font-style:normal; font-size:11px; color:var(--dim); margin-top:4px; font-weight:600; }
+  .natmsg { background:linear-gradient(180deg,#10202b,#0c141b); border:1px solid var(--accent); border-radius:14px; padding:15px 16px; margin-bottom:12px; }
+  .natmsghd { display:flex; align-items:center; gap:11px; margin-bottom:10px; }
+  .natavatar { width:38px; height:38px; border-radius:50%; background:var(--accent); color:#03070c; font-family:'Anton',sans-serif; font-size:15px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+  .natfrom { font-weight:700; font-size:14px; } .natrole { font-size:11px; color:var(--dim); }
+  .natwelcome { font-size:14px; margin:0 0 7px; } .natwelcome b { color:var(--accent); }
+  .natbody { font-size:13px; line-height:1.55; color:#c4ccd6; margin:0 0 11px; }
+  .natdismiss { background:var(--accent); color:#03070c; border:none; border-radius:8px; padding:8px 15px; font-weight:700; cursor:pointer; font-size:13px; }
+  .selrow.injured { opacity:.5; cursor:not-allowed; }
+  .selrow.injured .selbox { color:var(--redb); border-color:var(--redb); }
+  .sideevent { background:linear-gradient(180deg,#10202b,#0c141b); border:1px solid var(--accent); border-radius:12px; padding:14px 16px; margin-bottom:14px; }
+  .sideeventtag { display:inline-block; font-family:'Anton',sans-serif; letter-spacing:1.5px; font-size:11px; color:#03070c; background:var(--accent); padding:3px 9px; border-radius:5px; margin-bottom:8px; }
+  .sideeventttl { font-weight:700; font-size:15px; margin-bottom:4px; }
+  .sideevent p { margin:0; font-size:13px; color:#c4ccd6; }
+  .finalrankbox { text-align:center; background:var(--card); border:1px solid var(--accent); border-radius:14px; padding:16px; margin-bottom:12px; }
+  .frlabel { display:block; font-size:11px; letter-spacing:2px; text-transform:uppercase; color:var(--dim); }
+  .frnum { font-family:'Anton',sans-serif; font-size:52px; line-height:1; color:var(--accent); display:block; margin:4px 0; }
+  .frmove { font-size:13px; font-weight:600; } .frmove.up { color:var(--green); } .frmove.down { color:var(--redb); } .frmove.flat { color:var(--dim); }
+  .roarscreen { text-align:center; padding-top:24px; }
+  .roarfinish { font-size:12px; letter-spacing:3px; text-transform:uppercase; color:var(--accent); font-weight:700; margin-bottom:6px; }
+  .roarttl { font-family:'Anton',sans-serif; font-size:clamp(40px,11vw,84px); line-height:.9; margin:6px 0 14px; text-transform:uppercase; }
+  .roarttl span { color:var(--accent); display:block; }
+  .roarsub { font-size:15px; color:#c4ccd6; max-width:60ch; margin:0 auto 14px; } .roarsub b { color:var(--txt); }
+  .roartag { font-size:17px; color:var(--gold); font-weight:600; margin-bottom:18px; }
+  .knowbtn { background:transparent; border:1.5px solid var(--accent); color:var(--accent); box-shadow:none; margin-bottom:10px; }
+  .knowbtn:hover:not(:disabled){ background:#0e2620; filter:none; color:var(--accent); }
+  .modalback { position:fixed; inset:0; z-index:300; background:rgba(3,6,10,.78); backdrop-filter:blur(3px); display:flex; align-items:center; justify-content:center; padding:24px; }
+  .modalbox { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:22px; max-width:340px; width:100%; text-align:center; box-shadow:0 20px 50px #000a; }
+  .modalttl { font-family:'Anton',sans-serif; font-size:22px; margin-bottom:8px; }
+  .modaltxt { font-size:13.5px; color:#c4ccd6; margin:0 0 18px; line-height:1.5; }
+  .modalbtns { display:flex; gap:10px; }
+  .modalcancel,.modalconfirm { flex:1; border:none; border-radius:10px; padding:13px; font-family:'Anton',sans-serif; font-size:14px; letter-spacing:.5px; text-transform:uppercase; cursor:pointer; transition:filter .1s; }
+  .modalcancel { background:#1a2430; color:var(--txt); border:1px solid var(--line); }
+  .modalconfirm { background:linear-gradient(135deg,var(--red),var(--redb)); color:#fff; }
+  .modalcancel:hover,.modalconfirm:hover { filter:brightness(1.1); }
+  .klhead { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:14px; }
+  .kltag { font-size:11px; letter-spacing:2px; color:var(--accent); font-weight:700; }
+  .klttl { font-family:'Anton',sans-serif; font-size:26px; margin:2px 0 0; }
+  .klback { background:var(--card); border:1px solid var(--line); color:var(--txt); border-radius:8px; padding:7px 12px; font-size:13px; cursor:pointer; flex-shrink:0; }
+  .klgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px; margin-bottom:16px; }
+  .klgrouphd { grid-column:1 / -1; font-family:'Anton',sans-serif; font-size:13px; letter-spacing:1px; text-transform:uppercase; color:var(--accent); margin-top:8px; padding-bottom:4px; border-bottom:1px solid var(--line); }
+  .klgrouphd:first-child { margin-top:0; }
+  .klcard { display:grid; grid-template-columns:34px 1fr auto; grid-template-rows:auto auto; gap:0 10px; align-items:center; text-align:left; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:9px 11px; cursor:pointer; color:var(--txt); }
+  .klcard:hover { border-color:var(--accent); background:#0e1c28; }
+  .klpos { grid-row:1 / 3; font-family:'Anton',sans-serif; font-size:12px; color:var(--dim); background:var(--bg2); border-radius:6px; padding:5px 0; text-align:center; }
+  .klname { font-weight:600; font-size:14px; } .klclub { font-size:11px; color:var(--dim); }
+  .klovr { grid-row:1 / 3; font-family:'Anton',sans-serif; font-size:20px; color:var(--accent); }
+  .klprofile { margin-bottom:16px; }
+  .klphero { display:flex; align-items:center; gap:14px; background:linear-gradient(135deg,#10202b,var(--card)); border:1px solid var(--accent); border-radius:14px; padding:16px; margin-bottom:14px; }
+  .klpovr { font-family:'Anton',sans-serif; font-size:46px; color:var(--accent); line-height:1; }
+  .klpname { font-family:'Anton',sans-serif; font-size:22px; line-height:1.1; }
+  .klprole { font-size:13px; color:#c4ccd6; margin-top:2px; } .klpclub { font-size:13px; color:var(--dim); margin-top:4px; }
+  .klpnat { font-size:12px; color:var(--accent); margin-top:4px; }
+  .klattrs { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px; }
+  .klattrtop { display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px; } .klattrtop b { font-family:'Anton',sans-serif; color:var(--accent); }
+  .klbar { height:7px; background:var(--bg2); border-radius:4px; overflow:hidden; } .klbarfill { height:100%; background:linear-gradient(90deg,var(--accent),#6fe3c0); border-radius:4px; }
+  .klcaps { background:var(--card); border:1px solid var(--gold); border-radius:10px; padding:10px 14px; font-size:14px; margin-bottom:12px; text-align:center; } .klcaps b { font-family:'Anton',sans-serif; font-size:18px; color:var(--gold); }
+  .klsection { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:10px; }
+  .klsection h4 { margin:0 0 6px; font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--dim); }
+  .klsection p { margin:0; font-size:13.5px; line-height:1.55; color:#c4ccd6; }
+  .newspaper { background:#f4f1e8; color:#1a1a17; border-radius:10px; padding:18px; margin-bottom:14px; box-shadow:0 8px 30px #0006; }
+  .npmast { text-align:center; border-bottom:3px double #1a1a17; padding-bottom:10px; margin-bottom:14px; }
+  .npname { display:block; font-family:'Anton',sans-serif; font-size:clamp(26px,7vw,44px); letter-spacing:1px; text-transform:uppercase; line-height:1; }
+  .npmeta { display:block; font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#555; margin-top:5px; font-style:italic; }
+  .npbody { display:grid; grid-template-columns:1fr 180px; gap:16px; margin-bottom:14px; }
+  .npscoreline { font-size:15px; margin-bottom:6px; } .npscoreline b { font-family:'Anton',sans-serif; font-size:20px; }
+  .nphead { font-family:'Georgia',serif; font-weight:700; font-size:21px; line-height:1.15; margin:4px 0 8px; color:#111; }
+  .nptext { font-size:13.5px; line-height:1.55; color:#2a2a26; margin:0 0 8px; column-count:1; }
+  .npscorers { font-size:13px; font-weight:600; color:#1a1a17; margin:0 0 8px; border-top:1px solid #1a1a1733; padding-top:6px; }
+  .npfact { font-size:12.5px; font-style:italic; color:#4a4a44; margin:0 0 8px; line-height:1.45; }
+  .npmotm { background:#1a1a17; color:#f4f1e8; border-radius:8px; padding:9px 11px; display:flex; flex-direction:column; gap:2px; }
+  .npmotmtag { font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:var(--gold); font-weight:700; }
+  .npmotmname { font-weight:700; font-size:14px; } .npmotmname i { font-weight:400; font-size:11px; opacity:.8; font-style:normal; }
+  .npmotmbonus { font-size:11px; color:var(--green); font-weight:600; }
+  .npside { border-left:2px solid #1a1a17; padding-left:14px; }
+  .npsidehd { font-family:'Anton',sans-serif; font-size:14px; text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px; border-bottom:1px solid #1a1a1755; padding-bottom:5px; }
+  .nprec { display:flex; flex-direction:column; gap:4px; }
+  .nprecrow { display:flex; justify-content:space-between; align-items:baseline; font-size:13px; border-bottom:1px dotted #1a1a1733; padding-bottom:3px; }
+  .nprecrow b { font-family:'Anton',sans-serif; font-size:18px; } .nprecrow.w b { color:#1a7a3a; } .nprecrow.d b { color:#9a7a10; } .nprecrow.l b { color:#a52a2a; }
+  .npwinpct { margin-top:8px; text-align:center; font-size:12px; font-weight:700; color:#555; }
+  .npstrip { border-top:1px solid #1a1a1733; padding:10px 0; } .npstrip.ret .npstriptag { color:#a52a2a; }
+  .npstriptag { display:block; font-family:'Georgia',serif; font-weight:700; font-size:14px; margin-bottom:3px; }
+  .npstrip p { margin:0; font-size:13px; line-height:1.5; color:#2a2a26; } .npstrip p b { color:#111; }
+  .npcolumns { display:grid; grid-template-columns:1fr 1fr; gap:16px; border-top:3px double #1a1a17; padding-top:12px; margin-top:6px; }
+  .npcol h4 { font-family:'Georgia',serif; font-size:14px; margin:0 0 6px; color:#111; }
+  .npcol ul { margin:0; padding-left:16px; } .npcol li { font-size:12.5px; line-height:1.5; color:#2a2a26; margin-bottom:3px; }
+  .npcol .quiet { font-size:12.5px; color:#777; font-style:italic; margin:0; }
+  .npcol .pothint { color:#1a7a3a; font-size:10px; }
+  @media (max-width:560px){ .npbody { grid-template-columns:1fr; } .npside { border-left:none; border-top:2px solid #1a1a17; padding-left:0; padding-top:12px; } .npcolumns { grid-template-columns:1fr; } }
+  .roarcard { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin:0 auto 12px; max-width:560px; text-align:left; }
+  .roarcard.advice { border-color:var(--accent); } .roarcard.hof { border-color:var(--gold); }
+  .roarcardhd { font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--dim); margin-bottom:8px; }
+  .roarline { font-size:13px; color:#c4ccd6; margin:0 0 8px; } .roarline:last-child { margin-bottom:0; }
+  .roarquote { font-size:14px; color:var(--txt); font-style:italic; margin:0; }
+  .roarnudge { font-size:13px; color:var(--accent); font-weight:600; margin:6px 0 0; }
+  .hofsave { margin-bottom:10px; }
+  .hofinput { width:100%; background:var(--bg2); border:1px solid var(--line); border-radius:8px; padding:9px 11px; color:var(--txt); font-size:14px; margin-bottom:8px; }
+  .hofbtn { background:var(--gold); color:#1a1408; border:none; border-radius:8px; padding:9px 16px; font-weight:700; cursor:pointer; font-size:14px; }
+  .roarline.saved { color:var(--green); font-weight:600; }
+  .hoflist { margin-top:10px; }
+  .hofrow { display:grid; grid-template-columns:24px 1fr auto auto; gap:10px; align-items:center; padding:7px 8px; border-radius:7px; font-size:13px; border-top:1px solid #ffffff10; }
+  .hofrow.top { background:#241f10; outline:1px solid var(--gold); }
+  .hofpos { font-family:'Anton',sans-serif; color:var(--dim); text-align:center; } .hofrow.top .hofpos { color:var(--gold); }
+  .hofname { font-weight:600; } .hoffinish { font-size:11px; color:var(--dim); } .hofrank { font-family:'Anton',sans-serif; color:var(--accent); }
+
+  .newsgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; } @media (max-width:720px){ .newsgrid { grid-template-columns:1fr; } }
+  .newsbox { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .newsbox.ret { border-left:3px solid var(--red); } .newsbox.dev { border-left:3px solid var(--gold); } .newsbox.in { border-left:3px solid var(--green); }
+  .newsbox h4 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); }
+  .newsbox ul { margin:0; padding-left:16px; } .newsbox li { font-size:13px; margin-bottom:5px; } .quiet { font-size:13px; color:var(--dim); font-style:italic; margin:0; }
+
+  .verdictcard { border-radius:14px; padding:18px; margin:14px 0; border:2px solid; text-align:center; }
+  .verdictcard.v4 { background:#0e2a1a; border-color:var(--green); } .verdictcard.v3 { background:#1a2f1a; border-color:var(--gold); } .verdictcard.v2 { background:#241f10; border-color:var(--gold); } .verdictcard.v1 { background:#241115; border-color:var(--red); }
+  .simbox { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:8px; margin-bottom:6px; }
+  .simrow { display:grid; grid-template-columns:1fr auto 34px; gap:10px; align-items:center; padding:9px 10px; border-radius:8px; margin:3px 0; border-left:3px solid; background:var(--bg2); }
+  .simrow.w { border-color:var(--green); } .simrow.d { border-color:var(--gold); } .simrow.l { border-color:var(--red); }
+  .simopp { font-size:13px; font-weight:600; } .simscore { font-family:'Anton',sans-serif; font-size:20px; } .simres { font-weight:700; font-size:13px; text-align:center; color:var(--dim); }
+  .simtotal { font-size:13px; color:#c4ccd6; padding:8px 10px; } .simtotal b { color:var(--gold); }
+  .grouptable { margin:6px 4px; border-top:1px solid var(--line); padding-top:6px; }
+  .gtrow { display:grid; grid-template-columns:24px 1fr auto auto; gap:8px; align-items:center; padding:5px 8px; border-radius:6px; font-size:13px; }
+  .gtrow.me { background:#0e2233; outline:1px solid var(--accent); }
+  .gtpos { color:var(--dim); font-weight:700; text-align:center; } .gtname { font-weight:600; } .gtpts { color:var(--gold); font-weight:700; } .gtgd { color:var(--dim); font-size:12px; min-width:28px; text-align:right; }
+  .finishtag { margin-top:10px; font-size:12px; letter-spacing:1px; text-transform:uppercase; color:var(--accent); font-weight:700; }
+  .simnote { font-size:11px; color:var(--dim); font-style:italic; margin:10px 0 0; text-align:center; }
+  .verdicttag { font-family:'Anton',sans-serif; font-size:30px; letter-spacing:1px; } .verdicttone { font-size:14px; color:#d4ddf2; max-width:60ch; margin:8px auto 0; }
+  .groupbox { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:14px; }
+  .groupbox h4 { margin:0 0 10px; font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--dim); }
+  .grouprow { display:flex; flex-wrap:wrap; gap:8px; } .gteam { background:var(--bg2); border:1px solid var(--line); border-radius:8px; padding:7px 11px; font-size:13px; font-weight:600; } .gteam.home { border-color:var(--red); } .gteam i { color:var(--gold); font-style:normal; font-size:11px; margin-left:4px; }
+  .exppts { font-size:14px; margin-top:10px; } .exppts b { color:var(--gold); font-family:'Anton',sans-serif; font-size:18px; }
+  .propstats { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:14px 0; } .propstats div { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:13px; text-align:center; } .propstats b { font-family:'Anton',sans-serif; font-size:26px; color:var(--gold); display:block; } .propstats span { font-size:10px; color:var(--dim); text-transform:uppercase; letter-spacing:1px; }
+
+  .tip { position:relative; display:inline-block; }
+  .tip .tiptext { visibility:hidden; opacity:0; position:fixed; z-index:200; left:50%; bottom:24px; transform:translateX(-50%) translateY(8px); background:#03070c; color:var(--txt); border:1px solid var(--accent); border-radius:12px; padding:12px 14px; width:min(320px, calc(100vw - 28px)); font-size:12.5px; font-weight:400; line-height:1.5; text-transform:none; letter-spacing:0; transition:opacity .15s, transform .15s; pointer-events:none; box-shadow:0 10px 30px #000d; }
+  .tip:hover .tiptext, .tip:focus-within .tiptext, .tip.show .tiptext { visibility:visible; opacity:1; transform:translateX(-50%) translateY(0); }
+  .grouphead { font-size:10px; letter-spacing:1.5px; text-transform:uppercase; color:var(--accent); font-weight:700; padding:8px 8px 4px; position:sticky; top:0; background:var(--card); }
+  .grow { font-size:10px; font-weight:700; color:var(--green); cursor:help; }
+  .breaking { background:linear-gradient(180deg,#1c1012,#13171f); border:1px solid var(--red); border-radius:12px; padding:14px; margin-bottom:14px; }
+  .breakingtag { display:inline-block; font-family:'Anton',sans-serif; letter-spacing:2px; font-size:12px; color:#fff; background:var(--red); padding:3px 10px; border-radius:5px; margin-bottom:10px; }
+  .retcard { padding:8px 0; border-top:1px solid #ffffff14; } .retcard:first-of-type { border-top:none; }
+  .retname { font-size:15px; font-weight:700; } .retname .retmeta { font-size:11px; color:var(--dim); font-weight:500; }
+  .retbio { font-size:13px; color:#c4ccd6; margin:5px 0; } .retjob { font-size:13px; margin:0; color:var(--accent); } .retjob b { color:var(--txt); }
+  .pothint { font-size:10px; color:var(--green); }
+  @media (max-width:560px){ .topbar { grid-template-columns:repeat(2,1fr); } .propstats { grid-template-columns:1fr; } }
+  @media (prefers-reduced-motion: reduce){ * { transition:none !important; } }
+`;
+</script>
+
+<script>
+(function () {
+  var ROOT = document.getElementById("root");
+  function showError(msg) {
+    ROOT.innerHTML =
+      '<div class="errbox"><b>Something went wrong loading the game.</b>\n\n' +
+      String(msg).replace(/</g, "&lt;") +
+      '\n\nIf you are viewing this inside an app preview, open the real website link in your browser instead.</div>';
+  }
+
+  // Load a script with fallback CDNs. Calls done() on first success, fail() if all fail.
+  function loadScript(urls, done, fail) {
+    var i = 0;
+    function tryNext() {
+      if (i >= urls.length) { fail(); return; }
+      var s = document.createElement("script");
+      s.src = urls[i++];
+      s.crossOrigin = "anonymous";
+      s.onload = function () { done(); };
+      s.onerror = function () { tryNext(); };
+      document.head.appendChild(s);
+    }
+    tryNext();
+  }
+
+  var REACT = [
+    "https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js",
+    "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"
+  ];
+  var REACTDOM = [
+    "https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js",
+    "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"
+  ];
+  var BABEL = [
+    "https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js",
+    "https://unpkg.com/@babel/standalone@7.25.6/babel.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"
+  ];
+
+  function boot() {
+    try {
+      if (!window.React || !window.ReactDOM) { showError("React did not load from any CDN. Check your internet connection and try refreshing."); return; }
+      if (!window.Babel) { showError("The code compiler (Babel) did not load. Check your internet and refresh."); return; }
+      var hooks = "var useState=React.useState,useMemo=React.useMemo,useEffect=React.useEffect,useRef=React.useRef;\n";
+      var shim =
+        "window.storage={" +
+        "get:function(k){return Promise.resolve((function(){try{var v=localStorage.getItem(k);return v==null?null:{value:v};}catch(e){return null;}})());}," +
+        "set:function(k,val){return Promise.resolve((function(){try{localStorage.setItem(k,val);return {value:val};}catch(e){return null;}})());}," +
+        "del:function(k){return Promise.resolve((function(){try{localStorage.removeItem(k);return {deleted:true};}catch(e){return null;}})());}" +
+        "};\n";
+      var mount = "\nReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));";
+      var src = document.getElementById("appsrc").textContent;
+      var compiled = Babel.transform(hooks + src + mount, { presets: ["react"] }).code;
+      (0, eval)(shim + compiled);
+    } catch (err) {
+      showError((err && err.stack) || err);
+    }
+  }
+
+  // load React, then ReactDOM, then Babel, then boot
+  loadScript(REACT, function () {
+    loadScript(REACTDOM, function () {
+      loadScript(BABEL, boot, function () { showError("Could not load the compiler from any CDN."); });
+    }, function () { showError("Could not load ReactDOM from any CDN."); });
+  }, function () { showError("Could not load React from any CDN. If you are in an app preview, open the website link in a browser."); });
+})();
+</script>
+</body>
+</html>
