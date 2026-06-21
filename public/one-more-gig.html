@@ -19,23 +19,15 @@
       color: #71717A;
       letter-spacing: 0.1em;
       text-transform: uppercase;
-      flex-direction: column;
-      gap: 12px;
     }
   </style>
 </head>
 <body>
-  <div id="loading">
-    <span>Loading One More Gig...</span>
-  </div>
+  <div id="loading">Loading the studio...</div>
   <div id="root"></div>
-
-  <!-- React + ReactDOM UMD builds (no bundler needed) -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <!-- Babel standalone to transpile JSX in the browser -->
   <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
-
   <script type="text/babel">
 const { useState, useMemo, useCallback, useEffect, useRef, memo } = React;
 
@@ -3362,6 +3354,38 @@ function OneMoreGig() {
 
   // ---------- Render ----------
 
+  // Floating restart button — visible on all active game phases, not on
+  // foreword/create (no game started yet) or end screen (has its own replay button).
+  const showRestartBtn = !["foreword", "create", "end"].includes(phase);
+
+  const handleRestart = () => {
+    if (window.confirm("Start over? Your current run will be lost.")) {
+      setPhase("foreword");
+      setCharacter(null);
+      setStats(null);
+      setTurn(1);
+      setLog([]);
+      setReleases([]);
+      setMomentum([]);
+      setManager(null);
+      setCareerPath(null);
+      setActiveEncounter(null);
+      setLastDelta(null);
+      setLastReaction(null);
+      setLastChartResult(null);
+      setRunComparison(null);
+      recentReactionLines.length = 0;
+      recentReviewIdentities.length = 0;
+      recentReviewLines.length = 0;
+    }
+  };
+
+  const restartBtn = showRestartBtn ? (
+    <button onClick={handleRestart} style={styles.restartFloating} title="Restart run">
+      ↩ Restart
+    </button>
+  ) : null;
+
   if (phase === "foreword") {
     return (
       <div style={styles.app}>
@@ -3399,6 +3423,7 @@ function OneMoreGig() {
     return (
       <div style={styles.app}>
         <div style={styles.stage}>
+          {restartBtn}
           <div style={styles.eyebrow}>CAREER MOMENT</div>
           <h1 style={styles.h1}>Time to Pick Representation</h1>
           <div style={styles.forewordText}>
@@ -3435,6 +3460,7 @@ function OneMoreGig() {
     return (
       <div style={styles.app}>
         <div style={styles.stage}>
+          {restartBtn}
           <div style={styles.eyebrow}>CAREER MOMENT</div>
           <h1 style={styles.h1}>Pick Your Path</h1>
           <div style={styles.forewordText}>
@@ -3486,6 +3512,7 @@ function OneMoreGig() {
     return (
       <div style={styles.app}>
         <div style={styles.stage}>
+          {restartBtn}
           <div style={styles.eyebrow}>THE REVIEWS ARE IN</div>
           <h1 style={styles.h1}>"{release.title}"</h1>
           <div style={styles.chartSub}>
@@ -3527,6 +3554,7 @@ function OneMoreGig() {
     return (
       <div style={styles.app}>
         <div style={styles.stage}>
+          {restartBtn}
           <div style={styles.eyebrow}>CHART RESULT</div>
           <h1 style={styles.h1}>"{release.title}"</h1>
           {release.charted ? (
@@ -3774,6 +3802,7 @@ function OneMoreGig() {
   return (
     <div style={isFinalStretch ? styles.appLateGameBase : styles.app}>
       <div style={styles.stage}>
+        {restartBtn}
         <div style={styles.topRow}>
           <div>
             <div style={styles.eyebrow}>
@@ -4557,6 +4586,22 @@ const styles = {
   leaderboardName: { flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   leaderboardMeta: { color: COLORS.muted, fontWeight: 400, fontSize: 11.5 },
 
+  restartFloating: {
+    position: "fixed",
+    bottom: 20,
+    right: 16,
+    zIndex: 100,
+    background: COLORS.card,
+    border: `1px solid ${COLORS.line}`,
+    borderRadius: 20,
+    padding: "8px 14px",
+    fontSize: 12.5,
+    fontWeight: 600,
+    color: COLORS.muted,
+    cursor: "pointer",
+    boxShadow: "0 2px 8px rgba(0,0,0,0.10)",
+    letterSpacing: "0.01em",
+  },
   forewordText: { fontSize: 15.5, lineHeight: 1.65, color: COLORS.ink, marginBottom: 18, opacity: 0.85 },
   forewordOmen: {
     fontSize: 14,
@@ -4578,7 +4623,6 @@ const styles = {
 };
 
 
-    // Mount the app
     const loading = document.getElementById('loading');
     if (loading) loading.style.display = 'none';
     const root = ReactDOM.createRoot(document.getElementById('root'));
