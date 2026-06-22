@@ -104,7 +104,7 @@ async function loadDates(){
   }
 }
 
-function esc(s){ return (s||"").replace(/[&<>]/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c])); }
+function esc(s){ return String(s==null?"":s).replace(/[&<>]/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;" }[c])); }
 
 function render(data){
   out.innerHTML = "";
