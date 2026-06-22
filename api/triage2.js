@@ -183,7 +183,7 @@ module.exports = async (req, res) => {
     );
 
     results.sort((a, b) => b.score - a.score);
-    res.status(200).json({ build: "v3-newpath", date: chosen, dates, count: results.length, meets: results });
+    res.status(200).json({ build: "v1.0", date: chosen, dates, count: results.length, meets: results });
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
