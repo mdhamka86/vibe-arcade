@@ -182,7 +182,7 @@ module.exports = async (req, res) => {
     );
 
     results.sort((a, b) => b.score - a.score);
-    res.status(200).json({ build: "v2.1-mdpdf", date: chosen, dates, count: results.length, meets: results });
+    res.status(200).json({ build: "v2.3-fast", date: chosen, dates, count: results.length, meets: results });
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
