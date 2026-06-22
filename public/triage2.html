@@ -68,7 +68,7 @@
 // ---- password gate (client-side; keeps casual visitors out, not bulletproof) ----
 // Stores only a SHA-256 hash of the password, never the plain text.
 // To set your password: hash it and paste the hex below. See instructions in chat.
-const PASS_HASH = "REPLACE_WITH_YOUR_PASSWORD_HASH";
+const PASS_HASH = "c283bf2ce8d3227f28166598d4087c6d10e7b5141d142ff4ad2df3bc73c532b4";
 
 async function sha256Hex(str){
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
