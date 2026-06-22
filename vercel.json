@@ -1,3 +1,7 @@
 {
-  "outputDirectory": "public"
+  "outputDirectory": "public",
+  "functions": {
+    "api/triage.js": { "maxDuration": 10 },
+    "api/deep.js": { "maxDuration": 10, "memory": 1024 }
+  }
 }
