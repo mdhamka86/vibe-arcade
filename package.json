@@ -1,0 +1,7 @@
+{
+  "name": "vibe-arcade",
+  "private": true,
+  "dependencies": {
+    "unpdf": "^0.12.1"
+  }
+}
