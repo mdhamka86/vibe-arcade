@@ -17,6 +17,13 @@
   button.go:active{background:var(--accent2);}
   button.copy{background:var(--card);color:var(--accent);border:1px solid var(--accent2);width:100%;padding:14px;font-weight:600;margin:12px 0;}
   .status{color:var(--muted);font-size:13px;margin:12px 2px;min-height:18px;}
+  #gate{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;z-index:9999;}
+  #gate h2{font-size:18px;margin:0;}
+  #gate p{color:var(--muted);font-size:13px;margin:0;text-align:center;}
+  #gate input{font-size:16px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:13px 14px;width:100%;max-width:280px;}
+  #gate button{background:var(--accent);color:#04210f;font-weight:700;border:none;padding:13px 24px;font-size:16px;border-radius:12px;width:100%;max-width:280px;}
+  #gateErr{color:var(--warn);font-size:13px;min-height:16px;}
+  #app{display:none;}
   .meet{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px;}
   .meet.top{border-color:var(--accent2);}
   .meet h2{margin:0 0 6px;font-size:17px;display:flex;justify-content:space-between;align-items:center;gap:10px;}
@@ -36,6 +43,14 @@
 </style>
 </head>
 <body>
+  <div id="gate">
+    <h2>Outsider Triage</h2>
+    <p>Enter password to continue.</p>
+    <input id="gatePass" type="password" placeholder="Password" autocomplete="current-password" />
+    <button id="gateBtn">Unlock</button>
+    <div id="gateErr"></div>
+  </div>
+  <div id="app">
   <h1>Outsider Triage</h1>
   <div class="sub">Stage 1: one tap ranks every meet by diveability (analysis docs + class spread + depth, not just prize). Stage 2: deep-read the tipster PDFs on the meets worth it.</div>
 
@@ -47,8 +62,40 @@
   <div id="out"></div>
 
   <footer>Score weights analysis-doc availability (40), class spread (25), field depth (20), race count (15). Maiden-heavy cards penalised. Deep read extracts tipster text via serverless PDF parsing; convergence call still happens in chat.</footer>
+  </div>
 
 <script>
+// ---- password gate (client-side; keeps casual visitors out, not bulletproof) ----
+// Stores only a SHA-256 hash of the password, never the plain text.
+// To set your password: hash it and paste the hex below. See instructions in chat.
+const PASS_HASH = "c283bf2ce8d3227f28166598d4087c6d10e7b5141d142ff4ad2df3bc73c532b4";
+
+async function sha256Hex(str){
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+function unlockApp(){
+  document.getElementById("gate").style.display="none";
+  document.getElementById("app").style.display="block";
+}
+async function tryUnlock(){
+  const pass = document.getElementById("gatePass").value;
+  const err = document.getElementById("gateErr");
+  try{
+    const h = await sha256Hex(pass);
+    if(h === PASS_HASH){
+      sessionStorage.setItem("ot_ok","1");
+      unlockApp();
+    } else {
+      err.textContent = "Wrong password.";
+    }
+  }catch(e){ err.textContent = "Error: "+e; }
+}
+// already unlocked this tab session?
+if(sessionStorage.getItem("ot_ok")==="1"){ unlockApp(); }
+document.getElementById("gateBtn").addEventListener("click", tryUnlock);
+document.getElementById("gatePass").addEventListener("keydown", e=>{ if(e.key==="Enter") tryUnlock(); });
+
 const TRIAGE="/api/triage2", DEEP="/api/deep2";
 const dateSel=document.getElementById("dateSel"),goBtn=document.getElementById("goBtn"),copyBtn=document.getElementById("copyBtn"),statusEl=document.getElementById("status"),out=document.getElementById("out");
 let lastText="";
