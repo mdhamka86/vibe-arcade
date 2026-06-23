@@ -1,0 +1,3241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Prime Time Powerbomb — Wrestling Ratings War</title>
+<meta name="description" content="A text-based roguelite booking war. Run a wrestling promotion against a cutthroat rival every Monday night. Book matches and promos, crown champions, poach talent, sabotage the competition, and win the ratings war." />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: #07060e; }
+  #root { min-height: 100vh; }
+  .loading { color:#ff2e88; font-family:'Arial Narrow',sans-serif; text-align:center; padding-top:42vh;
+    font-size:13px; letter-spacing:.3em; text-transform:uppercase; }
+  .errbox { color:#ff8a8a; font-family:monospace; font-size:12px; white-space:pre-wrap; padding:20px; line-height:1.5; }
+</style>
+</head>
+<body>
+<div id="root"><div class="loading">Cueing the pyro…</div></div>
+
+<script id="appsrc" type="text/plain">
+
+// ============================================================
+// PRIME TIME POWERBOMB
+// A wrestling-promotion ratings-war roguelite. You're the booker of a
+// promotion locked in a Monday-night ratings war with a cutthroat rival.
+// Book three segments + a main event each week, crown and defend champions,
+// poach talent, chase wunderkind free agents, sabotage the competition,
+// and out-draw the enemy across a short, brutal run.
+// Engine architecture inspired by Apex & Attrition.
+// ============================================================
+
+// ---------- tiny rng helpers ----------
+const rand = (a, b) => a + Math.random() * (b - a);
+const randInt = (a, b) => Math.floor(rand(a, b + 1));
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+const chance = (p) => Math.random() < p;
+const shuffle = (arr) => {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+const uid = () => Math.random().toString(36).slice(2, 9);
+const round1 = (n) => Math.round(n * 10) / 10;
+// titles is a small flat structure { world:{...}, tag:{...} }; a shallow per-belt
+// clone is all we need and is far cheaper than a JSON serialize round-trip.
+const cloneTitles = (t) => ({ world: { ...t.world }, tag: { ...t.tag } });
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+
+// ============================================================
+// PROMOTION NAME GENERATION — randomised every run so the war feels fresh.
+// ============================================================
+const PROMO_PRE = ["Apex","Vortex","Dynasty","Havoc","Maximum","Prime","Crimson","Titan","Empire","Phantom",
+  "Sovereign","Riot","Vanguard","Onyx","Velocity","Renegade","Supreme","Atlas","Genesis","Mayhem",
+  "Thunder","Liberty","Ironclad","Outlaw","Pinnacle"];
+const PROMO_SUF = ["Wrestling Alliance","Championship Wrestling","Pro Wrestling","Wrestling Federation",
+  "Grappling Co.","Wrestling Entertainment","Mat Classic","Wrestling League","Combat Sports",
+  "Wrestling Group","Powerhouse Wrestling","Ring Dynasty"];
+function genPromoName(used) {
+  let n, g = 0;
+  do { n = `${pick(PROMO_PRE)} ${pick(PROMO_SUF)}`; g++; }
+  while (used && used.has(n.split(" ")[0]) && g < 40);
+  if (used) used.add(n.split(" ")[0]);
+  return n;
+}
+// short broadcast tag from a promo name, e.g. "Apex Wrestling Alliance" -> "AWA"
+function promoTag(name) {
+  const words = name.split(" ").filter(w => /^[A-Z]/.test(w));
+  let tag = words.map(w => w[0]).join("").slice(0, 4);
+  if (tag.length < 2) tag = name.slice(0, 3).toUpperCase();
+  return tag.toUpperCase();
+}
+
+// ============================================================
+// WRESTLER NAMES — wide pools + nation-flavoured names, single iconic ring
+// names, twisted legend nods (never exact), and puns. Big variety = unique runs.
+// ============================================================
+const FIRST_NAMES = ["Rex","Cole","Duke","Buck","Axel","Jax","Tank","Chase","Brock","Cade",
+  "Dash","Rod","Hank","Reed","Troy","Stone","Blaze","Cliff","Grit","Marcus",
+  "Damien","Tyson","Roman","Logan","Drew","Seth","Bo","Wade","Knox","Cash",
+  "Zane","Ace","Cyrus","Dante","Magnus","Ronan","Sol","Kade","Bishop","Crew"];
+const LAST_NAMES = ["Steele","Hammer","Cross","Savage","Knight","Granite","Thunder","Payne","Stone","Maverick",
+  "Storm","Blackwood","Rage","Wolfe","Crusher","Vain","Diesel","Slate","Brooks","Calloway",
+  "Valdez","Tanaka","Okoye","Volkov","Mbeki","Dragunov","Fox","Wilder","Steel","Mercer",
+  "Kane","Sinclair","Vega","Frost","Ryker","Quinn","Stratus","Bishop","Halloran","Drake"];
+
+const RING_NAMES = ["Goldmask","The Reaper","Apex","Dynamite","Maelstrom","Kingpin","Outlaw","Venom",
+  "Titan","Onyx","Havoc","Crusher","Spectre","Bonecrusher","Riptide","Inferno",
+  "Warhead","Juggernaut","Mauler","The Saint","Brimstone","Vortex","Hailstorm","Obsidian",
+  "Nightshade","Colossus","The Hangman","Razorback","Tombstone","El Relámpago"];
+
+const LEGEND_ALLUSION = ["Stone Cold Steve Austen","The Pebble","Hulk Smashan","Rick Flairs",
+  "Macho Man Randy Sausage","The Undertraker","Bret 'Hitmen' Heartz","Shaun Michael-Angelo",
+  "Triple X","John Cena-tor","Roman Ruins","Razor Ramen","Diesel Fumes","Goldburger",
+  "Sting-ray","Kevin Cash","Scott Hallway","The Big Show-Off","Rey Mysterioso","Eddie Guerill-a",
+  "Booker Tee","Jeff Hardly","Edge-ucated","Randy Ortolan","Kurt Anglo"];
+
+const PUN_NAMES = ["Hugh Mungus","Justin Time","Phil A. Buster","Sal Monella","Ray Sin",
+  "Crash Override","Buster Cherry","Rip Tide","Holden Court","Dwayne Pipe","Earl E. Riser",
+  "Lou Natic","Brick Wahlberg","Stan Dup","Manny Pulator","Sue Plex","Hammer Lockhart",
+  "Cliff Hanger","Kip Tieup","Beau Tonsnap"];
+
+const NICKNAMES = ["The People's Disappointment","The Modern-Day Marvel","Mr Monday Night","The Locker-Room Leader",
+  "The Submission Machine","The Human Highlight Reel","The Lunatic","The Franchise","The Phenom",
+  "The Architect","The Heartthrob","The Big Bad","The Underdog","The Cardio Kid",
+  "The Garbage-Can King","The Steel-Chair Sommelier","The Two-Move Wonder","The Promo God",
+  "The Catchphrase Machine","The Ladder-Match Lunatic","The Comeback Kid","The Ratings Royalty",
+  "The Hometown Hero","The Suplex Machine","The Powerhouse","The Showstopper","The Dark Horse"];
+
+const QUIRKS = ["Refuses to wrestle without his lucky kneepads.","Cuts a 20-minute promo to order a coffee.",
+  "Insists his entrance music run exactly 11 seconds longer than everyone else's.","Once no-sold a chokeslam out of pure stubbornness.",
+  "Brings a clipboard to the ring for 'data-driven offense'.","Has a tattoo of his catchphrase. Misspelled.",
+  "Allegedly hits harder after exactly one protein shake.","Cried during his own entrance. On purpose. It worked.",
+  "Names every steel chair he uses. The current one is 'Gerald'.","Communicates with the booker exclusively in GIFs.",
+  "Apologises to the ropes after every match.","Used to be a competitive arm-wrestler.",
+  "Reverses every car into every space, even the catering truck.","Has never lost a backstage segment.",
+  "Sells a punch like he's been hit by a freight train. Beloved for it.","Refers to himself in the third person mid-match.",
+  "Keeps a diary written entirely in kayfabe.","Warms up by shadow-wrestling an invisible opponent named Dave."];
+
+const BACKSTORIES = ["Indie darling signed off the back of one viral barn-burner.","Third-generation talent with canoe-sized boots to fill.",
+  "Ex-amateur champion who learned to talk on the indie circuit.","Came back from a career-threatening neck injury last year.",
+  "Discovered in a dojo overseas, came back stiff and silent.","Former pro footballer who hits like a truck and bumps like one.",
+  "Two-time runner-up forever chasing the title that got away.","Quietly the most experienced hand nobody books right.",
+  "Left a rival promotion under a cloud of backstage gossip.","Spent three years as enhancement talent before the big break.",
+  "Hometown hero with the loudest pop in the building.","Ex-bouncer who talked his way into a tryout and never left.",
+  "Trained in three countries, fluent in five styles of suplex.","Went viral for a moonsault off a moving forklift. Don't ask."];
+
+// ============================================================
+// NATIONS — wrestling is global. Free agents especially draw from a wide
+// world, each with cultural name flavour and a fan-appeal hint.
+// ============================================================
+const NATIONS = [
+  { code: "US", name: "American", flag: "USA", weight: 10, draw: 1.2,
+    f: ["Chuck","Brett","Dalton","Cody","Tyler","Hunter","Brock","Shane","Wyatt","Bo"],
+    l: ["Steele","Maverick","Calloway","Brooks","Hardin","Granger","Stone","Vance"] },
+  { code: "MX", name: "Mexican", flag: "MEX", weight: 7, draw: 1.15,
+    f: ["El Fuego","Rey","Místico","Hijo del","Ángel","Diablo","Relámpago","Volcán"],
+    l: ["Dorado","del Sol","Salazar","Guerrero","Tormenta","Negro","de la Muerte","Cruz"] },
+  { code: "JP", name: "Japanese", flag: "JPN", weight: 7, draw: 1.18,
+    f: ["Kenji","Hiro","Shingo","Riki","Tetsuya","Kazuki","Jun","Daichi"],
+    l: ["Tanaka","Okada","Nakamura","Ibushi","Goto","Sato","Takeshita","Endo"] },
+  { code: "GB", name: "British", flag: "GBR", weight: 6, draw: 1.05,
+    f: ["Will","Pete","Tyler","Trent","Ollie","Mark","Zack","Gus"],
+    l: ["Bance","Hartwell","Mastiff","Seven","Andrews","Ospreay-ish","Coffey","Ludwig"] },
+  { code: "CA", name: "Canadian", flag: "CAN", weight: 5, draw: 1.0,
+    f: ["Kenny","Tyson","Jonny","Ethan","Brodie","Petey","Teddy","Sami"],
+    l: ["Page","Kidd","Gargano-ish","Lumber","Hart","Williams","Cabana","Frost"] },
+  { code: "DE", name: "German", flag: "GER", weight: 3, draw: 0.95,
+    f: ["Axel","Klaus","Lars","Timo","Bruno","Stefan","Marius","Kurt"],
+    l: ["Dieter","Kaiser","Brandt","Vogel","Stark","Wagner","Eisen","Hauser"] },
+  { code: "IN", name: "Indian", flag: "IND", weight: 3, draw: 1.05,
+    f: ["Veer","Arjun","Ranveer","Sanga","Jeet","Dilsher","Rohan","Karan"],
+    l: ["Singh","Mahaan","Rana","Dhillon","Brar","Sharma","Khanna","Patel"] },
+  { code: "AU", name: "Australian", flag: "AUS", weight: 3, draw: 0.95,
+    f: ["Robbie","Buddy","Slade","Jonah","Kai","Marcus","Mick","Shane"],
+    l: ["Eagles","Murphy","Banks","Outback","Reynolds","Slater","Bronson","Cross"] },
+  { code: "IE", name: "Irish", flag: "IRL", weight: 2, draw: 1.0,
+    f: ["Finn","Sheamus-y","Jordan","Cillian","Rory","Eoin","Declan","Aiden"],
+    l: ["Devlin","O'Reilly","Banks","Maguire","Callan","Fitzpatrick","Brogan","Kelly"] },
+  { code: "ZA", name: "South African", flag: "RSA", weight: 2, draw: 0.9,
+    f: ["Dewald","Pieter","Sipho","Thabo","Brandon","Ruan","Kagiso","Lwazi"],
+    l: ["Botha","Mbeki","van Zyl","Okoye","Naidoo","Coetzee","Dube","Pretorius"] },
+  { code: "BR", name: "Brazilian", flag: "BRA", weight: 2, draw: 1.05,
+    f: ["Vinicius","Rafa","Diego","Caio","Bruno","Thiago","Léo","Mateus"],
+    l: ["Silva","Santos","Oliveira","Costa","Pereira","Almeida","Tigre","Rocha"] },
+  { code: "RU", name: "Russian", flag: "RUS", weight: 2, draw: 0.95,
+    f: ["Ivan","Dmitri","Sergei","Alexei","Yuri","Maxim","Nikita","Boris"],
+    l: ["Volkov","Dragunov","Petrov","Orlov","Kazakov","Ivanov","Bear","Stark"] },
+  { code: "KR", name: "Korean", flag: "KOR", weight: 1, draw: 1.0,
+    f: ["Jin","Min-jun","Tae","Seung","Hyun","Joon","Dae","Sung"],
+    l: ["Park","Kim","Lee","Choi","Han","Jung","Yoon","Bae"] },
+  { code: "PL", name: "Polish", flag: "POL", weight: 1, draw: 0.9,
+    f: ["Kuba","Bartek","Marek","Piotr","Wojtek","Igor","Janek","Tomasz"],
+    l: ["Nowak","Kowalski","Zielinski","Wójcik","Lewy","Mazur","Kaczmarek","Krol"] },
+  { code: "TO", name: "Tongan", flag: "TGA", weight: 1, draw: 1.05,
+    f: ["Sione","Tevita","Viliami","Mafi","Lopeti","Sela","Taukei","Manu"],
+    l: ["Taufa","Fifita","Tonga","Vailahi","Latu","Kava","Mata","Folau"] },
+];
+const NATION_WEIGHTED = NATIONS.flatMap(n => Array(n.weight).fill(n));
+function pickNation() { return pick(NATION_WEIGHTED); }
+function nationName(nation, used) {
+  let n, g = 0;
+  do { n = `${pick(nation.f)} ${pick(nation.l)}`; g++; } while (used && used.has(n) && g < 40);
+  if (used) used.add(n);
+  return n;
+}
+
+// nation-flavoured intro lines for wunderkinds (cultural, fun, non-stereotyped)
+const NATION_FLAVOR = {
+  US: "All-American hype machine with a marketing team already on speed-dial.",
+  MX: "A lucha legend in the making. The mask stays on, the high spots stay insane.",
+  JP: "Forged in the strong-style dojos. Hits like a truck, sells like a poet.",
+  GB: "World-of-Sport technician who can wrestle a broom to a four-star match.",
+  CA: "Polite, precise, and quietly the best pure worker in the building.",
+  DE: "Ruthless mat efficiency. The German crowds already chant the name.",
+  IN: "A genuine crossover superstar back home, arenas sell out on sight.",
+  AU: "Larrikin charisma and a lariat that's been known to flip referees.",
+  IE: "Bar-fight brawler with a silver tongue and a chip on the shoulder.",
+  ZA: "Explosive athlete with a backstory the documentary crews are circling.",
+  BR: "Carnival energy, capoeira kicks, and a smile that sells a million shirts.",
+  RU: "Cold, enormous, and utterly believable as the monster who ends careers.",
+  KR: "Taekwondo-based striker whose kicks have their own highlight reel.",
+  PL: "Hard-nosed powerhouse who treats every match like a title fight.",
+  TO: "Island royalty of the squared circle. Raw power, deep wrestling lineage.",
+};
+
+// ============================================================
+// TRAITS — meaningful, the booking sim reads these. One per wrestler.
+// ============================================================
+const TRAIT_BANK = [
+  { tag: "Ratings Magnet", desc: "Casuals tune in for this one. Big quarter-hour bumps.", eff: { ratings: 14 }, color: "#ffd54f" },
+  { tag: "Workrate Machine", desc: "Steals the show. In-ring matches overperform.", eff: { match: 16 }, color: "#4fc3f7" },
+  { tag: "Mic God", desc: "Promos that move the needle. Talking segments soar.", eff: { promo: 18 }, color: "#ce93d8" },
+  { tag: "Iron Man", desc: "Never hurt, never phones it in. Bulletproof.", eff: { injury: -0.05 }, color: "#a5d6a7" },
+  { tag: "Glass Jaw", desc: "Electric but fragile. Bigger matches AND more injuries.", eff: { matchBoost: 8, injury: 0.05 }, color: "#ff8a65" },
+  { tag: "Spot Monkey", desc: "High-risk daredevil. More highlights, more botches.", eff: { highspot: 0.2 }, color: "#fff176" },
+  { tag: "Slow Burn", desc: "Quiet now, megastar later. Popularity snowballs.", eff: { momentum: true }, color: "#ffab91" },
+  { tag: "Merch Mover", desc: "Sells shirts by the truckload. +income every show.", eff: { income: 0.7 }, color: "#f48fb1" },
+  { tag: "Botch Prone", desc: "Beloved but clumsy. More bad moments in big spots.", eff: { botch: 0.16 }, color: "#ef9a9a" },
+  { tag: "Veteran Glue", desc: "Elevates everyone. Tag & multi-man bonus.", eff: { multi: 14 }, color: "#b0bec5" },
+  { tag: "Hardcore Icon", desc: "Built for chaos. Huge bonus in gimmick/weapon matches.", eff: { hardcore: 18 }, color: "#aed581" },
+  { tag: "Crossover Star", desc: "Mainstream famous. Press and casual eyeballs.", eff: { ratings: 9, income: 0.4 }, color: "#90caf9" },
+  { tag: "Cult Favourite", desc: "Smarks adore them. Steady, reliable pops.", eff: { steady: 8 }, color: "#9fa8da" },
+  { tag: "Big Match Player", desc: "Rises to the occasion. Title matches & main events pop.", eff: { bigmatch: 16 }, color: "#ff7043" },
+];
+
+// ============================================================
+// ARCHETYPES — drive the stat spread. workrate (in-ring), mic (promo),
+// charisma (drawing power / how over they get).
+// ============================================================
+const ARCHETYPES = [
+  { tag: "Technical Wizard", workrate: [72, 95], mic: [40, 65], charisma: [45, 70] },
+  { tag: "Promo Machine", workrate: [45, 68], mic: [74, 96], charisma: [60, 85] },
+  { tag: "Total Package", workrate: [62, 84], mic: [62, 84], charisma: [62, 84] },
+  { tag: "Charisma Vacuum", workrate: [55, 88], mic: [22, 45], charisma: [30, 55] },
+  { tag: "Brawler", workrate: [55, 80], mic: [45, 72], charisma: [50, 78] },
+  { tag: "Raw Rookie", workrate: [40, 72], mic: [30, 58], charisma: [40, 70] },
+  { tag: "Grizzled Vet", workrate: [55, 75], mic: [62, 85], charisma: [65, 88] },
+  { tag: "Pure Athlete", workrate: [68, 92], mic: [30, 55], charisma: [45, 72] },
+  { tag: "Comedy Act", workrate: [40, 65], mic: [60, 88], charisma: [55, 82] },
+  { tag: "Monster Heel", workrate: [50, 78], mic: [35, 70], charisma: [60, 90] },
+];
+
+// ============================================================
+// PERSONAS — flavour that shows up during their matches/promos in the ticker.
+// Each persona has a set of signature lines the sim can surface.
+// ============================================================
+const PERSONAS = [
+  { tag: "The Loudmouth", lines: ["grabs the mic and runs down the entire front row by name",
+    "promises to 'main-event every pay-per-view from here to retirement'",
+    "tells the crowd they paid to see greatness and greatness has arrived"] },
+  { tag: "The Silent Killer", lines: ["says nothing, just points at the title and cracks knuckles",
+    "stares a hole through the opponent without blinking",
+    "lets a slow, menacing nod do all the talking"] },
+  { tag: "The Showoff", lines: ["nails a backflip off the top rope and poses for a full eight-count",
+    "blows kisses to the crowd mid-suplex",
+    "stops to fix their hair before the finish"] },
+  { tag: "The Brawler", lines: ["drags the fight into the front row and starts swinging",
+    "headbutts the ring post just to prove a point",
+    "spits at the opponent and dares them to bring it"] },
+  { tag: "The Technician", lines: ["chains three reversals so smooth the crowd applauds the sequence",
+    "ties the opponent in a knot and grins at the ref",
+    "works the leg with surgical, almost rude precision"] },
+  { tag: "The Daredevil", lines: ["dives clean over the top rope onto the entire roster",
+    "climbs to the absolute top of the set and the crowd gasps",
+    "calls for a table and the whole arena loses it"] },
+  { tag: "The Coward", lines: ["bails to the floor and hides behind the timekeeper",
+    "begs off in the corner, then sucker-punches on the break",
+    "grabs the ropes and demands the ref do something"] },
+  { tag: "The Hometown Hero", lines: ["soaks in a deafening hometown pop that shakes the rafters",
+    "points to a kid in the crowd before the comeback",
+    "rallies the building into a chant you can feel in your chest"] },
+  { tag: "The Powerhouse", lines: ["press-slams the opponent like they weigh nothing",
+    "no-sells a chair shot and just gets angrier",
+    "tosses an opponent halfway across the ring with one arm"] },
+  { tag: "The Trickster", lines: ["pulls the ref in front of a charging opponent",
+    "fakes an injury, then rolls them up out of nowhere",
+    "produces a foreign object from somewhere truly unsanitary"] },
+];
+
+// ============================================================
+// TIERS — main-eventers, mid-carders, jobbers. Gates match-type booking.
+// Derived from overall + popularity. A wrestler's tier is dynamic; great
+// booking promotes a mid-carder into the main event over a run.
+// ============================================================
+function wrestlerTier(w) {
+  const score = overallOf(w) * 0.55 + w.popularity * 0.45 + (w.isChampion ? 8 : 0);
+  if (score >= 72) return "main";
+  if (score >= 52) return "mid";
+  return "jobber";
+}
+const TIER_LABEL = { main: "Main Eventer", mid: "Mid-Carder", jobber: "Jobber" };
+const TIER_COLOR = { main: "#ffd54f", mid: "#4fc3f7", jobber: "#7d8590" };
+
+function overallOf(w) {
+  if (w.isTeam) return Math.round((w.members[0].o + w.members[1].o) / 2);
+  return Math.round((w.workrate + w.mic + w.charisma) / 3);
+}
+
+// resolve a participant's effective work/mic/charisma in one pass. singles carry
+// these directly; teams derive them by averaging their members, falling back to
+// the team overall if member stats are somehow missing. returning the trio in a
+// single call avoids re-scanning a team's members three times per score, and the
+// fallbacks guarantee finite numbers so segment scoring can never produce NaN.
+function effStats(w) {
+  if (!w.isTeam) {
+    return { wr: w.workrate, mc: w.mic, ch: w.charisma };
+  }
+  const m = w.members || [];
+  const avg = (key) => {
+    const vals = m.map(x => (typeof x[key] === "number" ? x[key] : null)).filter(v => v != null);
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : (overallOf(w) || 50);
+  };
+  return { wr: avg("workrate"), mc: avg("mic"), ch: avg("charisma") };
+}
+
+// split a roster into singles and tag teams, each sorted alphabetically by name.
+// used by the roster and raid screens so the talent reads like a clean call-sheet.
+function splitRoster(roster) {
+  const byName = (a, b) => a.name.localeCompare(b.name);
+  return {
+    singles: roster.filter(w => !w.isTeam).sort(byName),
+    teams: roster.filter(w => w.isTeam).sort(byName),
+  };
+}
+
+// ---------- wrestler name generator ----------
+function genWrestlerName(used, nation) {
+  let name, guard = 0;
+  do {
+    const r = Math.random();
+    if (nation && r < 0.55) name = nationName(nation, null); // nation-flavoured
+    else if (r < 0.62) name = pick(LEGEND_ALLUSION);
+    else if (r < 0.70) name = pick(PUN_NAMES);
+    else if (r < 0.86) name = pick(RING_NAMES);
+    else name = `${pick(FIRST_NAMES)} ${pick(LAST_NAMES)}`;
+    guard++;
+  } while (used && used.has(name) && guard < 60);
+  if (used) used.add(name);
+  return name;
+}
+
+// core generator. opts.parity squeezes stats toward a target for equal rosters.
+// opts.wunderkind makes a generational free agent. opts.nation forces origin.
+function genWrestler(used, opts = {}) {
+  const nation = opts.nation || (chance(0.4) ? pickNation() : null);
+  const name = opts.name || genWrestlerName(used, nation);
+  const a = opts.wunderkind
+    ? pick([ARCHETYPES[0], ARCHETYPES[1], ARCHETYPES[2], ARCHETYPES[7]]) // elite spreads
+    : pick(ARCHETYPES);
+
+  let workrate = randInt(a.workrate[0], a.workrate[1]);
+  let mic = randInt(a.mic[0], a.mic[1]);
+  let charisma = randInt(a.charisma[0], a.charisma[1]);
+
+  if (opts.parity) {
+    const t = opts.target || 60;
+    workrate = Math.round(workrate * 0.4 + t * 0.6 + randInt(-6, 6));
+    mic = Math.round(mic * 0.4 + t * 0.6 + randInt(-6, 6));
+    charisma = Math.round(charisma * 0.4 + t * 0.6 + randInt(-6, 6));
+  }
+  if (opts.wunderkind) {
+    workrate = Math.max(workrate, randInt(82, 96));
+    charisma = Math.max(charisma, randInt(80, 95));
+    mic = Math.max(mic, randInt(72, 94));
+  }
+  workrate = clamp(workrate, 20, 98);
+  mic = clamp(mic, 20, 98);
+  charisma = clamp(charisma, 20, 98);
+
+  const trait = opts.wunderkind
+    ? pick(TRAIT_BANK.filter(t => ["Ratings Magnet","Workrate Machine","Mic God","Crossover Star","Big Match Player"].includes(t.tag)))
+    : pick(TRAIT_BANK);
+  const overall = (workrate + mic + charisma) / 3;
+  const align = opts.align || (chance(0.5) ? "face" : "heel");
+
+  let popularity = opts.parity ? Math.round((opts.target || 60) + randInt(-8, 8))
+    : opts.wunderkind ? randInt(78, 92)
+    : randInt(25, 85);
+  if (trait.tag === "Ratings Magnet" || trait.tag === "Crossover Star") popularity = Math.min(100, popularity + 12);
+  if (a.tag === "Grizzled Vet") popularity = Math.min(100, popularity + 8);
+  popularity = clamp(popularity, 15, 100);
+
+  const contractWeeks = opts.parity ? randInt(3, 9) : opts.wunderkind ? 99 : randInt(1, 8);
+  const salary = round1(((overall + popularity) / 200) * 2.4);
+  const fee = Math.max(1, Math.round((overall + popularity - 70) / 7) + (trait.eff.ratings ? 2 : 0) + (opts.wunderkind ? 6 : 0));
+
+  return {
+    id: uid(), name, nation,
+    nickname: pick(NICKNAMES),
+    persona: pick(PERSONAS),
+    archetype: a.tag,
+    trait, align,
+    quirk: pick(QUIRKS),
+    backstory: opts.wunderkind ? wunderkindBackstory(nation) : pick(BACKSTORIES),
+    workrate, mic, charisma,
+    popularity, momentum: 0,
+    contractWeeks, salary, fee,
+    age: opts.wunderkind ? randInt(22, 28) : randInt(21, 44),
+    injured: 0,
+    isWunderkind: !!opts.wunderkind,
+    mainEvents: 0, showStealers: 0, botches: 0, titles: 0, isChampion: false,
+    pairCount: {},      // tracks tag-team chemistry with partners
+    isTeam: false,
+  };
+}
+
+// wunderkind flavour — a generational prospect with attitude
+function wunderkindBackstory(nation) {
+  const base = nation ? NATION_FLAVOR[nation.code] : "A generational talent who appeared out of nowhere.";
+  return base;
+}
+const WUNDERKIND_QUOTES = [
+  "\"I didn't come here to be a star. I came here to BE the business.\"",
+  "\"Your top guy? I'll have his spot, his belt, and his parking space by summer.\"",
+  "\"They're calling me the future. Cute. I'm the present, the future, and the highlight reel.\"",
+  "\"I've main-evented in five countries. This is just the sixth.\"",
+  "\"Sign me or watch me from the other side of the ratings war. Your call.\"",
+  "\"I'm not the next anybody. They'll be calling rookies the next ME.\"",
+  "\"Put me in the main event. I'll make your Monday night must-see TV.\"",
+  "\"I bump like a crash-test dummy and talk like a televangelist. Good luck.\"",
+];
+function genWunderkind(used) {
+  const nation = pickNation();
+  const w = genWrestler(used, { wunderkind: true, nation });
+  w.quote = pick(WUNDERKIND_QUOTES);
+  w.nickname = pick(["The Future","The Phenom","The Prodigy","The Generational Talent","The Can't-Miss Kid","The Golden Ticket","The Crown Jewel"]);
+  return w;
+}
+
+// ============================================================
+// TAG TEAMS — form naturally. Book two singles wrestlers together enough
+// times and they propose a team. Teams then act as one booking unit.
+// Wild, varied procedural names so every run's teams feel unique.
+// ============================================================
+const TEAM_NAME_ADJ = ["Brutal","Savage","Golden","Crimson","Iron","Velvet","Atomic","Lethal","Royal","Feral",
+  "Electric","Midnight","Diamond","Rabid","Sonic","Toxic","Phantom","Reckless","Maximum","Vicious"];
+const TEAM_NAME_NOUN = ["Dynasty","Outlaws","Brotherhood","Empire","Syndicate","Mafia","Wolves","Express",
+  "Conspiracy","Cartel","Machine","Order","Collective","Hooligans","Aces","Mercenaries","Saints","Dogs",
+  "Hurricane","Authority","Renegades","Bandits"];
+const TEAM_NAME_THE = ["The Powder Keg","The Highlight Reels","The Bar Fight","The Hostile Takeover",
+  "The Demolition Crew","The Wrecking Ball","The Last Call","The Main Event Mafia-ish","The Steel Curtain Call",
+  "The Suplex City Council","The Chair Shot Heard Round the World","The Tag Team Dream","The Doomsday Device"];
+const TEAM_NAME_PUN = ["Two Man Power Trip","Better Than You (Both of Them)","Assault & Battery",
+  "Pain & Gain","Thunder & Lightning","Salt & Vinegar","Hugh & Cry","Smash & Grab","Cease & Desist",
+  "Law & Disorder","Rhythm & Bruise","Aches & Pains"];
+function genTeamName(used) {
+  let n, g = 0;
+  do {
+    const r = Math.random();
+    if (r < 0.3) n = `${pick(TEAM_NAME_ADJ)} ${pick(TEAM_NAME_NOUN)}`;
+    else if (r < 0.5) n = pick(TEAM_NAME_THE);
+    else if (r < 0.68) n = pick(TEAM_NAME_PUN);
+    else if (r < 0.84) n = `The ${pick(TEAM_NAME_ADJ)} ${pick(TEAM_NAME_NOUN)}`;
+    else n = `${pick(TEAM_NAME_NOUN)} of ${pick(["Doom","Destruction","Mayhem","Chaos","Glory","Steel","Fury"])}`;
+    g++;
+  } while (used && used.has(n) && g < 50);
+  if (used) used.add(n);
+  return n;
+}
+
+// build a team unit from two singles wrestlers
+function formTeam(a, b, usedTeamNames) {
+  const name = genTeamName(usedTeamNames);
+  const o = Math.round((overallOf(a) + overallOf(b)) / 2);
+  // teams get a chemistry bonus to popularity
+  const pop = clamp(Math.round((a.popularity + b.popularity) / 2 + randInt(2, 10)), 15, 100);
+  return {
+    id: uid(),
+    isTeam: true,
+    name,
+    members: [
+      { id: a.id, name: a.name, o: overallOf(a), align: a.align, workrate: a.workrate, mic: a.mic, charisma: a.charisma },
+      { id: b.id, name: b.name, o: overallOf(b), align: b.align, workrate: b.workrate, mic: b.mic, charisma: b.charisma },
+    ],
+    memberIds: [a.id, b.id],
+    // a team's tag rating is the pair's average overall plus a small unit bonus
+    tagRating: clamp(Math.round((overallOf(a) + overallOf(b)) / 2) + randInt(2, 6), 10, 99),
+    align: a.align === b.align ? a.align : "face",
+    trait: (a.trait.eff.multi || b.trait.eff.multi) ? (a.trait.eff.multi ? a.trait : b.trait) : pick([a.trait, b.trait]),
+    persona: pick([a.persona, b.persona]),
+    nickname: pick(["The Tag Division's Finest","Future Hall of Famers","The Team to Beat","Money in the Bank-ish"]),
+    popularity: pop, momentum: 0,
+    contractWeeks: Math.min(a.contractWeeks, b.contractWeeks),
+    salary: round1(a.salary + b.salary),
+    fee: a.fee + b.fee,
+    injured: 0,
+    isChampion: false, isTagChampion: false,
+    mainEvents: 0, showStealers: 0, botches: 0, titles: 0,
+  };
+}
+
+// ============================================================
+// MATCH & SEGMENT TYPES — wide variety. Each has a base appeal, a tier
+// requirement, how many participants, and which stats it leans on.
+// "lean" weights: w=workrate, m=mic, c=charisma, hardcore flag, etc.
+// ============================================================
+const SEGMENT_TYPES = [
+  // ---- matches ----
+  { id: "singles", label: "Singles Match", kind: "match", slots: 2, team: false, base: 60,
+    lean: { w: 0.6, c: 0.4 }, tiers: ["mid","main"], desc: "One on one. The bread and butter." },
+  { id: "grudge", label: "Grudge Match", kind: "match", slots: 2, team: false, base: 66,
+    lean: { w: 0.5, c: 0.5 }, tiers: ["mid","main"], needsBeef: true, desc: "Settle the score. Heat sells." },
+  { id: "submission", label: "Submission Match", kind: "match", slots: 2, team: false, base: 64,
+    lean: { w: 0.8, c: 0.2 }, tiers: ["mid","main"], desc: "Tap or snap. Rewards pure workrate." },
+  { id: "tag", label: "Tag Team Match", kind: "match", slots: 2, team: true, base: 62,
+    lean: { w: 0.55, c: 0.45 }, tiers: ["mid","main"], desc: "Two on two. The tag division's stage." },
+  { id: "triple", label: "Triple Threat", kind: "match", slots: 3, team: false, base: 68,
+    lean: { w: 0.5, c: 0.5 }, tiers: ["mid","main"], desc: "Three way dance, no DQ, first fall wins." },
+  { id: "fourway", label: "Fatal Four-Way", kind: "match", slots: 4, team: false, base: 70,
+    lean: { w: 0.5, c: 0.5 }, tiers: ["mid","main"], desc: "Four in, chaos out. Star-studded." },
+  { id: "ladder", label: "Ladder Match", kind: "match", slots: 2, team: false, base: 74,
+    lean: { w: 0.7, c: 0.3 }, hardcore: true, tiers: ["mid","main"], desc: "Climb for the prize. High risk, high reward." },
+  { id: "hardcore", label: "Hardcore Match", kind: "match", slots: 2, team: false, base: 72,
+    lean: { w: 0.4, c: 0.6 }, hardcore: true, tiers: ["mid","main"], desc: "Anything goes. Weapons legal. Carnage." },
+  { id: "cage", label: "Steel Cage Match", kind: "match", slots: 2, team: false, base: 76,
+    lean: { w: 0.55, c: 0.45 }, hardcore: true, tiers: ["main"], desc: "Locked in. No escape. A main-event spectacle." },
+  { id: "battleroyal", label: "Battle Royal", kind: "match", slots: 6, team: false, base: 64,
+    lean: { w: 0.3, c: 0.7 }, tiers: ["jobber","mid","main"], desc: "Over the top, last one standing. Whole roster." },
+  // ---- title matches (star-makers) ----
+  { id: "title", label: "Championship Match", kind: "title", slots: 2, team: false, base: 82,
+    lean: { w: 0.55, c: 0.45 }, bigmatch: true, tiers: ["mid","main"], desc: "The singles title on the line. Careers are made here." },
+  { id: "titleladder", label: "Title Ladder Match", kind: "title", slots: 2, team: false, base: 86,
+    lean: { w: 0.7, c: 0.3 }, hardcore: true, bigmatch: true, tiers: ["main"], desc: "Belt hangs above the ring. Instant classic potential." },
+  { id: "tagtitle", label: "Tag Title Match", kind: "tagtitle", slots: 2, team: true, base: 80,
+    lean: { w: 0.55, c: 0.45 }, bigmatch: true, tiers: ["mid","main"], desc: "Tag gold on the line. Division-defining." },
+  // ---- promos / segments ----
+  { id: "promo", label: "In-Ring Promo", kind: "promo", slots: 1, team: false, base: 56,
+    lean: { m: 0.8, c: 0.2 }, tiers: ["mid","main"], desc: "Grab the mic, build the story." },
+  { id: "callout", label: "Call-Out Segment", kind: "promo", slots: 2, team: false, base: 62,
+    lean: { m: 0.7, c: 0.3 }, tiers: ["mid","main"], desc: "Face to face. Light the fuse for a feud." },
+  { id: "contract", label: "Contract Signing", kind: "promo", slots: 2, team: false, base: 64,
+    lean: { m: 0.6, c: 0.4 }, tiers: ["main"], desc: "Sign here. Then flip the table. Hypes a big match." },
+  { id: "backstage", label: "Backstage Vignette", kind: "promo", slots: 1, team: false, base: 52,
+    lean: { m: 0.5, c: 0.5 }, tiers: ["jobber","mid","main"], desc: "A taped skit. Cheap heat or cheap pop." },
+  { id: "interview", label: "Interview Segment", kind: "promo", slots: 1, team: false, base: 50,
+    lean: { m: 0.7, c: 0.3 }, tiers: ["jobber","mid","main"], desc: "Stand and deliver. Tests the gift of gab." },
+  { id: "turn", label: "Turn Promo", kind: "promo", slots: 1, team: false, base: 58, isTurn: true,
+    lean: { m: 0.65, c: 0.35 }, tiers: ["jobber","mid","main"], desc: "Flip a face to heel or heel to face. The crowd needs a beat to adjust, but it rebalances your roster." },
+];
+
+// championships: two per promotion (one singles, one tag)
+function makeTitles(promoName) {
+  return {
+    world: { id: uid(), name: `${promoName.split(" ")[0]} World Championship`, holderId: null, kind: "singles" },
+    tag: { id: uid(), name: `${promoName.split(" ")[0]} Tag Team Championship`, holderId: null, kind: "tag" },
+  };
+}
+
+// ============================================================
+// TICKER EVENT BANKS — surfaced live during a segment, ticker-style.
+// Pulled by segment kind. Big variety so shows feel different every week.
+// ============================================================
+const MATCH_HIGH = [
+  (a) => `${a} hits a picture-perfect dive and the crowd erupts.`,
+  (a) => `${a} kicks out at the last possible split second. The place is electric.`,
+  (a) => `${a} reverses a finisher into a near-fall that has everyone on their feet.`,
+  (a) => `A breathtaking exchange of counters from ${a} earns a standing ovation.`,
+  (a) => `${a} climbs to the top and connects flush. The arena shakes.`,
+  (a) => `${a} powers out of a submission through sheer will. Unreal.`,
+  (a) => `${a} lands a move nobody's seen before and the commentators lose it.`,
+];
+const MATCH_LOW = [
+  (a) => `${a} slips on the top rope but recovers. The crowd holds its breath.`,
+  (a) => `A botched spot leaves ${a} scrambling to cover. Awkward.`,
+  (a) => `${a} blows a sequence and the timing falls apart for a moment.`,
+  (a) => `The crowd goes quiet during a slow stretch from ${a}.`,
+  (a) => `${a} takes a nasty landing. Looks rough, keeps going.`,
+];
+const PROMO_HIGH = [
+  (a) => `${a} delivers a line that'll be on every highlight package this week.`,
+  (a) => `${a} works the crowd into a frenzy with a perfectly timed pause.`,
+  (a) => `${a} cuts a promo so sharp the opponent has no answer.`,
+  (a) => `${a} drops a catchphrase and the whole building says it back.`,
+  (a) => `${a} goes off-script and it's the most real thing on TV all year.`,
+];
+const PROMO_LOW = [
+  (a) => `${a} fumbles a line and the momentum stalls.`,
+  (a) => `${a} talks a beat too long and the crowd starts to drift.`,
+  (a) => `${a} reaches for heat that just isn't coming tonight.`,
+  (a) => `A mistimed interruption steps on ${a}'s big moment.`,
+];
+const HARDCORE_FLAVOR = [
+  (a) => `${a} sends someone through a table and the crowd chants for more.`,
+  (a) => `Chairs, ladders, and a trash can lid all make an appearance, courtesy of ${a}.`,
+  (a) => `${a} takes a sickening bump off the apron. "Holy ----" chant incoming.`,
+  (a) => `${a} sets up a spot so dangerous the referee covers their eyes.`,
+];
+const TITLE_FLAVOR = [
+  (a) => `${a} holds the belt aloft and the meaning of the moment lands on everyone.`,
+  (a) => `The championship raises the stakes; ${a} is wrestling like their career depends on it.`,
+  (a) => `${a} digs deeper than ever with gold on the line.`,
+  (a) => `Confetti, tears, the works. ${a} is making this title feel like the biggest prize in the sport.`,
+];
+const CROWD_FLAVOR = [
+  "The crowd splits into duelling chants.","A 'this is awesome' chant breaks out.",
+  "Someone in the front row holds up a sign the camera can't show.","The arena's so loud the broadcast mics peak.",
+  "A 'holy ----' chant rolls through the building.","The crowd is red-hot and feeding off every near-fall."];
+
+// score one participant's contribution to a segment, reading stats + trait + tier
+function participantScore(w, seg, ctx) {
+  const lean = seg.lean;
+  let s = 0;
+  // resolve effective stats once (teams average their members; see effStats).
+  // this is what stops tag matches poisoning the maths with NaN.
+  const { wr, mc, ch } = effStats(w);
+  if (seg.kind === "promo") {
+    s = mc * (lean.m || 0.7) + ch * (lean.c || 0.3);
+  } else {
+    s = wr * (lean.w || 0.5) + ch * (lean.c || 0.5);
+    if (lean.m) s += mc * lean.m;
+  }
+  s += ((w.popularity || 50) - 50) * 0.25;     // over wrestlers draw
+  s += (w.momentum || 0) * 1.5;                 // hot streaks matter
+
+  const tr = w.trait.eff;
+  if (tr.match && seg.kind === "match") s += tr.match;
+  if (tr.matchBoost && seg.kind === "match") s += tr.matchBoost;
+  if (tr.promo && seg.kind === "promo") s += tr.promo;
+  if (tr.ratings) s += tr.ratings * 0.5;
+  if (tr.hardcore && seg.hardcore) s += tr.hardcore;
+  if (tr.multi && seg.slots >= 3) s += tr.multi;
+  if (tr.steady) s += tr.steady;
+  if (tr.bigmatch && seg.bigmatch) s += tr.bigmatch;
+  if (tr.momentum) s += (w.momentum || 0) * 2;  // slow burn snowball
+
+  return s;
+}
+
+// ---------- the booking simulator: runs one segment, returns a ticker timeline ----------
+function simulateSegment(seg, participants, ctx) {
+  // participants: array of wrestler/team objects already chosen for this slot
+  const isTitle = seg.kind === "title" || seg.kind === "tagtitle";
+
+  // base quality from participants
+  let raw = seg.base;
+  let totalP = 0;
+  participants.forEach((w) => { totalP += participantScore(w, seg, ctx); });
+  const avgP = participants.length ? totalP / participants.length : 50;
+  raw += (avgP - 55) * 0.55;
+
+  // crowd / variance
+  raw += rand(-6, 6);
+
+  // chemistry: more participants = more ceiling but more botch risk
+  const timeline = [];
+  const beats = seg.kind === "promo" ? randInt(3, 4) : randInt(4, 6);
+  let botchCount = 0, highCount = 0;
+
+  const nameOf = (w) => w.name;
+  // push a beat only if its text isn't a repeat of one already shown this segment.
+  // tries a few times to find fresh flavour before giving up, which kills the
+  // "same line twice in a row" problem in the live ticker.
+  const seenLines = new Set();
+  const pushBeat = (type, textFn, tries = 5) => {
+    let text = textFn();
+    let n = 0;
+    while (seenLines.has(text) && n < tries) { text = textFn(); n++; }
+    if (seenLines.has(text)) return false; // genuinely couldn't find a fresh one
+    seenLines.add(text);
+    timeline.push({ type, text });
+    return true;
+  };
+
+  // opening beat
+  const opener = participants[0];
+  let openLine;
+  if (seg.kind === "promo") openLine = `${nameOf(opener)} ${pick(opener.persona.lines)}.`;
+  else openLine = `${nameOf(opener)} and ${participants.length > 1 ? nameOf(participants[1]) : "the field"} lock up to a big reaction.`;
+  seenLines.add(openLine);
+  timeline.push({ type: "neutral", text: openLine });
+
+  for (let i = 0; i < beats; i++) {
+    const actor = pick(participants);
+    const tr = actor.trait.eff;
+    const skill = (overallOf(actor) + actor.popularity) / 200;
+
+    let goodCut = 0.42 + skill * 0.2;
+    let botchCut = 0.14 - skill * 0.06 + (tr.botch || 0) + (tr.highspot ? 0.05 : 0);
+    if (seg.hardcore) botchCut += 0.03;
+
+    const roll = Math.random();
+    if (roll < botchCut) {
+      botchCount++;
+      raw -= rand(2, 5);
+      if (actor.botches != null) actor._botchedThis = true;
+      const fn = seg.kind === "promo" ? PROMO_LOW : MATCH_LOW;
+      pushBeat("bad", () => pick(fn)(nameOf(actor)));
+    } else if (roll < goodCut) {
+      highCount++;
+      raw += rand(2, 6) + skill * 3;
+      let bank;
+      if (isTitle) bank = TITLE_FLAVOR;
+      else if (seg.hardcore && chance(0.5)) bank = HARDCORE_FLAVOR;
+      else bank = seg.kind === "promo" ? PROMO_HIGH : MATCH_HIGH;
+      pushBeat("good", () => pick(bank)(nameOf(actor)));
+    } else {
+      if (chance(0.5)) pushBeat("neutral", () => pick(CROWD_FLAVOR));
+      else {
+        const actor2 = pick(participants);
+        pushBeat("neutral", () => actor2.persona ? `${nameOf(actor2)} ${pick(actor2.persona.lines)}.` : pick(CROWD_FLAVOR));
+      }
+    }
+  }
+
+  // closing beat
+  const finisher = participants[randInt(0, participants.length - 1)];
+  if (seg.kind === "promo") {
+    timeline.push({ type: "good", text: `${nameOf(finisher)} drops the mic. Segment over, point made.` });
+  } else {
+    raw += rand(0, 5);
+    timeline.push({ type: "good", text: `${nameOf(finisher)} hits the finish and gets the win to a huge reaction.` });
+  }
+
+  // final rating out of ~100 -> wrestling "star rating" out of 5 for matches.
+  // guard against any non-finite raw value so a single bad stat can never
+  // cascade a NaN through the whole show scoreboard.
+  if (!Number.isFinite(raw)) raw = seg.base || 50;
+  let rating = clamp(Math.round(raw), 8, 99);
+  const stars = Math.round((rating / 100) * 5 * 4) / 4; // quarter stars
+
+  return {
+    seg, participants, timeline, rating, stars,
+    botchCount, highCount,
+    winner: seg.kind !== "promo" ? finisher : null,
+  };
+}
+
+// ============================================================
+// RIVAL AI BOOKER — a cutthroat opponent. Books a smart card every week,
+// targeting variety, big-match feel, and its hottest talent in the main
+// event. Difficulty ramp gives it a slight edge that skill can overcome.
+// ============================================================
+function aiBookShow(promo, weekNum, difficulty) {
+  const roster = promo.roster.filter(w => w.injured <= 0);
+  const teams = roster.filter(w => w.isTeam);
+  const singles = roster.filter(w => !w.isTeam);
+  const byTier = (t) => singles.filter(w => wrestlerTier(w) === t);
+  const mains = byTier("main");
+  const mids = byTier("mid");
+
+  const card = [];
+  const used = new Set();
+  const grab = (pool, n) => {
+    const avail = pool.filter(w => !used.has(w.id));
+    const chosen = shuffle(avail).slice(0, n);
+    chosen.forEach(w => used.add(w.id));
+    return chosen;
+  };
+
+  // The AI books to its strengths: hot talent in marquee spots.
+  // 1) opener: a match or promo featuring a mid-carder
+  const openType = pick(SEGMENT_TYPES.filter(s => s.kind === "match" && s.slots === 2 && !s.bigmatch));
+  const oP = grab(mids.length >= 2 ? mids : singles, 2);
+  if (oP.length === 2) card.push(simulateSegment(openType, oP, { ai: true }));
+
+  // 2) a promo or tag to build variety
+  if (teams.length >= 2 && chance(0.5)) {
+    const tg = grab(teams, 2);
+    if (tg.length === 2) card.push(simulateSegment(SEGMENT_TYPES.find(s => s.id === "tag"), tg, { ai: true }));
+  } else {
+    const promoType = pick(SEGMENT_TYPES.filter(s => s.kind === "promo"));
+    const pP = grab([...mains, ...mids], promoType.slots);
+    if (pP.length === promoType.slots) card.push(simulateSegment(promoType, pP, { ai: true }));
+  }
+
+  // 3) a mid-to-upper card match, sometimes a title defence, OR a crowning
+  //    match if a belt was vacated by a raid (top priority for the rival).
+  const worldVacant = promo.vacated && promo.vacated.world != null && !promo.titles.world.holderId;
+  const tagVacant = promo.vacated && promo.vacated.tag != null && !promo.titles.tag.holderId;
+  if (tagVacant && teams.length >= 2) {
+    // crown new tag champs: two teams contest the vacant tag titles
+    const tg = grab(teams, 2);
+    if (tg.length === 2) {
+      const seg = simulateSegment(SEGMENT_TYPES.find(s => s.id === "tagtitle"), tg, { ai: true });
+      seg.isCrowning = true;
+      card.push(seg);
+    }
+  } else if (worldVacant && singles.length >= 2) {
+    // crown a new world champ: contest the vacant world title. draw from the
+    // best available, falling back to the wider singles pool so it reliably happens.
+    const pool = (mains.length + mids.length) >= 2 ? [...mains, ...mids] : singles;
+    const cr = grab(pool, 2);
+    if (cr.length === 2) {
+      const seg = simulateSegment(SEGMENT_TYPES.find(s => s.id === "title"), cr, { ai: true });
+      seg.isCrowning = true;
+      card.push(seg);
+    }
+  } else if (chance(0.4 + difficulty * 0.05) && promo.titles.world.holderId) {
+    const champ = roster.find(w => w.id === promo.titles.world.holderId && w.injured <= 0);
+    const challenger = grab(mains.filter(w => w.id !== (champ && champ.id)), 1)[0] || grab(mids, 1)[0];
+    if (champ && challenger) {
+      card.push(simulateSegment(SEGMENT_TYPES.find(s => s.id === "title"), [champ, challenger], { ai: true }));
+    }
+  } else {
+    const mt = pick(SEGMENT_TYPES.filter(s => s.kind === "match" && s.slots <= 3 && !s.bigmatch));
+    const mp = grab([...mains, ...mids], mt.slots);
+    if (mp.length === mt.slots) card.push(simulateSegment(mt, mp, { ai: true }));
+  }
+
+  // 4) MAIN EVENT: top stars, marquee match type
+  const meType = pick(SEGMENT_TYPES.filter(s => s.tiers.includes("main") && (s.bigmatch || s.base >= 70)));
+  const mePool = mains.length >= meType.slots ? mains : [...mains, ...mids];
+  const meP = grab(mePool, meType.slots);
+  if (meP.length === meType.slots) {
+    const meSeg = simulateSegment(meType, meP, { ai: true, mainEvent: true });
+    meSeg.rating = clamp(meSeg.rating + 6, 8, 99); // main-event bump
+    card.push(meSeg);
+  }
+
+  // overall show rating: weighted, main event counts double
+  return scoreShow(card, difficulty, true);
+}
+
+// compute a show's overall rating (a Nielsen-style number ~ 1.0 to 10.0)
+function scoreShow(card, difficulty, isAi) {
+  if (!card.length) return { card, overall: 0, nielsen: 1.0, peak: 0 };
+  let sum = 0, weight = 0;
+  card.forEach((s, i) => {
+    const w = i === card.length - 1 ? 2 : 1; // main event double weight
+    sum += s.rating * w; weight += w;
+  });
+  let overall = sum / weight;
+  // AI gets a small competence edge that scales with difficulty
+  if (isAi) overall += difficulty * 1.4;
+  overall = clamp(overall, 8, 99);
+  // convert to a Nielsen-style rating (segment 8-99 -> ~1.5-9.5)
+  const nielsen = round1(1.2 + (overall / 99) * 8.3);
+  const peak = Math.max(...card.map(s => s.rating));
+  return { card, overall: Math.round(overall), nielsen, peak };
+}
+
+// ============================================================
+// SABOTAGE — dirty tricks against the rival, à la the real ratings war
+// (spoiling results, poaching, counter-programming). Risk/reward: each has
+// upside and a backfire chance.
+// ============================================================
+const SABOTAGE_OPTIONS = [
+  { id: "spoiler", label: "Spoil their main event", cost: 2,
+    desc: "Leak the rival's taped main-event result on your broadcast. Classic Bischoff move.",
+    fx: (rivalShow) => ({ rivalPenalty: rand(0.4, 1.1), backfire: 0.2, msg: "You read their results live on air. Cold-blooded." }) },
+  { id: "counter", label: "Counter-program a star", cost: 3,
+    desc: "Put your hottest act head-to-head with their main event to steal the quarter-hour.",
+    fx: () => ({ selfBoost: rand(0.3, 0.9), backfire: 0.15, msg: "You went straight at them in the ratings. Bold." }) },
+  { id: "raid", label: "Backstage raid", cost: 4,
+    desc: "Send people to their parking lot to cause chaos and 'invade' the broadcast.",
+    fx: () => ({ rivalPenalty: rand(0.5, 1.4), selfBoost: rand(0.1, 0.5), backfire: 0.35, msg: "An invasion angle. The internet is on fire." }) },
+  { id: "presspoach", label: "Plant a poaching rumour", cost: 2,
+    desc: "Leak that you're signing their champion. Sows locker-room chaos over there.",
+    fx: () => ({ rivalPenalty: rand(0.3, 0.9), backfire: 0.25, msg: "Their locker room is reportedly in turmoil." }) },
+];
+
+function runSabotage(opt, rivalNielsen) {
+  const res = opt.fx();
+  const backfired = chance(res.backfire);
+  let rivalDelta = 0, selfDelta = 0, line;
+  if (backfired) {
+    line = `It backfired. ${pick(["The rival spun it into a sympathy angle.","Your own crowd turned on the stunt.","The press called it desperate.","It made their guy look like a megastar."])}`;
+    selfDelta -= rand(0.2, 0.7);
+    if (res.rivalPenalty) rivalDelta += rand(0.1, 0.4); // helped them instead
+  } else {
+    line = res.msg;
+    if (res.rivalPenalty) rivalDelta -= res.rivalPenalty;
+    if (res.selfBoost) selfDelta += res.selfBoost;
+  }
+  return { backfired, rivalDelta: round1(rivalDelta), selfDelta: round1(selfDelta), line };
+}
+
+// ============================================================
+// POST-SHOW EFFECTS — how a week of booking reshapes the roster.
+// Good segments raise popularity & momentum; title wins mint stars; big
+// matches and hardcore spots risk injury; contracts tick down.
+// ============================================================
+function applySegmentEffects(result, promo) {
+  const seg = result.seg;
+  const quality = result.rating;
+  result.participants.forEach((w) => {
+    const live = promo.roster.find(r => r.id === w.id);
+    if (!live) return;
+    // popularity shift scaled by segment quality vs their current pop
+    let popShift = (quality - live.popularity) * 0.10;
+    if (seg.bigmatch) popShift *= 1.6;            // title/main-event matches move the needle hard
+    if (seg.kind === "title" || seg.kind === "tagtitle") popShift *= 1.3;
+    popShift += rand(-1.5, 1.5);
+    live.popularity = clamp(Math.round(live.popularity + popShift), 10, 100);
+
+    // turn promo: flip alignment. the crowd needs a beat to recalibrate, so the
+    // wrestler takes a short-term popularity dip that the rebalanced roster repays.
+    if (seg.isTurn) {
+      const wasFace = live.align === "face";
+      live.align = wasFace ? "heel" : "face";
+      // a well-cut turn promo dips less; a flat one stings more
+      const dip = quality >= 70 ? randInt(3, 6) : randInt(6, 11);
+      live.popularity = clamp(live.popularity - dip, 10, 100);
+      live.justTurned = wasFace ? "heel" : "face";
+      result.turnNote = `${live.name} turned ${wasFace ? "heel" : "babyface"}! ${wasFace
+        ? "The boos are rolling in, and a new villain is born."
+        : "The crowd has come around, and a new fan favourite steps forward."}`;
+    }
+
+    // momentum: good shows build it, bad ones bleed it
+    if (quality >= 70) live.momentum = Math.min(6, (live.momentum || 0) + 1);
+    else if (quality < 45) live.momentum = Math.max(-3, (live.momentum || 0) - 1);
+
+    // career tally
+    if (result.botchCount && w._botchedThis) { live.botches = (live.botches || 0) + 1; delete w._botchedThis; }
+    if (quality >= 80) live.showStealers = (live.showStealers || 0) + 1;
+
+    // injury risk on physical/hardcore/big matches
+    if (seg.kind !== "promo") {
+      let injRisk = 0.015 + (seg.hardcore ? 0.03 : 0) + (seg.bigmatch ? 0.015 : 0);
+      injRisk += (live.trait.eff.injury || 0);
+      injRisk = Math.max(0.003, injRisk);
+      if (chance(injRisk)) {
+        live.injured = randInt(1, 3);
+        result.injuryNote = `${live.name} got banged up and will be out ${live.injured} week${live.injured > 1 ? "s" : ""}.`;
+      }
+    }
+  });
+
+  // title changes: if it's a title match, the winner can capture the belt
+  if ((seg.kind === "title" || seg.kind === "tagtitle") && result.winner) {
+    const titleKey = seg.kind === "title" ? "world" : "tag";
+    const title = promo.titles[titleKey];
+    const winner = promo.roster.find(r => r.id === result.winner.id);
+    if (winner && title.holderId !== winner.id) {
+      // challenger dethrones champ ~ proportional to match quality & their pop
+      const champ = promo.roster.find(r => r.id === title.holderId);
+      const upsetOdds = clamp(0.35 + (winner.popularity - (champ ? champ.popularity : 50)) / 200, 0.2, 0.75);
+      if (!title.holderId || chance(upsetOdds)) {
+        if (champ) champ.isChampion = false;
+        title.holderId = winner.id;
+        winner.isChampion = true;
+        winner.titles = (winner.titles || 0) + 1;
+        winner.popularity = clamp(winner.popularity + randInt(6, 14), 10, 100); // new champ bump
+        result.titleChange = `${winner.name} captures the ${title.name}!`;
+      } else {
+        result.titleChange = `${champ ? champ.name : "The champion"} retains the ${title.name} in a war.`;
+      }
+    } else if (winner && title.holderId === winner.id) {
+      result.titleChange = `${winner.name} successfully defends the ${title.name}.`;
+    }
+  }
+  if (result.winner) {
+    const win = promo.roster.find(r => r.id === result.winner.id);
+    if (win && seg.tiers && seg.tiers.includes("main")) win.mainEvents = (win.mainEvents || 0) + 1;
+  }
+}
+
+// tag-team chemistry: track player pairings; propose a team after enough bouts
+function trackTagChemistry(playerSegments, promo, usedTeamNames) {
+  const proposals = [];
+  playerSegments.forEach((res) => {
+    if (res.seg.team) return; // already a team match
+    if (res.seg.slots === 2 && res.seg.kind === "match" && res.participants.length === 2) {
+      const [a, b] = res.participants;
+      if (a.isTeam || b.isTeam) return;
+      const la = promo.roster.find(r => r.id === a.id);
+      const lb = promo.roster.find(r => r.id === b.id);
+      if (!la || !lb) return;
+      // only same-alignment singles can become a team
+      if (la.align !== lb.align) return;
+      la.pairCount = la.pairCount || {}; lb.pairCount = lb.pairCount || {};
+      la.pairCount[lb.id] = (la.pairCount[lb.id] || 0) + 1;
+      lb.pairCount[la.id] = (lb.pairCount[la.id] || 0) + 1;
+      if (la.pairCount[lb.id] === 2 && res.rating >= 55) {
+        proposals.push({ a: la, b: lb });
+      }
+    }
+  });
+  return proposals;
+}
+
+// ============================================================
+// STORYLINE ENGINE — angles emerge organically when a match rates well
+// and the two wrestlers' types blend into a recognisable classic shape.
+// Each archetype below is a real wrestling angle template: a trigger that
+// decides when it can form, escalation beats that build heat through
+// matches and promos, and a payoff fork (cash it in, or push it further
+// for more upside and more risk).
+// ============================================================
+const STORYLINE_ARCHETYPES = [
+  {
+    id: "slowburn",
+    name: "The Slow-Burn Rivalry",
+    blurb: "Two near-equals who keep being matched and keep raising the bar. The longer it simmers, the hotter the blow-off.",
+    // forms between two evenly-matched workers who put on a quality match
+    trigger: (a, b, res) => res.rating >= 66 && Math.abs(overallOf(a) - overallOf(b)) <= 10 && a.align !== b.align,
+    heatBuild: 10, escalateBonus: 6, payoffBase: 14, riskBase: 0.18,
+    beats: [
+      (a, b) => `${a.name} and ${b.name} went the distance again. The crowd is starting to feel the history between them.`,
+      (a, b) => `Every time ${a.name} and ${b.name} lock up, the building leans in. This one's got legs.`,
+      (a, b) => `The dirt sheets have a name for the ${a.name}–${b.name} series now. That's how you know it's working.`,
+    ],
+  },
+  {
+    id: "everyman",
+    name: "The Everyman vs Authority Feud",
+    blurb: "A beloved underdog against a powerful heel who looks down on them. The people's choice against the man holding the cards.",
+    trigger: (a, b, res) => res.rating >= 62 && a.align !== b.align &&
+      ((a.popularity >= 60 && b.archetype === "Monster Heel") || (b.popularity >= 60 && a.archetype === "Monster Heel") ||
+       Math.abs(a.popularity - b.popularity) >= 22),
+    heatBuild: 12, escalateBonus: 7, payoffBase: 16, riskBase: 0.16,
+    beats: [
+      (a, b) => `${a.name} stood up to ${b.name} tonight and the place came unglued. Classic people's-champion stuff.`,
+      (a, b) => `${b.name} keeps trying to bury ${a.name}, and the crowd keeps refusing to let it happen.`,
+      (a, b) => `This has become bigger than a match. It's the people versus the establishment now.`,
+    ],
+  },
+  {
+    id: "faction",
+    name: "The Faction Takeover",
+    blurb: "A dominant force trying to run the whole show, and the holdout standing in the doorway. Shades of the nWo's hostile takeover.",
+    trigger: (a, b, res) => res.rating >= 60 &&
+      ((a.archetype === "Monster Heel" || a.trait.tag === "Ratings Magnet") || (b.archetype === "Monster Heel" || b.trait.tag === "Ratings Magnet")),
+    heatBuild: 11, escalateBonus: 8, payoffBase: 15, riskBase: 0.22,
+    beats: [
+      (a, b) => `${a.name} is gathering momentum and bodies. It's starting to look like a takeover.`,
+      (a, b) => `${b.name} is the last one standing in the way. For now.`,
+      (a, b) => `Backstage, everyone's picking a side. The locker room is splitting in two.`,
+    ],
+  },
+  {
+    id: "monster",
+    name: "The Monster vs Hero Clash",
+    blurb: "An unstoppable wrecking machine and the hero brave or foolish enough to try to slay it. Will the giant finally fall?",
+    trigger: (a, b, res) => res.rating >= 60 && a.align !== b.align &&
+      (a.archetype === "Monster Heel" || b.archetype === "Monster Heel" || Math.abs(overallOf(a) - overallOf(b)) >= 12),
+    heatBuild: 10, escalateBonus: 7, payoffBase: 18, riskBase: 0.24,
+    beats: [
+      (a, b) => `${a.name} looked like a problem with no solution tonight. ${b.name} might be the only answer.`,
+      (a, b) => `The hero keeps getting knocked down. The question is whether they ever stay down.`,
+      (a, b) => `The whole arc is building to one moment: does the giant finally fall?`,
+    ],
+  },
+  {
+    id: "doubleturn",
+    name: "The Double-Turn",
+    blurb: "A feud so hot the crowd flips its allegiance mid-fight, hero becoming heel and heel becoming hero. The Bret–Austin special.",
+    trigger: (a, b, res) => res.rating >= 72 && a.align !== b.align,
+    heatBuild: 9, escalateBonus: 9, payoffBase: 20, riskBase: 0.30,
+    beats: [
+      (a, b) => `Something strange is happening: the crowd is starting to cheer ${b.name} and boo ${a.name}. The alignment is shifting under their feet.`,
+      (a, b) => `The lines are blurring. Nobody's quite sure who the good guy is anymore, and that's electric.`,
+      (a, b) => `One more big moment and this whole thing flips. A genuine double-turn in the making.`,
+    ],
+  },
+  {
+    id: "screwjob",
+    name: "The Betrayal Screwjob",
+    blurb: "Trusted allies until the knife comes out. A partner turns, a moment of treachery, and a new blood feud is born.",
+    trigger: (a, b, res) => res.rating >= 58 && a.align === b.align && res.seg.team,
+    heatBuild: 13, escalateBonus: 6, payoffBase: 19, riskBase: 0.20,
+    beats: [
+      (a, b) => `There was a flicker of tension between ${a.name} and ${b.name} out there. Trouble in paradise.`,
+      (a, b) => `The trust between ${a.name} and ${b.name} is fraying in front of everyone. Someone's going to turn.`,
+      (a, b) => `It's no longer if the betrayal comes, but when and how brutal.`,
+    ],
+  },
+
+  // ---- more singles angles: funny but plausible ----
+  {
+    id: "protege",
+    name: "The Mentor & Protégé Fallout",
+    blurb: "The grizzled veteran took the kid under his wing. Now the student is outshining the teacher, and the ego cannot take it.",
+    trigger: (a, b, res) => res.rating >= 60 && Math.abs(a.age - b.age) >= 9 && a.align === b.align,
+    heatBuild: 11, escalateBonus: 7, payoffBase: 16, riskBase: 0.20,
+    beats: [
+      (a, b) => `${a.name} and ${b.name} clearly have history. One of them taught the other everything they know.`,
+      (a, b) => `The pupil is starting to outshine the teacher, and you can see it gnawing at the old-timer.`,
+      (a, b) => `The respect has curdled into resentment. The student-surpasses-master story writes itself now.`,
+    ],
+  },
+  {
+    id: "lookalike",
+    name: "The Disputed Gimmick",
+    blurb: "Two wrestlers, suspiciously similar acts. Only one can own the gimmick, and they are going to fight over it. Petty, glorious television.",
+    trigger: (a, b, res) => res.rating >= 56 && a.archetype === b.archetype,
+    heatBuild: 9, escalateBonus: 6, payoffBase: 13, riskBase: 0.18,
+    beats: [
+      (a, b) => `Fans have noticed ${a.name} and ${b.name} are doing awfully similar things. Awkward.`,
+      (a, b) => `Now it's personal. Each insists they did it first and did it better.`,
+      (a, b) => `There can be only one. The 'who owns the gimmick' grudge match is booking itself.`,
+    ],
+  },
+  {
+    id: "cinderella",
+    name: "The Cinderella Run",
+    blurb: "A lovable lower-carder catches fire and the whole building gets behind the long shot. Every promotion needs an underdog story.",
+    trigger: (a, b, res) => res.rating >= 64 && (
+      (a.popularity < 45 && (a.momentum >= 2 || res.rating >= 72)) ||
+      (b.popularity < 45 && (b.momentum >= 2 || res.rating >= 72))
+    ),
+    heatBuild: 12, escalateBonus: 8, payoffBase: 17, riskBase: 0.22,
+    beats: [
+      (a, b) => `Nobody saw this coming, but the crowd has adopted the underdog and they are LOUD about it.`,
+      (a, b) => `The fairytale keeps rolling. Every week the long shot survives, the legend grows.`,
+      (a, b) => `One more win and the Cinderella story has its glass-slipper moment. Don't fumble it.`,
+    ],
+  },
+  {
+    id: "respect",
+    name: "The Battle of Respect",
+    blurb: "Two warriors who beat the tar out of each other and bow at the end. No villains here, just pride and a handshake that may or may not come.",
+    trigger: (a, b, res) => res.rating >= 70 && a.align === b.align && Math.abs(overallOf(a) - overallOf(b)) <= 8,
+    heatBuild: 9, escalateBonus: 7, payoffBase: 16, riskBase: 0.16,
+    beats: [
+      (a, b) => `${a.name} and ${b.name} went to war and tipped their caps after. The crowd respects them both.`,
+      (a, b) => `This isn't about hate. It's two of the best wanting to know who's better, and it's beautiful.`,
+      (a, b) => `The handshake-or-betrayal finish is loaded. Either way, this one means something.`,
+    ],
+  },
+  {
+    id: "obsession",
+    name: "The Unhinged Obsession",
+    blurb: "One wrestler has become fixated on another, and it has crossed from rivalry into something genuinely unsettling. Creepy vignette gold.",
+    trigger: (a, b, res) => res.rating >= 58 && a.align !== b.align && (a.archetype === "Monster Heel" || b.archetype === "Monster Heel" || a.persona !== b.persona),
+    heatBuild: 11, escalateBonus: 6, payoffBase: 14, riskBase: 0.24,
+    beats: [
+      (a, b) => `One of them won't stop talking about the other. It's gone past competitive into unsettling.`,
+      (a, b) => `The obsession is escalating. Lights flickering, cryptic messages, the whole nine yards.`,
+      (a, b) => `The fixation is at fever pitch. This needs a blow-off before it gets any stranger.`,
+    ],
+  },
+  {
+    id: "comeback",
+    name: "The Redemption Arc",
+    blurb: "A faded star claws back toward the top, with one obstacle in the way. Everyone loves to see a legend remember who they were.",
+    trigger: (a, b, res) => res.rating >= 62 && a.align !== b.align && ((a.age >= 35 && a.popularity >= 50) || (b.age >= 35 && b.popularity >= 50)),
+    heatBuild: 10, escalateBonus: 7, payoffBase: 17, riskBase: 0.20,
+    beats: [
+      (a, b) => `The veteran's still got something left, and the crowd is desperate to see one more run.`,
+      (a, b) => `Every obstacle they clear, the building gets louder. Redemption stories hit different.`,
+      (a, b) => `One more big win and the comeback is complete. Send them out on their shield or on top.`,
+    ],
+  },
+
+  // ---- tag-team angles (fire on team matches / same-alignment pairs) ----
+  {
+    id: "tagdominance",
+    name: "The Dominant Tag Dynasty",
+    blurb: "A team is steamrolling the division and someone has to rise up to stop them. The classic 'who can dethrone them' chase.",
+    trigger: (a, b, res) => res.seg.team && res.rating >= 64 && (a.popularity >= 62 || b.popularity >= 62),
+    heatBuild: 11, escalateBonus: 8, payoffBase: 21, riskBase: 0.20,
+    beats: [
+      (a, b) => `${a.name} and ${b.name} are running roughshod over the tag division. Somebody has to step up.`,
+      (a, b) => `The dynasty rolls on. Every challenger they flatten makes the eventual fall sweeter.`,
+      (a, b) => `The division is begging for a team to finally topple them. The stage is set.`,
+    ],
+  },
+  {
+    id: "tagtension",
+    name: "The Tag Team On The Brink",
+    blurb: "Miscommunication, a stolen pin, a missed tag. This team is one bad night away from imploding in spectacular fashion.",
+    trigger: (a, b, res) => res.seg.team && res.rating >= 56 && res.rating <= 74,
+    heatBuild: 12, escalateBonus: 6, payoffBase: 15, riskBase: 0.22,
+    beats: [
+      (a, b) => `The wheels are wobbling on ${a.name} & ${b.name}. A missed tag here, a glare there.`,
+      (a, b) => `The finger-pointing has started. This partnership is held together with tape and spite.`,
+      (a, b) => `One more mishap and they explode. The question is who throws the first punch.`,
+    ],
+  },
+  {
+    id: "tagunderdogs",
+    name: "The Scrappy Underdog Team",
+    blurb: "A patched-together duo nobody believed in starts winning. Two misfits, one dream, and a division that underestimated them.",
+    trigger: (a, b, res) => res.seg.team && res.rating >= 60 && (a.popularity < 55 || b.popularity < 55),
+    heatBuild: 11, escalateBonus: 8, payoffBase: 17, riskBase: 0.20,
+    beats: [
+      (a, b) => `Nobody gave ${a.name} & ${b.name} a shot, and look at them now. The crowd is buying in.`,
+      (a, b) => `The misfit team keeps proving people wrong. Heart over pedigree, every single week.`,
+      (a, b) => `The fairytale tag run is one win from glory. The underdogs are this close.`,
+    ],
+  },
+  {
+    id: "tagreunion",
+    name: "The Reunion Tease",
+    blurb: "Former partners, now on opposite sides, keep almost getting the band back together. Will they reunite, or is the old wound too deep?",
+    trigger: (a, b, res) => res.seg.team && res.rating >= 58 && a.align !== b.align,
+    heatBuild: 10, escalateBonus: 7, payoffBase: 17, riskBase: 0.18,
+    beats: [
+      (a, b) => `There's unfinished business between ${a.name} and ${b.name}. Old partners, now on opposite sides.`,
+      (a, b) => `The 'will they, won't they' reunion has the crowd hanging on every near-miss.`,
+      (a, b) => `The reunion is right there for the taking. One handshake away, or one final betrayal.`,
+    ],
+  },
+];
+
+function storylineArchetypeById(id) { return STORYLINE_ARCHETYPES.find(s => s.id === id); }
+
+// scan a freshly-resolved player segment for a brand-new storyline opportunity.
+// returns a storyline-seed object or null. only singles-or-team matches that
+// rate well and whose participants' types "blend" into a known shape qualify.
+function detectStoryline(res, existingStorylines) {
+  if (!res || res.seg.kind === "promo") return null;
+  // keep only real participants (drop any falsy/missing slots). works for both
+  // singles and team matches; the two principals are read from the first slots.
+  const parts = res.participants.filter(Boolean);
+  if (parts.length < 2) return null;
+  // only consider the two principals (first two slots) to keep angles legible
+  const a = parts[0], b = parts[1];
+  if (!a || !b) return null;
+  // don't double-book the same pair into a second storyline
+  const pairKey = [a.id, b.id].sort().join("~");
+  if (existingStorylines.some(s => s.pairKey === pairKey && s.status !== "resolved")) return null;
+  // find every archetype whose trigger fires, pick the richest one
+  const matches = STORYLINE_ARCHETYPES.filter(arch => {
+    try { return arch.trigger(a, b, res); } catch (e) { return false; }
+  });
+  if (!matches.length) return null;
+  // prefer the rarer/higher-payoff shapes when several qualify
+  matches.sort((x, y) => y.payoffBase - x.payoffBase);
+  const arch = matches[0];
+  return {
+    id: uid(),
+    archId: arch.id,
+    pairKey,
+    aId: a.id, bId: b.id,
+    aName: a.name, bName: b.name,
+    heat: arch.heatBuild,
+    stage: 1,            // escalation stage; grows with each match/promo featuring the pair
+    status: "active",    // active -> (resolved | collapsed)
+    bornWeek: null,      // filled in by caller
+    lastBeat: arch.beats[0](a, b),
+  };
+}
+
+// after a show, advance any active storyline whose pair appeared again this week.
+// matches escalate heat hard; promos escalate it a little. returns notes to surface.
+function advanceStorylines(storylines, playerCard, weekNum) {
+  const notes = [];
+  storylines.forEach(s => {
+    if (s.status !== "active") return;
+    const arch = storylineArchetypeById(s.archId);
+    if (!arch) return;
+    // did both principals feature together in any segment this week?
+    let featured = null;
+    playerCard.forEach(res => {
+      const ids = res.participants.map(p => p.id);
+      if (ids.includes(s.aId) && ids.includes(s.bId)) featured = res;
+    });
+    if (!featured) return;
+    const isMatch = featured.seg.kind !== "promo";
+    const gain = isMatch ? arch.escalateBonus + Math.round((featured.rating - 55) * 0.2)
+                         : Math.round(arch.escalateBonus * 0.55);
+    s.heat = clamp(s.heat + Math.max(2, gain), 0, 100);
+    s.stage = Math.min(3, s.stage + 1);
+    const beat = arch.beats[Math.min(arch.beats.length - 1, s.stage - 1)];
+    const aLive = { name: s.aName }, bLive = { name: s.bName };
+    s.lastBeat = beat(aLive, bLive);
+    notes.push({ tag: arch.name, status: "escalating", who: `${s.aName} vs ${s.bName}`, beat: s.lastBeat, heat: s.heat });
+  });
+  return notes;
+}
+
+// resolve a storyline via the player's chosen fork.
+// "cash" = book the blow-off now: reliable popularity + money payoff.
+// "push" = escalate further for a bigger payoff, but a real chance it goes cold.
+function resolveStoryline(storyline, fork, promo) {
+  const arch = storylineArchetypeById(storyline.archId);
+  const a = promo.roster.find(r => r.id === storyline.aId);
+  const b = promo.roster.find(r => r.id === storyline.bId);
+  const heatMult = 0.6 + storyline.heat / 100;     // hotter angles pay more
+  const out = { storylineId: storyline.id, fork };
+
+  if (fork === "cash") {
+    const pop = Math.round(arch.payoffBase * heatMult);
+    const cash = round1(arch.payoffBase * heatMult * 0.35);
+    if (a) a.popularity = clamp(a.popularity + pop, 10, 100);
+    if (b) b.popularity = clamp(b.popularity + Math.round(pop * 0.7), 10, 100);
+    storyline.status = "resolved";
+    out.success = true;
+    out.cash = cash;
+    out.line = `You cashed in the ${arch.name.toLowerCase()} between ${storyline.aName} and ${storyline.bName}. The blow-off delivered: both came out bigger stars, and the gate was healthy (+$${cash}K).`;
+    out.popA = pop;
+  } else {
+    // push further: gamble on an even bigger payoff
+    const risk = clamp(arch.riskBase + (storyline.stage >= 3 ? 0.12 : 0) - storyline.heat / 400, 0.05, 0.6);
+    if (chance(risk)) {
+      // it went cold
+      if (a) a.popularity = clamp(a.popularity - randInt(4, 9), 10, 100);
+      if (b) b.popularity = clamp(b.popularity - randInt(2, 6), 10, 100);
+      storyline.status = "collapsed";
+      out.success = false;
+      out.line = `You pushed the ${arch.name.toLowerCase()} further and it went cold. The crowd checked out before the payoff, and both wrestlers cooled off. A gamble that didn't land.`;
+    } else {
+      const pop = Math.round(arch.payoffBase * heatMult * 1.7);
+      const cash = round1(arch.payoffBase * heatMult * 0.6);
+      if (a) a.popularity = clamp(a.popularity + pop, 10, 100);
+      if (b) b.popularity = clamp(b.popularity + Math.round(pop * 0.75), 10, 100);
+      storyline.heat = clamp(storyline.heat + 12, 0, 100);
+      storyline.stage = Math.min(3, storyline.stage + 1);
+      out.success = true;
+      out.bigger = true;
+      out.cash = cash;
+      out.popA = pop;
+      out.line = `You pushed the ${arch.name.toLowerCase()} further and it paid off huge. ${storyline.aName} and ${storyline.bName} are now the hottest thing on the show (+$${cash}K, major popularity spike).`;
+      // a pushed-further angle stays live for one more cash-in
+      storyline.pushedOnce = true;
+    }
+  }
+  return out;
+}
+
+// ============================================================
+// THE OPPOSING GM — Nadine Naomi. A fierce-awesome rival promoter cut from
+// the cloth of the great women managers: Sensational Sherri's brash, in-your-
+// face command of a crowd and willingness to get physical, Miss Elizabeth's
+// poise, the conductor's touch for manipulating a room. She runs the enemy
+// promotion and, after every Monday night, files a barbed verdict on your show.
+//
+// EASTER EGG: for the first few weeks she's an unnamed "rival war room" voice.
+// Once the war heats up (REVEAL_WEEK), the curtain drops and it's Nadine Naomi,
+// signed and personal from then on.
+// ============================================================
+const NADINE_REVEAL_WEEK = 4;
+
+const NADINE_BIO = {
+  name: "Nadine Naomi",
+  title: "General Manager, the rival promotion",
+  tagline: "The First Lady of the ratings war.",
+  bio: "Equal parts ring general and ringmaster, Nadine Naomi runs the enemy show with a conductor's command of a crowd and a cheap-shot always loaded in her back pocket. Brash, brilliant, and impossible to ignore, she'd rather beat you on a banger than a fluke, and she'll tell you so to your face.",
+};
+
+// mystery-phase masks shown before the reveal
+const NADINE_MASKS = ["The Rival War Room", "The Enemy GM", "A Voice From The Other Side", "The Shadow Booker"];
+
+// her weekly verdict reacts to the RESULT. each bank is a set of short barbs.
+// Pre-reveal lines are deliberately faceless; post-reveal lines get personal.
+const NADINE_BARBS = {
+  // you decisively beat her
+  playerBigWin: [
+    "Fine. You got me tonight. Circle it on your calendar, because it won't be a habit.",
+    "A genuinely good show. I hate that I have to admit it. Don't get comfortable.",
+    "You won the night. Enjoy it. I'm already three weeks ahead of you in my head.",
+    "Credit where it's due, that was sharp booking. Now do it again next week. I'll wait.",
+  ],
+  // you edged her
+  playerWin: [
+    "A win's a win, I suppose. Yours was scrappy. Mine'll be surgical.",
+    "You squeaked it. Next Monday I'm not leaving it to the overnights.",
+    "Close one. You're learning. That's the part that worries me, honestly.",
+  ],
+  // a coin-flip
+  close: [
+    "A photo finish. The fans won, which means nobody important did. We go again.",
+    "Too close to call. I don't deal in 'close'. Tighten up or I'll bury you next week.",
+    "Dead heat. Adorable. One of us blinks first, and it won't be me.",
+  ],
+  // she beat you
+  rivalWin: [
+    "Out-booked. Out-classed. Out-drawn. Take notes, there'll be a quiz Monday.",
+    "I watched your main event. So did half your audience, before they flipped to me.",
+    "That's how it's done. Watch the tape. Specifically, watch my tape.",
+    "You brought a booking sheet to a war. Cute. I brought a flamethrower.",
+  ],
+  // she lost a championship this week
+  rivalLostBelt: [
+    "You took a belt off my show. Bold. I've built stars out of spite before, and I'll do it again.",
+    "Enjoy the gold while it's warm. I know exactly who's coming to take it back.",
+    "A title change. You've poked the bear. The bear has excellent booking instincts.",
+  ],
+  // a storyline popped on the player's show this week
+  storylineHot: [
+    "Oh, you've got an angle cooking? How precious. I've forgotten more storylines than you've booked.",
+    "A hot feud on your show. I noticed. So did my talent scouts. Mind your contracts.",
+    "Decent storyline. I'd have paid it off two weeks sooner, but you do you.",
+  ],
+  // you raided one of HER champions. this is war, and it's personal now.
+  raidedHer: [
+    "You stole my champion. My CHAMPION. Enjoy them, because I'm coming for everything you love next.",
+    "Bold move, raiding my titleholder. I built that star from nothing. I'll build another and run you over with them.",
+    "You think taking my champ wins you the war? You've just made me angry. Ask anyone how that ends.",
+    "Cute, swiping my belt-holder. I've got a crowning match and a long memory. Watch this space.",
+  ],
+};
+
+// pick Nadine's verdict for the week given the outcome and context.
+// returns { masked, name, line } where masked=true before the reveal.
+function nadineVerdict(ctx) {
+  const { week, diff, rivalLostBelt, storylineHot, youRaidedHer } = ctx;
+  let bank;
+  if (youRaidedHer) bank = NADINE_BARBS.raidedHer;
+  else if (rivalLostBelt && chance(0.6)) bank = NADINE_BARBS.rivalLostBelt;
+  else if (storylineHot && chance(0.5)) bank = NADINE_BARBS.storylineHot;
+  else if (diff > 1.2) bank = NADINE_BARBS.playerBigWin;
+  else if (diff > 0.3) bank = NADINE_BARBS.playerWin;
+  else if (diff >= -0.3) bank = NADINE_BARBS.close;
+  else bank = NADINE_BARBS.rivalWin;
+
+  const masked = week < NADINE_REVEAL_WEEK;
+  const isRevealWeek = week === NADINE_REVEAL_WEEK;
+  return {
+    masked,
+    isRevealWeek,
+    name: masked ? pick(NADINE_MASKS) : NADINE_BIO.name,
+    line: pick(bank),
+  };
+}
+
+// ============================================================
+// WEEKLY REVIEW — funny quips + grade vs rival. The screenshot moment.
+// ============================================================
+const WIN_QUIPS = [
+  "The rival's booker is reportedly throwing a clipboard across the production truck.",
+  "Wrestling Twitter has declared your show 'a banger' in the only language it knows: all caps.",
+  "Somewhere, a rival executive is explaining to a network suit why they lost the night.",
+  "Your main event trended worldwide. The other guys trended too, but for the wrong reasons.",
+  "The dirt sheets gave your show the thumbs up. Don't let it go to your head.",
+  "A 'you still got it' chant broke out for a wrestler who never had it. Beautiful.",
+];
+const LOSE_QUIPS = [
+  "The rival ran a surprise return and your quarter-hours fell off a cliff.",
+  "Your main event was good. Theirs was a moment. That's the difference tonight.",
+  "The dirt sheets were kind. The ratings were not.",
+  "Half your audience flipped over at the top of the hour and didn't flip back.",
+  "A backstage source says morale is 'fine', which is exactly what they say when it isn't.",
+  "You got out-booked. It happens. Learn the lesson, book the comeback.",
+];
+const CLOSE_QUIPS = [
+  "Separated by a rounding error. This war is going down to the wire.",
+  "Too close to call until the overnights came in. Heart-stopping stuff.",
+  "A genuine coin-flip of a Monday night. The fans were the real winners. Gross, but true.",
+];
+
+function gradeWeek(playerNielsen, rivalNielsen) {
+  const diff = round1(playerNielsen - rivalNielsen);
+  let result, grade, quip;
+  if (diff > 0.3) { result = "win"; quip = pick(WIN_QUIPS); }
+  else if (diff < -0.3) { result = "loss"; quip = pick(LOSE_QUIPS); }
+  else { result = diff >= 0 ? "win" : "loss"; quip = pick(CLOSE_QUIPS); }
+  // letter grade off the player's own show quality
+  const g = playerNielsen;
+  grade = g >= 8 ? "A+" : g >= 7 ? "A" : g >= 6.2 ? "B+" : g >= 5.4 ? "B" : g >= 4.6 ? "C+" : g >= 3.8 ? "C" : g >= 3 ? "D" : "F";
+  return { result, diff, grade, quip };
+}
+
+// ============================================================
+// FREE-AGENT MARKET + WUNDERKIND RUMOURS
+// ============================================================
+function genFreeAgents(used, n) {
+  const pool = [];
+  for (let i = 0; i < n; i++) pool.push(genWrestler(used, {}));
+  pool.sort((a, b) => a.fee - b.fee);
+  return pool;
+}
+const RUMOR_LINES = [
+  "Dirt sheets are buzzing: a generational free agent is about to hit the open market. Every promotion will want them.",
+  "Word in the locker room is a can't-miss prospect just became available. Snap them up before the rival does.",
+  "A rumour is spreading fast: the next big thing is shopping for a contract. This is a chance to change your run.",
+  "Backstage whispers say a bona fide future superstar is testing free agency. Pounce next week or lose them.",
+];
+
+// ============================================================
+// RUN SETUP — build two equal promotions, pick a side, generate the world.
+// ============================================================
+const RUN_LENGTHS = [
+  { weeks: 8, label: "Sprint", desc: "8 weeks. A quick war, decided fast." },
+  { weeks: 12, label: "Standard", desc: "12 weeks. The classic ratings-war arc." },
+  { weeks: 16, label: "Saga", desc: "16 weeks. A grind. Build a dynasty or get buried." },
+];
+
+function buildPromotion(name, usedNames, usedTeamNames, isPlayer) {
+  const titles = makeTitles(name);
+  const roster = [];
+  // 6 singles at parity, spread across a target band for tier variety.
+  // 4 more singles for depth. assign alignments from a deliberately balanced
+  // pool so every promotion opens with a fair mix of faces and heels, which is
+  // what makes good opposing-alignment matches bookable from week one.
+  const targets = [74, 70, 64, 60, 56, 50, 58, 54, 52, 48];
+  // 10 singles -> 5 faces, 5 heels, shuffled so tiers aren't alignment-locked
+  const aligns = shuffle(["face","face","face","face","face","heel","heel","heel","heel","heel"]);
+  targets.forEach((t, i) => roster.push(genWrestler(usedNames, { parity: true, target: t, align: aligns[i] })));
+  // start with 2 tag teams each: one face team, one heel team, so the tag
+  // division also has a natural opposition built in from the start.
+  const teamAligns = ["face", "heel"];
+  for (let i = 0; i < 2; i++) {
+    const al = teamAligns[i];
+    const a = genWrestler(usedNames, { parity: true, target: randInt(54, 66), align: al });
+    const b = genWrestler(usedNames, { parity: true, target: randInt(54, 66), align: al });
+    const team = formTeam(a, b, usedTeamNames);
+    roster.push(team);
+  }
+  // assign the two belts to the most over eligible acts
+  const singles = roster.filter(w => !w.isTeam).sort((a, b) => b.popularity - a.popularity);
+  const teams = roster.filter(w => w.isTeam).sort((a, b) => b.popularity - a.popularity);
+  if (singles[0]) { singles[0].isChampion = true; titles.world.holderId = singles[0].id; singles[0].titles = 1; }
+  if (teams[0]) { teams[0].isChampion = true; teams[0].isTagChampion = true; titles.tag.holderId = teams[0].id; teams[0].titles = 1; }
+
+  return {
+    id: uid(), name, tag: promoTag(name), isPlayer,
+    roster, titles,
+    color: isPlayer ? null : "#c0392b",
+  };
+}
+
+// ---------- MAIN GAME COMPONENT ----------
+function Game() {
+  const [phase, setPhase] = useState("intro");
+  const [player, setPlayer] = useState(null);
+  const [rival, setRival] = useState(null);
+  const [week, setWeek] = useState(1);
+  const [totalWeeks, setTotalWeeks] = useState(12);
+  const [money, setMoney] = useState(20);
+  const [difficulty, setDifficulty] = useState(0);
+  const [playerColor, setPlayerColor] = useState("#ff2e88");
+
+  // booking state for the current week
+  const [card, setCard] = useState([]);            // chosen player segments (specs, not yet simmed)
+  const [pendingShow, setPendingShow] = useState(null);  // simmed player show
+  const [rivalShow, setRivalShow] = useState(null);
+  const [weekReview, setWeekReview] = useState(null);
+  const [revealIdx, setRevealIdx] = useState(0);
+  const [history, setHistory] = useState([]);       // per-week records
+  const [sabotageDone, setSabotageDone] = useState(null);
+  const [tagProposals, setTagProposals] = useState([]);
+  const [freeAgents, setFreeAgents] = useState([]);
+  const [wunderkindPending, setWunderkindPending] = useState(null); // a wunderkind on the market
+  const [rumorActive, setRumorActive] = useState(null);
+  const [setupRun, setSetupRun] = useState({ weeks: 12, side: null, options: null });
+  const [storylines, setStorylines] = useState([]);          // active/ resolved angles
+  const [freedFromLock, setFreedFromLock] = useState(new Set()); // ids sprung from the match-lock this week
+  const [lockEventNote, setLockEventNote] = useState(null);  // surfaced "sprung loose" headline
+  const [storylineResolve, setStorylineResolve] = useState(null); // a storyline awaiting the player's fork
+  const [heistBoost, setHeistBoost] = useState(0);   // pending ratings boost from a champion raid, applied to next show
+  const [heistNote, setHeistNote] = useState(null);  // headline describing the heist
+
+  const usedNames = useRef(new Set());
+  const usedTeamNames = useRef(new Set());
+
+  const wins = history.filter(h => h.result === "win").length;
+  const losses = history.filter(h => h.result === "loss").length;
+  let streak = 0;
+  for (let i = history.length - 1; i >= 0; i--) { if (history[i].result === "win") streak++; else break; }
+
+  // ---- start setup ----
+  function beginSetup() {
+    usedNames.current = new Set();
+    usedTeamNames.current = new Set();
+    setPhase("setup");
+  }
+
+  // ---- generate the two promotions and let player pick a side ----
+  function generateMatchup(weeks) {
+    const usedPromo = new Set();
+    const aName = genPromoName(usedPromo);
+    const bName = genPromoName(usedPromo);
+    const a = buildPromotion(aName, usedNames.current, usedTeamNames.current, true);
+    const b = buildPromotion(bName, usedNames.current, usedTeamNames.current, false);
+    setSetupRun({ weeks, side: null, options: [a, b] });
+  }
+
+  function chooseSide(promo, weeks) {
+    const opts = setupRun.options;
+    const other = opts.find(p => p.id !== promo.id);
+    promo.isPlayer = true; promo.color = playerColor;
+    other.isPlayer = false; other.color = "#c0392b";
+    setPlayer(promo);
+    setRival(other);
+    setTotalWeeks(weeks);
+    setWeek(1);
+    setMoney(20);
+    setDifficulty(0);
+    setHistory([]);
+    startWeek(promo, other, 1);
+  }
+
+  // ---- begin a booking week ----
+  function startWeek(p, r, wk) {
+    setCard([]);
+    setPendingShow(null);
+    setRivalShow(null);
+    setWeekReview(null);
+    setSabotageDone(null);
+    setTagProposals([]);
+    // in-week event: a random healthy wrestler is "sprung loose" and can work
+    // a second match this week despite the usual one-match lock. ~20% of weeks.
+    const healthy = (p.roster || []).filter(w => w.injured <= 0 && !w.isTeam);
+    if (healthy.length && chance(0.20)) {
+      const lucky = pick(healthy);
+      setFreedFromLock(new Set([lucky.id]));
+      setLockEventNote(`Backstage shake-up: ${lucky.name} has talked their way onto the card twice tonight. They can work a second match this week.`);
+    } else {
+      setFreedFromLock(new Set());
+      setLockEventNote(null);
+    }
+    // free agents refresh weekly; wunderkind appears if rumored last week
+    let fa = genFreeAgents(usedNames.current, randInt(3, 4));
+    if (rumorActive) {
+      const wk2 = genWunderkind(usedNames.current);
+      fa = [wk2, ...fa];
+      setWunderkindPending(wk2);
+      setRumorActive(null);
+    } else {
+      setWunderkindPending(null);
+      // chance to start a new rumour (1-2 per run, weighted to mid-run)
+      if (!rumorActive && wk >= 2 && wk <= (totalWeeks - 2) && chance(0.22)) {
+        setRumorActive(pick(RUMOR_LINES));
+      }
+    }
+    setFreeAgents(fa);
+    setPhase("contracts");
+  }
+
+  // ---- contract / roster actions ----
+  function signFreeAgent(fa) {
+    if (money < fa.fee) return;
+    setMoney(m => round1(m - fa.fee));
+    setPlayer(p => ({ ...p, roster: [...p.roster, { ...fa, contractWeeks: fa.isWunderkind ? 12 : randInt(4, 8) }] }));
+    setFreeAgents(list => list.filter(x => x.id !== fa.id));
+    if (fa.isWunderkind) setWunderkindPending(null);
+  }
+  function poachRival(w) {
+    const cost = w.fee + 3; // premium to poach
+    if (money < cost) return;
+    setMoney(m => round1(m - cost));
+
+    const wasChampion = w.isChampion;
+    const wasTagChamp = w.isTagChampion;
+
+    // pull them off the rival's roster and, if they held gold, vacate that belt
+    // and flag it for a crowning match on the rival's next show.
+    setRival(r => {
+      const roster = r.roster.filter(x => x.id !== w.id);
+      const t = cloneTitles(r.titles);
+      const vacated = { ...(r.vacated || {}) };
+      if (t.world.holderId === w.id) { t.world.holderId = null; vacated.world = week; }
+      if (t.tag.holderId === w.id) { t.tag.holderId = null; vacated.tag = week; }
+      return { ...r, roster, titles: t, vacated };
+    });
+
+    // bring them in. a poached champion arrives as a conquering hero: a popularity
+    // surge (scaled smaller since the ratings boost shares the reward).
+    const popBump = wasChampion ? randInt(8, 14) : 0;
+    setPlayer(p => ({
+      ...p,
+      roster: [...p.roster, {
+        ...w, isChampion: false, isTagChampion: false,
+        popularity: clamp((w.popularity || 50) + popBump, 10, 100),
+        contractWeeks: randInt(4, 8),
+      }],
+    }));
+
+    // the heist boosts your NEXT show's ratings (you stole the spotlight).
+    if (wasChampion) {
+      setHeistBoost(b => round1((b || 0) + rand(0.5, 0.9)));
+      setHeistNote(`You raided ${rival ? rival.name : "the rival"}'s ${wasTagChamp ? "tag team" : "world"} champion. The whole industry is talking, and ${w.name} arrives on your show as a marked star.`);
+    }
+  }
+  function reSign(w) {
+    const cost = Math.max(1, Math.round(w.fee / 2));
+    if (money < cost) return;
+    setMoney(m => round1(m - cost));
+    setPlayer(p => ({
+      ...p,
+      roster: p.roster.map(x => x.id === w.id ? { ...x, contractWeeks: x.contractWeeks + randInt(4, 7) } : x),
+    }));
+  }
+  function proceedToBooking() { setPhase("booking"); }
+
+  // ---- booking: add a segment spec to the card ----
+  function addSegment(seg, participants) {
+    setCard(c => [...c, { seg, participantIds: participants.map(p => p.id) }]);
+  }
+  function removeSegment(idx) {
+    setCard(c => c.filter((_, i) => i !== idx));
+  }
+
+  // ---- run the player's show, then the rival's, then grade ----
+  function runShow() {
+    // resolve participant ids -> live objects, simulate each player segment
+    const playerResults = card.map(({ seg, participantIds }) => {
+      const parts = participantIds.map(id => player.roster.find(r => r.id === id)).filter(Boolean);
+      return simulateSegment(seg, parts, { player: true, mainEvent: false });
+    });
+    // last segment is the main event: bump it
+    if (playerResults.length) {
+      const me = playerResults[playerResults.length - 1];
+      me.rating = clamp(me.rating + 6, 8, 99);
+      me.isMainEvent = true;
+    }
+    const pShow = scoreShow(playerResults, 0, false);
+
+    // rival books its show
+    const rShow = aiBookShow(rival, week, difficulty);
+
+    // sabotage adjustments
+    let pN = pShow.nielsen, rN = rShow.nielsen;
+    if (sabotageDone) {
+      rN = round1(Math.max(1.0, rN + sabotageDone.rivalDelta));
+      pN = round1(Math.max(1.0, pN + sabotageDone.selfDelta));
+    }
+    // champion-heist boost: stealing the rival's champ lifts your overnights.
+    if (heistBoost > 0) {
+      pN = round1(pN + heistBoost);
+      pShow.heistApplied = round1(heistBoost);
+    }
+    pShow.nielsen = pN; rShow.nielsen = rN;
+
+    setPendingShow(pShow);
+    setRivalShow(rShow);
+    setRevealIdx(0);
+    setPhase("showtime");
+  }
+
+  // ---- after the player has watched their show ticker, settle the week ----
+  function settleWeek() {
+    const pShow = pendingShow, rShow = rivalShow;
+    // snapshot pre-show popularity so the review can report who climbed (raid targets)
+    const prePop = {};
+    player.roster.forEach(w => { prePop[w.id] = w.popularity; });
+
+    // apply effects to player roster from each segment
+    const pClone = { ...player, roster: player.roster.map(r => ({ ...r })), titles: cloneTitles(player.titles) };
+    pShow.card.forEach(res => applySegmentEffects(res, pClone));
+
+    // apply lighter effects to rival from its own show (keeps their stars evolving)
+    const rClone = { ...rival, roster: rival.roster.map(r => ({ ...r })), titles: cloneTitles(rival.titles) };
+    rShow.card.forEach(res => applySegmentEffects(res, rClone));
+
+    // clear any belt-vacancy flag the rival resolved this week (a crowning match
+    // refilled the belt). if they failed to crown, the vacancy persists to next week.
+    if (rClone.vacated) {
+      const vac = { ...rClone.vacated };
+      if (rClone.titles.world.holderId) delete vac.world;
+      if (rClone.titles.tag.holderId) delete vac.tag;
+      rClone.vacated = vac;
+    }
+
+    // ---- storyline pass: advance existing angles, detect new ones ----
+    const slWorking = storylines.map(s => ({ ...s }));
+    const storyNotes = advanceStorylines(slWorking, pShow.card, week);
+    // detect at most one new storyline per week, from the best-rated qualifying match
+    const sortedByRating = [...pShow.card].filter(res => res.seg.kind !== "promo").sort((a, b) => b.rating - a.rating);
+    for (const res of sortedByRating) {
+      const seed = detectStoryline(res, slWorking);
+      if (seed) {
+        seed.bornWeek = week;
+        slWorking.push(seed);
+        const arch = storylineArchetypeById(seed.archId);
+        storyNotes.push({ tag: arch ? arch.name : "Storyline", status: "forming", who: `${seed.aName} vs ${seed.bName}`, beat: seed.lastBeat, heat: seed.heat });
+        break;
+      }
+    }
+    setStorylines(slWorking);
+
+    // a storyline that has reached stage 3 and run hot is ripe for a payoff fork
+    const ripe = slWorking.find(s => s.status === "active" && (s.stage >= 3 || s.heat >= 38) && !s.forkOffered);
+    let pendingFork = null;
+    if (ripe) { ripe.forkOffered = true; pendingFork = { ...ripe }; }
+
+    // tag-team proposals from player's booking
+    const proposals = trackTagChemistry(pShow.card, pClone, usedTeamNames.current);
+
+    // ---- review enrichment: best/worst match across BOTH shows, raid targets ----
+    const allMatches = [
+      ...pShow.card.filter(r => r.seg.kind !== "promo").map(r => ({ ...r, side: pClone.tag })),
+      ...rShow.card.filter(r => r.seg.kind !== "promo").map(r => ({ ...r, side: rClone.tag })),
+    ];
+    let bestMatch = null, worstMatch = null;
+    if (allMatches.length) {
+      bestMatch = allMatches.reduce((a, b) => b.rating > a.rating ? b : a);
+      worstMatch = allMatches.reduce((a, b) => b.rating < a.rating ? b : a);
+    }
+    const matchName = (res) => res.participants.map(p => p.name).join(res.seg.team ? " & " : " vs ");
+    const bestMatchInfo = bestMatch ? { label: bestMatch.seg.label, who: matchName(bestMatch), rating: bestMatch.rating, side: bestMatch.side } : null;
+    const worstMatchInfo = worstMatch ? { label: worstMatch.seg.label, who: matchName(worstMatch), rating: worstMatch.rating, side: worstMatch.side } : null;
+
+    // raid targets: your wrestlers who gained the most popularity tonight
+    const climbers = pClone.roster
+      .filter(w => prePop[w.id] != null && w.popularity - prePop[w.id] >= 4)
+      .map(w => ({ name: w.name, gain: w.popularity - prePop[w.id], pop: w.popularity }))
+      .sort((a, b) => b.gain - a.gain)
+      .slice(0, 3);
+
+    // contracts tick down; injuries heal
+    pClone.roster.forEach(w => {
+      w.contractWeeks = Math.max(0, w.contractWeeks - 1);
+      if (w.injured > 0) w.injured = Math.max(0, w.injured - 1);
+      if (w.trait && w.trait.eff && w.trait.eff.momentum && w.momentum > 0) w.popularity = clamp(w.popularity + 1, 10, 100);
+    });
+    rClone.roster.forEach(w => {
+      w.contractWeeks = Math.max(0, w.contractWeeks - 1);
+      if (w.injured > 0) w.injured = Math.max(0, w.injured - 1);
+    });
+    // rival re-signs its own expiring talent automatically (so you must poach early)
+    rClone.roster.forEach(w => { if (w.contractWeeks <= 0) w.contractWeeks = randInt(3, 6); });
+
+    // income: base broadcast + merch movers + popularity bonus + win bonus
+    const grade = gradeWeek(pShow.nielsen, rShow.nielsen);
+    let income = 4 + pShow.nielsen * 0.6;
+    pClone.roster.forEach(w => { if (w.trait && w.trait.eff && w.trait.eff.income && w.injured <= 0) income += w.trait.eff.income; });
+    if (grade.result === "win") income += 3;
+    const salaries = pClone.roster.reduce((s, w) => s + (w.salary || 0), 0);
+    const net = round1(income - salaries);
+
+    setMoney(m => round1(m + net));
+    setPlayer(pClone);
+    setRival(rClone);
+
+    // record + funny injury/title notes
+    const notes = [];
+    pShow.card.forEach(res => { if (res.titleChange) notes.push(res.titleChange); if (res.injuryNote) notes.push(res.injuryNote); if (res.turnNote) notes.push(res.turnNote); });
+    // surface the champion-heist headline if one happened this week
+    if (heistNote) notes.unshift(heistNote);
+
+    // did the rival crown a new champion this week to fill a belt you vacated?
+    const crownNotes = [];
+    rShow.card.forEach(res => {
+      if (res.titleChange && res.titleChange.includes("captures")) {
+        crownNotes.push(`${rival.name} crowned a new champion to fill the belt you raided: ${res.titleChange}`);
+      }
+    });
+    crownNotes.forEach(n => notes.push(n));
+
+    const rec = {
+      week, result: grade.result, grade: grade.grade, diff: grade.diff,
+      playerN: pShow.nielsen, rivalN: rShow.nielsen,
+      peak: pShow.peak, quip: grade.quip, notes,
+      net, income: round1(income), salaries: round1(salaries),
+    };
+    setHistory(h => [...h, rec]);
+
+    // Nadine Naomi's weekly verdict. she reacts to the result, and to whether a
+    // belt changed hands on your show (poking the bear), a storyline caught fire,
+    // or you raided one of HER champions (which makes it deeply personal).
+    const playerTookBelt = notes.some(n => n.includes("captures"));
+    const storylineHot = storyNotes.length > 0;
+    const youRaidedHer = !!heistNote;
+    const nadine = nadineVerdict({ week, diff: grade.diff, rivalLostBelt: playerTookBelt, storylineHot, youRaidedHer });
+
+    setWeekReview({ ...rec, pShow, rShow, proposals, storyNotes, bestMatch: bestMatchInfo, worstMatch: worstMatchInfo, climbers, nadine, heistApplied: pShow.heistApplied });
+    setTagProposals(proposals);
+    if (pendingFork) setStorylineResolve(pendingFork);
+    // clear the one-shot heist boost and note now that they've been spent
+    setHeistBoost(0);
+    setHeistNote(null);
+    setPhase("review");
+  }
+
+  // ---- resolve a ripe storyline via the player's chosen fork ----
+  function resolveStorylineFork(fork) {
+    if (!storylineResolve) return;
+    const pClone = { ...player, roster: player.roster.map(r => ({ ...r })), titles: cloneTitles(player.titles) };
+    const slWorking = storylines.map(s => ({ ...s }));
+    const live = slWorking.find(s => s.id === storylineResolve.id);
+    if (live) {
+      const out = resolveStoryline(live, fork, pClone);
+      if (out.cash) setMoney(m => round1(m + out.cash));
+      setPlayer(pClone);
+      setStorylines(slWorking);
+      setStorylineResolve({ ...storylineResolve, resolved: out });
+    }
+  }
+  function dismissStorylineFork() { setStorylineResolve(null); }
+
+  // ---- accept / decline a tag-team formation ----
+  function acceptTag(prop) {
+    setPlayer(p => {
+      const a = p.roster.find(r => r.id === prop.a.id);
+      const b = p.roster.find(r => r.id === prop.b.id);
+      if (!a || !b) return p;
+      const team = formTeam(a, b, usedTeamNames.current);
+      const roster = p.roster.filter(r => r.id !== a.id && r.id !== b.id);
+      roster.push(team);
+      return { ...p, roster };
+    });
+    setTagProposals(list => list.filter(x => !(x.a.id === prop.a.id && x.b.id === prop.b.id)));
+  }
+  function declineTag(prop) {
+    setTagProposals(list => list.filter(x => !(x.a.id === prop.a.id && x.b.id === prop.b.id)));
+  }
+
+  // ---- sabotage (pre-show, once per week) ----
+  function doSabotage(opt) {
+    if (money < opt.cost) return;
+    setMoney(m => round1(m - opt.cost));
+    const res = runSabotage(opt, rivalShow ? rivalShow.nielsen : 5);
+    setSabotageDone({ ...res, label: opt.label });
+  }
+  function skipSabotage() { setSabotageDone({ skipped: true }); }
+
+  // ---- advance to next week or end the run ----
+  function nextWeek() {
+    if (week >= totalWeeks) { setPhase("runend"); return; }
+    // difficulty creeps up as the war heats up, and harder if you're winning big
+    const lead = wins - losses;
+    setDifficulty(d => clamp(round1(d + 0.18 + Math.max(0, lead) * 0.04), 0, 5));
+    const nw = week + 1;
+    setWeek(nw);
+    startWeek(player, rival, nw);
+  }
+
+  function fullRestart() {
+    setPhase("intro"); setPlayer(null); setRival(null); setHistory([]);
+    setWeek(1); setMoney(20); setDifficulty(0);
+    setRumorActive(null); setWunderkindPending(null);
+    setStorylines([]); setStorylineResolve(null);
+    setFreedFromLock(new Set()); setLockEventNote(null);
+    setHeistBoost(0); setHeistNote(null);
+    usedNames.current = new Set(); usedTeamNames.current = new Set();
+  }
+
+  // ===================== RENDER =====================
+  return (
+    <Shell color={player ? player.color : playerColor}>
+      {phase === "intro" && <Intro onStart={beginSetup} />}
+      {phase === "setup" && (
+        <Setup
+          runLengths={RUN_LENGTHS}
+          options={setupRun.options}
+          onGenerate={generateMatchup}
+          onChoose={chooseSide}
+          playerColor={playerColor} setPlayerColor={setPlayerColor}
+          weeks={setupRun.weeks}
+        />
+      )}
+      {phase === "contracts" && player && (
+        <Contracts
+          player={player} rival={rival} money={money} week={week} totalWeeks={totalWeeks}
+          freeAgents={freeAgents} wunderkind={wunderkindPending} rumor={rumorActive}
+          onSign={signFreeAgent} onPoach={poachRival} onReSign={reSign}
+          onProceed={proceedToBooking}
+        />
+      )}
+      {phase === "booking" && player && (
+        <Booking
+          player={player} card={card} week={week} totalWeeks={totalWeeks}
+          onAdd={addSegment} onRemove={removeSegment} onRun={runShow}
+          freedFromLock={freedFromLock} lockEventNote={lockEventNote}
+          storylines={storylines}
+        />
+      )}
+      {phase === "showtime" && pendingShow && (
+        <ShowTime
+          player={player} rival={rival}
+          pShow={pendingShow} rShow={rivalShow}
+          sabotageOptions={SABOTAGE_OPTIONS} money={money}
+          sabotageDone={sabotageDone} onSabotage={doSabotage} onSkipSabotage={skipSabotage}
+          revealIdx={revealIdx} setRevealIdx={setRevealIdx}
+          onSettle={settleWeek}
+        />
+      )}
+      {phase === "review" && weekReview && (
+        <Review
+          review={weekReview} player={player} rival={rival}
+          tagProposals={tagProposals} onAcceptTag={acceptTag} onDeclineTag={declineTag}
+          week={week} totalWeeks={totalWeeks} wins={wins} losses={losses} streak={streak}
+          money={money} onNext={nextWeek}
+          storylineFork={storylineResolve} onResolveFork={resolveStorylineFork} onDismissFork={dismissStorylineFork}
+        />
+      )}
+      {phase === "runend" && (
+        <RunEnd
+          player={player} rival={rival} history={history}
+          wins={wins} losses={losses} totalWeeks={totalWeeks}
+          onRestart={fullRestart}
+        />
+      )}
+    </Shell>
+  );
+}
+
+// ============================================================
+// UI LAYER — sleek 80s-arcade wrestling: neon, chrome, bold display type,
+// subtle scanlines. Minimal emojis.
+// ============================================================
+const mono = "'JetBrains Mono', 'SF Mono', 'Roboto Mono', monospace";
+const display = "'Archivo', 'Arial Narrow', sans-serif";
+
+function Shell({ color, children }) {
+  const css = `
+    * { box-sizing: border-box; }
+    ::selection { background: ${color}; color: #07060e; }
+    @keyframes fadeUp { from {opacity:0; transform:translateY(8px);} to {opacity:1; transform:none;} }
+    @keyframes popIn { 0%{opacity:0; transform:translateY(10px) scale(.98);} 100%{opacity:1; transform:none;} }
+    @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.5;} }
+    @keyframes scan { 0%{background-position:0 0;} 100%{background-position:0 6px;} }
+    @keyframes glow { 0%,100%{filter:brightness(1);} 50%{filter:brightness(1.25);} }
+    .ptp-card { animation: fadeUp .34s ease both; }
+    .ptp-btn { transition: transform .08s ease, filter .15s ease; }
+    .ptp-btn:active { transform: scale(.97); }
+    .ptp-btn:hover { filter: brightness(1.14); }
+    .ptp-btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+    .ptp-pick { transition: all .12s ease; }
+    .ptp-pick:hover { border-color: ${color} !important; }
+    @media (prefers-reduced-motion: reduce){ .ptp-card{animation:none;} }
+  `;
+  return (
+    <div style={{
+      minHeight: "100vh", background: "#07060e", color: "#ece8f5",
+      fontFamily: mono, "--accent": color,
+      backgroundImage:
+        `radial-gradient(circle at 15% -10%, ${color}26, transparent 44%),
+         radial-gradient(circle at 90% 0%, #2a0a4a55, transparent 40%),
+         repeating-linear-gradient(0deg, rgba(255,255,255,.018) 0 1px, transparent 1px 3px)`,
+    }}>
+      <style>{css}</style>
+      <div style={{ maxWidth: 780, margin: "0 auto", padding: "20px 16px 72px" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function AccentBtn({ children, onClick, disabled, ghost, danger }) {
+  const bg = disabled ? "#23202e" : danger ? "#ff3b5c" : ghost ? "transparent" : "var(--accent)";
+  return (
+    <button className="ptp-btn" onClick={onClick} disabled={disabled} style={{
+      width: "100%", padding: "15px 18px", marginTop: 12,
+      background: bg,
+      color: disabled ? "#6a6580" : ghost ? "var(--accent)" : "#07060e",
+      border: ghost ? "1.5px solid var(--accent)" : "none",
+      borderRadius: 5, fontFamily: display, fontWeight: 800, fontSize: 16,
+      letterSpacing: ".05em", textTransform: "uppercase", cursor: disabled ? "default" : "pointer",
+      boxShadow: disabled || ghost ? "none" : `0 0 18px ${typeof bg === "string" && bg.startsWith("#") ? bg + "55" : "var(--accent)"}`,
+    }}>{children}</button>
+  );
+}
+function Eyebrow({ children, color }) {
+  return <div style={{ fontSize: 11, letterSpacing: ".26em", textTransform: "uppercase", color: color || "var(--accent)", fontWeight: 700, marginBottom: 6 }}>{children}</div>;
+}
+function Card({ children, style }) {
+  return <div className="ptp-card" style={{ background: "#120f1d", border: "1px solid #261f38", borderRadius: 8, padding: 16, marginBottom: 12, ...style }}>{children}</div>;
+}
+function AlignBadge({ align }) {
+  const face = align === "face";
+  return <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".1em", padding: "2px 6px", borderRadius: 3,
+    background: face ? "#1b3a2e" : "#3a1b22", color: face ? "#54e0a0" : "#ff7088", textTransform: "uppercase" }}>
+    {face ? "Face" : "Heel"}</span>;
+}
+function TierBadge({ w }) {
+  const t = wrestlerTier(w);
+  return <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".1em", padding: "2px 6px", borderRadius: 3,
+    background: "#1a1528", color: TIER_COLOR[t], border: `1px solid ${TIER_COLOR[t]}44`, textTransform: "uppercase" }}>
+    {TIER_LABEL[t]}</span>;
+}
+
+// ---------- Intro ----------
+function Intro({ onStart }) {
+  return (
+    <div className="ptp-card" style={{ paddingTop: 44 }}>
+      <Eyebrow>A wrestling ratings-war roguelite</Eyebrow>
+      <h1 style={{ fontFamily: display, fontWeight: 900, fontSize: 54, lineHeight: .9, margin: "6px 0 4px", letterSpacing: "-.02em", textShadow: "0 0 24px var(--accent)" }}>
+        PRIME<br/>TIME<br/><span style={{ color: "var(--accent)" }}>POWERBOMB</span>
+      </h1>
+      <p style={{ color: "#9b94b3", fontSize: 14, lineHeight: 1.6, maxWidth: 520, marginTop: 14 }}>
+        It's Monday night. Two wrestling promotions. One time slot. You're the booker, and every week you go to war with a rival show for the ratings. Book the matches, crown the champions, cut the promos, sign the next big thing before they do, and pull every dirty trick in the business. Every run is procedurally built, so no two wars play the same.
+      </p>
+      <div style={{ display: "flex", gap: 8, margin: "20px 0", flexWrap: "wrap" }}>
+        {[["Book", "3 segments + a main event"], ["Crown", "2 belts, made & broken"], ["Poach", "raid the rival roster"], ["Sabotage", "win at any cost"]].map(([a, b], i) => (
+          <div key={i} style={{ flex: "1 1 150px", border: "1px solid #261f38", borderRadius: 5, padding: "10px 12px", background: "#120f1d" }}>
+            <div style={{ fontSize: 11, color: "var(--accent)", letterSpacing: ".1em", fontWeight: 800 }}>{a.toUpperCase()}</div>
+            <div style={{ fontSize: 12, color: "#cfc8e6" }}>{b}</div>
+          </div>
+        ))}
+      </div>
+      <AccentBtn onClick={onStart}>Enter the war</AccentBtn>
+      <p style={{ color: "#5a5470", fontSize: 11, marginTop: 14, textAlign: "center" }}>
+        Inspired by the golden-age Monday Night Wars. Engine cousin of Apex &amp; Attrition.
+      </p>
+    </div>
+  );
+}
+
+// ---------- reusable wrestler / team row ----------
+function SectionLabel({ children, style }) {
+  return (
+    <div style={{ fontSize: 9.5, letterSpacing: ".16em", color: "#8c85a6", fontWeight: 800, textTransform: "uppercase", margin: "2px 0 4px", paddingBottom: 3, borderBottom: "1px solid #221c34", ...(style || {}) }}>
+      {children}
+    </div>
+  );
+}
+
+function RosterRow({ w, accent, compact, right }) {
+  const isTeam = w.isTeam;
+  const ovr = overallOf(w);
+  // colour the OVR by tier band so signing decisions read at a glance
+  const ovrColor = ovr >= 80 ? "#ffd54f" : ovr >= 68 ? "#54e0a0" : ovr >= 55 ? "#cfc8e6" : "#9b94b3";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: compact ? "7px 0" : "9px 0", borderBottom: "1px solid #1d1830" }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+          <span style={{ fontFamily: display, fontWeight: 800, fontSize: 14, color: "#f3eeff" }}>{w.name}</span>
+          <span title={isTeam ? "Tag rating" : "Overall rating"} style={{ fontSize: 10, fontWeight: 900, color: ovrColor, background: "#15111f", border: `1px solid ${ovrColor}55`, borderRadius: 3, padding: "1px 6px", letterSpacing: ".04em" }}>
+            {isTeam ? "TAG" : "OVR"} {isTeam ? (w.tagRating || ovr) : ovr}
+          </span>
+          {w.isChampion && !w.isTagChampion && <span title="World Champion" style={{ fontSize: 9, fontWeight: 900, color: "#ffd54f", background: "#2a2208", border: "1px solid #ffd54f88", borderRadius: 3, padding: "1px 5px", letterSpacing: ".06em" }}>WORLD CHAMP</span>}
+          {w.isChampion && w.isTagChampion && <span title="Tag Team Champions" style={{ fontSize: 9, fontWeight: 900, color: "#7fd4ff", background: "#0a1f2a", border: "1px solid #7fd4ff88", borderRadius: 3, padding: "1px 5px", letterSpacing: ".06em" }}>TAG CHAMP</span>}
+          {w.isWunderkind && <span style={{ fontSize: 9, fontWeight: 900, color: "#54e0ff", border: "1px solid #54e0ff66", borderRadius: 3, padding: "1px 5px", letterSpacing: ".08em" }}>PHENOM</span>}
+          <AlignBadge align={w.align} />
+          <TierBadge w={w} />
+        </div>
+        <div style={{ fontSize: 11, color: "#8c85a6", marginTop: 2 }}>
+          {isTeam ? `${w.members[0].name} & ${w.members[1].name}` : `${w.archetype} · ${w.trait.tag}`}
+          {w.nation && !isTeam ? ` · ${w.nation.flag}` : ""}
+          {w.injured > 0 ? ` · OUT ${w.injured}w` : ""}
+          {!isTeam ? ` · ${w.popularity} pop` : ` · ${w.popularity} pop`}
+        </div>
+      </div>
+      <div style={{ textAlign: "right", minWidth: 64 }}>
+        {right ? right : (
+          <>
+            <div style={{ fontFamily: display, fontWeight: 900, fontSize: 18, color: accent || "var(--accent)" }}>{ovr}</div>
+            <div style={{ fontSize: 9, color: "#6f6889", letterSpacing: ".1em" }}>OVR · {w.popularity} POP</div>
+            {!compact && !isTeam && (
+              <div style={{ fontSize: 9, color: "#7d769a", marginTop: 3, letterSpacing: ".04em" }}>
+                W{w.workrate} · M{w.mic} · C{w.charisma}
+              </div>
+            )}
+            {!compact && isTeam && (
+              <div style={{ fontSize: 9, color: "#7d769a", marginTop: 3, letterSpacing: ".04em" }}>
+                TAG {w.tagRating || ovr}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Setup ----------
+function Setup({ runLengths, options, onGenerate, onChoose, playerColor, setPlayerColor, weeks }) {
+  const [chosenWeeks, setChosenWeeks] = useState(12);
+  const COLORS = ["#ff2e88", "#00e5ff", "#ffd200", "#7b5cff", "#00e676", "#ff6d00", "#ff3b5c", "#1de9b6"];
+
+  if (!options) {
+    return (
+      <div>
+        <Eyebrow>New run · Set the stage</Eyebrow>
+        <h2 style={{ fontFamily: display, fontWeight: 900, fontSize: 30, margin: "4px 0 12px" }}>How long is the war?</h2>
+        <Card>
+          {runLengths.map((r) => (
+            <button key={r.weeks} className="ptp-pick" onClick={() => setChosenWeeks(r.weeks)} style={{
+              display: "block", width: "100%", textAlign: "left", marginBottom: 8, cursor: "pointer",
+              background: chosenWeeks === r.weeks ? "#1c1730" : "#0f0c1a",
+              border: `1.5px solid ${chosenWeeks === r.weeks ? "var(--accent)" : "#261f38"}`,
+              borderRadius: 6, padding: "12px 14px", color: "#ece8f5",
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontFamily: display, fontWeight: 800, fontSize: 16 }}>{r.label}</span>
+                <span style={{ fontSize: 12, color: "var(--accent)", fontWeight: 700 }}>{r.weeks} weeks</span>
+              </div>
+              <div style={{ fontSize: 12, color: "#8c85a6", marginTop: 3 }}>{r.desc}</div>
+            </button>
+          ))}
+        </Card>
+        <div style={{ marginBottom: 4, fontSize: 11, color: "#9b94b3", letterSpacing: ".1em", textTransform: "uppercase" }}>Your promotion's colour</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 4 }}>
+          {COLORS.map(c => (
+            <button key={c} onClick={() => setPlayerColor(c)} style={{
+              width: 34, height: 34, borderRadius: 6, cursor: "pointer", background: c,
+              border: playerColor === c ? "3px solid #fff" : "3px solid transparent",
+            }} />
+          ))}
+        </div>
+        <AccentBtn onClick={() => onGenerate(chosenWeeks)}>Generate the matchup</AccentBtn>
+      </div>
+    );
+  }
+
+  // pick-a-side screen
+  return (
+    <div>
+      <Eyebrow>Choose your side</Eyebrow>
+      <h2 style={{ fontFamily: display, fontWeight: 900, fontSize: 28, margin: "4px 0 6px" }}>Two promotions. Pick one.</h2>
+      <p style={{ color: "#8c85a6", fontSize: 13, marginBottom: 12 }}>
+        Both start on equal footing, same firepower, different faces. The other becomes your rival, run by a cutthroat AI booker. Tap a promotion to take the book.
+      </p>
+      {options.map((promo) => {
+        const top = [...promo.roster].sort((a, b) => overallOf(b) - overallOf(a)).slice(0, 4);
+        const champ = promo.roster.find(w => w.id === promo.titles.world.holderId);
+        return (
+          <Card key={promo.id} style={{ borderColor: "#2c2442" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <div>
+                <div style={{ fontFamily: display, fontWeight: 900, fontSize: 22 }}>{promo.name}</div>
+                <div style={{ fontSize: 11, color: "var(--accent)", letterSpacing: ".15em", fontWeight: 700 }}>{promo.tag} · {promo.roster.length} ACTS</div>
+              </div>
+            </div>
+            <div style={{ fontSize: 12, color: "#9b94b3", margin: "8px 0 4px" }}>Top of the card:</div>
+            {top.map(w => <RosterRow key={w.id} w={w} />)}
+            {champ && <div style={{ fontSize: 11, color: "#ffd54f", marginTop: 8 }}>World Champ: {champ.name}</div>}
+            <AccentBtn onClick={() => onChoose(promo, chosenWeeks)}>Take the book at {promo.name.split(" ")[0]}</AccentBtn>
+          </Card>
+        );
+      })}
+      <button className="ptp-btn" onClick={() => onGenerate(chosenWeeks)} style={{
+        width: "100%", padding: "12px", marginTop: 4, background: "transparent",
+        color: "#9b94b3", border: "1px solid #261f38", borderRadius: 5,
+        fontFamily: display, fontWeight: 700, fontSize: 13, cursor: "pointer", letterSpacing: ".05em",
+      }}>Reroll the matchup</button>
+    </div>
+  );
+}
+
+// ---------- Contracts / roster management ----------
+function Contracts({ player, rival, money, week, totalWeeks, freeAgents, wunderkind, rumor, onSign, onPoach, onReSign, onProceed }) {
+  const [tab, setTab] = useState("roster");
+  const expiring = player.roster.filter(w => w.contractWeeks <= 2);
+  return (
+    <div>
+      <WeekHeader week={week} totalWeeks={totalWeeks} money={money} title="Contracts & Talent" />
+
+      {rumor && (
+        <div className="ptp-card" style={{ border: "1.5px solid #54e0ff", background: "linear-gradient(180deg,#0c1b26,#120f1d)", borderRadius: 8, padding: 14, marginBottom: 12, animation: "glow 2.4s ease infinite" }}>
+          <div style={{ fontSize: 10, letterSpacing: ".2em", color: "#54e0ff", fontWeight: 800 }}>BREAKING · DIRT SHEET</div>
+          <div style={{ fontSize: 13, color: "#dff3ff", marginTop: 5, lineHeight: 1.5 }}>{rumor}</div>
+          <div style={{ fontSize: 11, color: "#8fb6c6", marginTop: 6 }}>They'll surface as a free agent next week. Bank some cash and be ready.</div>
+        </div>
+      )}
+
+      {wunderkind && (
+        <div className="ptp-card" style={{ border: "2px solid #54e0ff", background: "linear-gradient(180deg,#0e2230,#120f1d)", borderRadius: 8, padding: 16, marginBottom: 12 }}>
+          <div style={{ fontSize: 10, letterSpacing: ".2em", color: "#54e0ff", fontWeight: 800 }}>FREE AGENT · GENERATIONAL TALENT</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginTop: 6 }}>
+            <div style={{ fontFamily: display, fontWeight: 900, fontSize: 24, color: "#dff3ff" }}>{wunderkind.name}</div>
+            <div style={{ fontFamily: display, fontWeight: 900, fontSize: 22, color: "#54e0ff" }}>{overallOf(wunderkind)}</div>
+          </div>
+          <div style={{ fontSize: 11, color: "#8fb6c6", marginTop: 2 }}>{wunderkind.nation ? wunderkind.nation.flag + " · " : ""}{wunderkind.nickname} · {wunderkind.trait.tag}</div>
+          <div style={{ fontStyle: "italic", color: "#cfe9f5", fontSize: 13, margin: "10px 0", lineHeight: 1.5 }}>{wunderkind.quote}</div>
+          <div style={{ fontSize: 12, color: "#a9c4d0", lineHeight: 1.5 }}>{wunderkind.backstory}</div>
+          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+            <StatMini label="WORK" val={wunderkind.workrate} />
+            <StatMini label="MIC" val={wunderkind.mic} />
+            <StatMini label="CHAR" val={wunderkind.charisma} />
+            <StatMini label="POP" val={wunderkind.popularity} />
+          </div>
+          <AccentBtn onClick={() => onSign(wunderkind)} disabled={money < wunderkind.fee}>
+            {money < wunderkind.fee ? `Need $${wunderkind.fee}K (have $${money}K)` : `Sign the phenom · $${wunderkind.fee}K`}
+          </AccentBtn>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+        {[["roster", "My Roster"], ["market", "Free Agents"], ["raid", "Raid Rival"]].map(([k, lab]) => (
+          <button key={k} onClick={() => setTab(k)} className="ptp-btn" style={{
+            flex: 1, padding: "9px", borderRadius: 5, cursor: "pointer",
+            background: tab === k ? "var(--accent)" : "#120f1d",
+            color: tab === k ? "#07060e" : "#cfc8e6",
+            border: tab === k ? "none" : "1px solid #261f38",
+            fontFamily: display, fontWeight: 800, fontSize: 12, letterSpacing: ".05em",
+          }}>{lab}</button>
+        ))}
+      </div>
+
+      {tab === "roster" && (
+        <Card>
+          {expiring.length > 0 && (
+            <div style={{ fontSize: 11, color: "#ffb454", marginBottom: 8, padding: "7px 10px", background: "#241a0e", borderRadius: 5 }}>
+              {expiring.length} contract{expiring.length > 1 ? "s" : ""} expiring within 2 weeks. Re-sign before they walk, or the rival might pounce.
+            </div>
+          )}
+          {(() => {
+            const { singles, teams } = splitRoster(player.roster);
+            const contractRight = (w) => (
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontFamily: display, fontWeight: 900, fontSize: 16, color: w.contractWeeks <= 2 ? "#ff7088" : "var(--accent)" }}>{w.contractWeeks}w</div>
+                <div style={{ fontSize: 9, color: "#6f6889" }}>${w.salary}K/wk</div>
+                {w.contractWeeks <= 3 && (
+                  <button onClick={() => onReSign(w)} disabled={money < Math.max(1, Math.round(w.fee / 2))} className="ptp-btn" style={{
+                    marginTop: 4, padding: "3px 8px", fontSize: 10, fontWeight: 800, cursor: "pointer",
+                    background: money < Math.max(1, Math.round(w.fee / 2)) ? "#23202e" : "#2a2440", color: "#cfc8e6",
+                    border: "1px solid #3a3354", borderRadius: 4,
+                  }}>Re-sign ${Math.max(1, Math.round(w.fee / 2))}K</button>
+                )}
+              </div>
+            );
+            return (
+              <>
+                <SectionLabel>Singles · {singles.length}</SectionLabel>
+                {singles.map(w => <RosterRow key={w.id} w={w} right={contractRight(w)} />)}
+                <SectionLabel style={{ marginTop: 14 }}>Tag Teams · {teams.length}</SectionLabel>
+                {teams.length ? teams.map(w => <RosterRow key={w.id} w={w} right={contractRight(w)} />)
+                  : <div style={{ fontSize: 12, color: "#6f6889", padding: "6px 0" }}>No tag teams on the roster.</div>}
+              </>
+            );
+          })()}
+        </Card>
+      )}
+
+      {tab === "market" && (
+        <Card>
+          <div style={{ fontSize: 12, color: "#9b94b3", marginBottom: 8 }}>Weekly free agents. Sign to deepen your roster (and steal them from the rival's reach).</div>
+          {freeAgents.filter(w => !w.isWunderkind).map(w => (
+            <RosterRow key={w.id} w={w} right={
+              <button onClick={() => onSign(w)} disabled={money < w.fee} className="ptp-btn" style={{
+                padding: "6px 10px", fontSize: 11, fontWeight: 800, cursor: money < w.fee ? "default" : "pointer",
+                background: money < w.fee ? "#23202e" : "var(--accent)", color: money < w.fee ? "#6a6580" : "#07060e",
+                border: "none", borderRadius: 4,
+              }}>${w.fee}K</button>
+            } />
+          ))}
+          {freeAgents.filter(w => !w.isWunderkind).length === 0 && <div style={{ color: "#6f6889", fontSize: 13 }}>No free agents this week.</div>}
+        </Card>
+      )}
+
+      {tab === "raid" && (
+        <Card>
+          <div style={{ fontSize: 12, color: "#9b94b3", marginBottom: 8 }}>Poach from {rival.name}. Costs a premium and weakens them. Steal one of their champions and you'll trigger a full-blown title crisis on their show.</div>
+          {(() => {
+            const { singles, teams } = splitRoster(rival.roster);
+            const poachRight = (w) => (
+              <button onClick={() => onPoach(w)} disabled={money < w.fee + 3} className="ptp-btn" style={{
+                padding: "6px 10px", fontSize: 11, fontWeight: 800, cursor: money < w.fee + 3 ? "default" : "pointer",
+                background: money < w.fee + 3 ? "#23202e" : (w.isChampion ? "#ffb454" : "#ff3b5c"), color: money < w.fee + 3 ? "#6a6580" : "#07060e",
+                border: "none", borderRadius: 4,
+              }}>{w.isChampion ? "Heist" : "Poach"} ${w.fee + 3}K</button>
+            );
+            const champNote = (w) => w.isChampion ? (
+              <div style={{ fontSize: 9.5, color: "#ffb454", fontWeight: 700, marginTop: 3, letterSpacing: ".03em" }}>★ Champion. Stealing them vacates the {w.isTagChampion ? "tag titles" : "world title"} and boosts your show.</div>
+            ) : null;
+            return (
+              <>
+                <SectionLabel>Singles · {singles.length}</SectionLabel>
+                {singles.map(w => (
+                  <div key={w.id} style={w.isChampion ? { background: "#1c160a", borderRadius: 6, marginLeft: -8, marginRight: -8, paddingLeft: 8, paddingRight: 8 } : null}>
+                    <RosterRow w={w} right={poachRight(w)} />
+                    {champNote(w)}
+                  </div>
+                ))}
+                <SectionLabel style={{ marginTop: 14 }}>Tag Teams · {teams.length}</SectionLabel>
+                {teams.length ? teams.map(w => (
+                  <div key={w.id} style={w.isChampion ? { background: "#1c160a", borderRadius: 6, marginLeft: -8, marginRight: -8, paddingLeft: 8, paddingRight: 8 } : null}>
+                    <RosterRow w={w} right={poachRight(w)} />
+                    {champNote(w)}
+                  </div>
+                )) : <div style={{ fontSize: 12, color: "#6f6889", padding: "6px 0" }}>The rival has no tag teams to raid.</div>}
+              </>
+            );
+          })()}
+        </Card>
+      )}
+
+      <AccentBtn onClick={onProceed}>To the booking sheet</AccentBtn>
+    </div>
+  );
+}
+
+function StatMini({ label, val }) {
+  return (
+    <div style={{ flex: 1 }}>
+      <div style={{ fontSize: 9, color: "#8c85a6", letterSpacing: ".1em" }}>{label}</div>
+      <div style={{ fontFamily: display, fontWeight: 900, fontSize: 16, color: "#dff3ff" }}>{val}</div>
+    </div>
+  );
+}
+function WeekHeader({ week, totalWeeks, money, title }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      <div>
+        <div style={{ fontSize: 11, letterSpacing: ".2em", color: "var(--accent)", fontWeight: 800 }}>WEEK {week} / {totalWeeks}</div>
+        <h2 style={{ fontFamily: display, fontWeight: 900, fontSize: 24, margin: "2px 0 0" }}>{title}</h2>
+      </div>
+      <div style={{ textAlign: "right" }}>
+        <div style={{ fontFamily: display, fontWeight: 900, fontSize: 22, color: "#54e0a0" }}>${money}K</div>
+        <div style={{ fontSize: 9, color: "#6f6889", letterSpacing: ".1em" }}>BUDGET</div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Booking: build the card across five explicit slots ----------
+// Slots 1/3/5 are matches (5 is the main event), 2/4 are promos/vignettes.
+// A wrestler who has already worked a MATCH this week is locked out of
+// further matches (greyed, unpickable) but stays available for promos,
+// unless an in-week event has sprung them loose.
+const SLOT_PLAN = [
+  { kind: "match", label: "Opening Match", short: "MATCH 1" },
+  { kind: "promo", label: "Promo / Vignette", short: "PROMO 1" },
+  { kind: "match", label: "Mid-Card Match", short: "MATCH 2" },
+  { kind: "promo", label: "Promo / Vignette", short: "PROMO 2" },
+  { kind: "match", label: "Main Event", short: "MAIN EVENT", main: true },
+];
+
+function Booking({ player, card, week, totalWeeks, onAdd, onRemove, onRun, freedFromLock, lockEventNote, storylines }) {
+  const SLOTS = SLOT_PLAN.length;
+  const slotIdx = card.length;
+  const plan = SLOT_PLAN[Math.min(slotIdx, SLOTS - 1)];
+  const isMain = plan && plan.main;
+  const slotIsMatch = plan && plan.kind === "match";
+  const [segType, setSegType] = useState(null);
+  const [chosen, setChosen] = useState([]);
+
+  const available = player.roster.filter(w => w.injured <= 0);
+
+  // wrestlers (by id) who have already worked a MATCH on a previously-booked slot
+  const matchUsed = new Set();
+  card.forEach(c => {
+    if (c.seg.kind !== "promo") c.participantIds.forEach(id => matchUsed.add(id));
+  });
+  // an in-week event can spring specific wrestlers loose from the lock
+  const freed = freedFromLock || new Set();
+  const isLockedForMatch = (w) => matchUsed.has(w.id) && !freed.has(w.id);
+
+  // which segment types are valid for THIS slot: gated by the slot's kind first,
+  // then (for the main event) restricted to the marquee options.
+  const validTypes = SEGMENT_TYPES.filter(s => {
+    if (slotIsMatch) {
+      if (s.kind === "promo") return false;
+      if (isMain) return s.tiers.includes("main") || s.bigmatch || s.base >= 66;
+      return true;
+    }
+    return s.kind === "promo";
+  });
+
+  // eligible participants for the chosen segment type, respecting team/singles + tier.
+  // for MATCH slots, match-locked wrestlers are excluded entirely.
+  function eligibleFor(seg) {
+    return available.filter(w => {
+      if (seg.team && !w.isTeam) return false;
+      if (!seg.team && w.isTeam) return false;
+      const t = wrestlerTier(w);
+      if (!seg.tiers.includes(t)) return false;
+      if (seg.kind !== "promo" && isLockedForMatch(w)) return false;
+      return true;
+    });
+  }
+
+  function togglePick(w) {
+    if (!segType) return;
+    if (segType.kind !== "promo" && isLockedForMatch(w)) return; // belt and braces
+    setChosen(prev => {
+      if (prev.find(x => x.id === w.id)) return prev.filter(x => x.id !== w.id);
+      if (prev.length >= segType.slots) return prev;
+      return [...prev, w];
+    });
+  }
+
+  // champion-in-a-non-title-match check: if a chosen wrestler holds the relevant
+  // belt and the segment isn't already a title match, ask whether to risk the gold.
+  function championInPlay() {
+    if (!segType || segType.kind === "title" || segType.kind === "tagtitle") return null;
+    if (segType.kind === "promo") return null;
+    const champ = chosen.find(w => w.isChampion && ((segType.team && w.isTagChampion) || (!segType.team && !w.isTeam && w.isChampion && !w.isTagChampion)));
+    return champ || null;
+  }
+
+  function confirmSlot() {
+    if (!segType || chosen.length !== segType.slots) return;
+    const champ = championInPlay();
+    if (champ) {
+      setPendingConfirm({ segType, chosen, champ });
+      return;
+    }
+    onAdd(segType, chosen);
+    setSegType(null);
+    setChosen([]);
+  }
+
+  // local title-match prompt state (kept in-component so it overlays the picker)
+  const [pendingConfirm, setPendingConfirm] = useState(null);
+  function resolveTitlePrompt(putOnLine) {
+    if (!pendingConfirm) return;
+    const { segType: st, chosen: ch } = pendingConfirm;
+    if (putOnLine) {
+      // swap to the matching title segment type so the belt is genuinely at stake
+      const titleType = SEGMENT_TYPES.find(s => st.team ? s.kind === "tagtitle" : s.kind === "title" && !s.hardcore) || st;
+      onAdd(titleType, ch);
+    } else {
+      onAdd(st, ch);
+    }
+    setPendingConfirm(null);
+    setSegType(null);
+    setChosen([]);
+  }
+
+  if (pendingConfirm) {
+    const champ = pendingConfirm.champ;
+    const belt = champ.isTagChampion ? "tag team titles" : "championship";
+    return (
+      <div>
+        <WeekHeader week={week} totalWeeks={totalWeeks} money={null} title="Title On The Line?" />
+        <Card style={{ borderColor: "#ffd54f55" }}>
+          <div style={{ fontSize: 10, letterSpacing: ".15em", color: "#ffd54f", fontWeight: 800, marginBottom: 8 }}>CHAMPION IN A NON-TITLE MATCH</div>
+          <div style={{ fontSize: 14, color: "#ece8f5", lineHeight: 1.55 }}>
+            <b style={{ color: "#ffd54f" }}>{champ.name}</b> is walking into this one holding the {belt}. Do you want to put the gold on the line, or keep it a non-title bout?
+          </div>
+          <div style={{ fontSize: 12, color: "#9b94b3", marginTop: 8, lineHeight: 1.5 }}>
+            Putting it on the line rates higher and means more if they win, but a hot challenger could walk out with your belt.
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <button onClick={() => resolveTitlePrompt(true)} className="ptp-btn" style={{ flex: 1, padding: "11px", background: "#1f1a0c", color: "#ffd54f", border: "1px solid #ffd54f55", borderRadius: 6, fontFamily: display, fontWeight: 800, fontSize: 13, cursor: "pointer" }}>Put the belt on the line</button>
+            <button onClick={() => resolveTitlePrompt(false)} className="ptp-btn" style={{ flex: 1, padding: "11px", background: "transparent", color: "#9b94b3", border: "1px solid #261f38", borderRadius: 6, fontFamily: display, fontWeight: 700, fontSize: 13, cursor: "pointer" }}>Keep it non-title</button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  if (card.length >= SLOTS) {
+    // card complete, review + run
+    return (
+      <div>
+        <WeekHeader week={week} totalWeeks={totalWeeks} money={null} title="The Card Is Set" />
+        <Card>
+          {card.map((c, i) => {
+            const seg = c.seg;
+            const parts = c.participantIds.map(id => player.roster.find(r => r.id === id)).filter(Boolean);
+            const main = i === SLOTS - 1;
+            const sp = SLOT_PLAN[i];
+            const isPromoSlot = sp && sp.kind === "promo";
+            return (
+              <div key={i} style={{ padding: "10px 0", borderBottom: i < SLOTS - 1 ? "1px solid #1d1830" : "none" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <span style={{ fontSize: 10, color: main ? "#ffd54f" : isPromoSlot ? "#9d8cff" : "var(--accent)", fontWeight: 800, letterSpacing: ".12em" }}>
+                      {main ? "★ MAIN EVENT" : `SLOT ${i + 1} · ${isPromoSlot ? "PROMO" : "MATCH"}`}
+                    </span>
+                    <div style={{ fontFamily: display, fontWeight: 800, fontSize: 15 }}>{seg.label}</div>
+                    <div style={{ fontSize: 12, color: "#9b94b3" }}>{parts.map(p => p.name).join(seg.kind === "promo" && parts.length > 1 ? " vs " : seg.team ? " vs " : parts.length > 2 ? ", " : " vs ")}</div>
+                  </div>
+                  <button onClick={() => onRemove(i)} className="ptp-btn" style={{ background: "transparent", color: "#ff7088", border: "1px solid #3a2230", borderRadius: 4, padding: "4px 9px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}>Drop</button>
+                </div>
+              </div>
+            );
+          })}
+        </Card>
+        <AccentBtn onClick={onRun}>Go live · Run the show</AccentBtn>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <WeekHeader week={week} totalWeeks={totalWeeks} money={null} title={isMain ? "Book the Main Event" : `Book ${plan.label}`} />
+      <div style={{ display: "flex", gap: 5, marginBottom: 6 }}>
+        {SLOT_PLAN.map((sp, i) => (
+          <div key={i} style={{ flex: 1, height: 5, borderRadius: 3,
+            background: i < card.length ? (sp.main ? "#ffd54f" : sp.kind === "promo" ? "#9d8cff" : "var(--accent)")
+              : i === card.length ? "#4a4366" : "#1d1830" }} />
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 5, marginBottom: 12 }}>
+        {SLOT_PLAN.map((sp, i) => (
+          <div key={i} style={{ flex: 1, textAlign: "center", fontSize: 7.5, letterSpacing: ".06em", fontWeight: 700,
+            color: i === card.length ? "#cfc8e6" : "#5a5470" }}>{sp.main ? "MAIN" : sp.kind === "promo" ? "PROMO" : "MATCH"}</div>
+        ))}
+      </div>
+
+      {lockEventNote && card.length === 0 && (
+        <div style={{ fontSize: 12, color: "#ffd9a8", background: "#1f1709", border: "1px solid #4a3318", borderRadius: 6, padding: "8px 11px", marginBottom: 10, lineHeight: 1.45 }}>
+          <b style={{ color: "#ffb968" }}>In-week event · </b>{lockEventNote}
+        </div>
+      )}
+
+      {storylines && storylines.filter(s => s.status === "active").length > 0 && (
+        <Card style={{ borderColor: "#3a2a4a", padding: "9px 13px", marginBottom: 10 }}>
+          <div style={{ fontSize: 10, letterSpacing: ".14em", color: "#c79bff", fontWeight: 800, marginBottom: 6 }}>ACTIVE STORYLINES</div>
+          {storylines.filter(s => s.status === "active").map(s => {
+            const arch = storylineArchetypeById(s.archId);
+            return (
+              <div key={s.id} style={{ fontSize: 12, color: "#cfc8e6", padding: "3px 0", lineHeight: 1.4 }}>
+                <b style={{ color: "#c79bff" }}>{s.aName} vs {s.bName}</b> · {arch ? arch.name : "Angle"} · heat {s.heat}
+                <div style={{ fontSize: 10.5, color: "#8c85a6" }}>Book them together to escalate it.</div>
+              </div>
+            );
+          })}
+        </Card>
+      )}
+
+      {!segType && (
+        <>
+          <div style={{ fontSize: 12, color: "#9b94b3", marginBottom: 8 }}>
+            {isMain ? "The main event carries double weight in the ratings. Pick your biggest match."
+              : slotIsMatch ? "This is a match slot. Anyone you book here is then locked out of further matches tonight, though they can still cut a promo."
+              : "This is a promo or vignette slot. Talking segments build stories and heat without burning a wrestler's one match for the night."}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            {validTypes.map(s => {
+              const elig = eligibleFor(s);
+              const ok = elig.length >= s.slots;
+              const isTitleType = s.kind === "title" || s.kind === "tagtitle";
+              return (
+                <button key={s.id} disabled={!ok} onClick={() => { setSegType(s); setChosen([]); }} className="ptp-pick" style={{
+                  textAlign: "left", padding: "11px 12px", borderRadius: 6, cursor: ok ? "pointer" : "default",
+                  background: isTitleType ? "#1f1a0c" : "#120f1d",
+                  border: `1.5px solid ${ok ? (isTitleType ? "#ffd54f55" : "#261f38") : "#1a1626"}`,
+                  opacity: ok ? 1 : 0.42, color: "#ece8f5",
+                }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontFamily: display, fontWeight: 800, fontSize: 13, color: isTitleType ? "#ffd54f" : "#f3eeff" }}>{s.label}</span>
+                    <span style={{ fontSize: 9, color: "#6f6889" }}>{s.slots}{s.team ? " tms" : ""}</span>
+                  </div>
+                  <div style={{ fontSize: 10.5, color: "#8c85a6", marginTop: 3, lineHeight: 1.35 }}>{s.desc}</div>
+                  {!ok && <div style={{ fontSize: 9, color: "#ff7088", marginTop: 4 }}>Not enough eligible {s.team ? "teams" : "wrestlers"}</div>}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {segType && (
+        <>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <div>
+              <span style={{ fontFamily: display, fontWeight: 800, fontSize: 16, color: (segType.kind === "title" || segType.kind === "tagtitle") ? "#ffd54f" : "var(--accent)" }}>{segType.label}</span>
+              <span style={{ fontSize: 12, color: "#9b94b3", marginLeft: 8 }}>pick {segType.slots}</span>
+            </div>
+            <button onClick={() => { setSegType(null); setChosen([]); }} className="ptp-btn" style={{ background: "transparent", color: "#9b94b3", border: "1px solid #261f38", borderRadius: 4, padding: "5px 10px", fontSize: 11, cursor: "pointer", fontWeight: 700 }}>Change type</button>
+          </div>
+          <Card style={{ padding: "6px 14px" }}>
+            {eligibleFor(segType).map(w => {
+              const sel = chosen.find(x => x.id === w.id);
+              return (
+                <div key={w.id} onClick={() => togglePick(w)} style={{ cursor: "pointer", background: sel ? "#1c1730" : "transparent", borderRadius: 5, paddingLeft: 8, paddingRight: 8, marginLeft: -8, marginRight: -8, border: sel ? "1px solid var(--accent)" : "1px solid transparent" }}>
+                  <RosterRow w={w} accent={sel ? "var(--accent)" : undefined} compact right={
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontFamily: display, fontWeight: 900, fontSize: 16, color: sel ? "var(--accent)" : "#cfc8e6" }}>{overallOf(w)}</div>
+                      <div style={{ fontSize: 9, color: "#6f6889" }}>{w.popularity} POP</div>
+                    </div>
+                  } />
+                </div>
+              );
+            })}
+            {segType.kind !== "promo" && available.filter(w => {
+              if (segType.team && !w.isTeam) return false;
+              if (!segType.team && w.isTeam) return false;
+              if (!segType.tiers.includes(wrestlerTier(w))) return false;
+              return isLockedForMatch(w);
+            }).map(w => (
+              <div key={w.id} style={{ opacity: 0.4, paddingLeft: 8, paddingRight: 8, marginLeft: -8, marginRight: -8 }}>
+                <RosterRow w={w} compact right={
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 9, color: "#ff9d6f", fontWeight: 800, letterSpacing: ".05em" }}>WORKED</div>
+                    <div style={{ fontSize: 8.5, color: "#6f6889" }}>match used</div>
+                  </div>
+                } />
+              </div>
+            ))}
+          </Card>
+          <AccentBtn onClick={confirmSlot} disabled={chosen.length !== segType.slots}>
+            {chosen.length === segType.slots ? (isMain ? "Lock the main event" : "Add to the card") : `Choose ${segType.slots - chosen.length} more`}
+          </AccentBtn>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------- ShowTime: optional sabotage, then the live ticker ----------
+function ShowTime({ player, rival, pShow, rShow, sabotageOptions, money, sabotageDone, onSabotage, onSkipSabotage, revealIdx, setRevealIdx, onSettle }) {
+  // flatten the player's show into a single ticker stream of beats.
+  // segends carrying a title change, or a high-rated match (a storyline-grade
+  // moment), are flagged pauseOn so the auto-roll taps the brakes there.
+  const stream = useMemo(() => {
+    const beats = [];
+    pShow.card.forEach((res, si) => {
+      const main = si === pShow.card.length - 1;
+      beats.push({ type: "seghead", seg: res.seg, parts: res.participants, main, rating: res.rating, stars: res.stars });
+      res.timeline.forEach(b => beats.push({ ...b, seg: res.seg }));
+      const bigMoment = !!res.titleChange || (res.seg.kind !== "promo" && res.rating >= 78) || main;
+      beats.push({ type: "segend", seg: res.seg, rating: res.rating, stars: res.stars, titleChange: res.titleChange, main, pauseOn: bigMoment });
+    });
+    return beats;
+  }, [pShow]);
+
+  const done = revealIdx >= stream.length;
+  const [auto, setAuto] = useState(false);   // is the broadcast auto-rolling right now?
+  const started = revealIdx > 0;
+
+  // auto-roll: advance one beat at a time on a timer, but stop when the beat we
+  // just revealed is a flagged big moment (title change / marquee match), letting
+  // it breathe. The player taps Continue to resume the roll.
+  useEffect(() => {
+    if (!auto || done) return;
+    const justRevealed = stream[revealIdx - 1];
+    if (justRevealed && justRevealed.pauseOn) { setAuto(false); return; }
+    const next = stream[revealIdx];
+    const delay = next && next.type === "seghead" ? 850 : next && next.type === "segend" ? 700 : 520;
+    const t = setTimeout(() => setRevealIdx(i => Math.min(stream.length, i + 1)), delay);
+    return () => clearTimeout(t);
+  }, [auto, revealIdx, done, stream]);
+
+  function startBroadcast() { setRevealIdx(1); setAuto(true); }
+  function stepForward() { setRevealIdx(i => Math.min(stream.length, i + 1)); }
+  function resumeRoll() { setRevealIdx(i => Math.min(stream.length, i + 1)); setAuto(true); }
+
+  // sabotage gate first
+  if (!sabotageDone) {
+    return (
+      <div>
+        <Eyebrow color="#ff7088">Before you go live · Dirty tricks</Eyebrow>
+        <h2 style={{ fontFamily: display, fontWeight: 900, fontSize: 26, margin: "4px 0 6px" }}>War room</h2>
+        <p style={{ color: "#8c85a6", fontSize: 13, marginBottom: 12 }}>
+          The rival is taping their show right now. Pull a stunt to swing the night, or run clean and let the wrestling do the talking. Each trick has a backfire risk.
+        </p>
+        {sabotageOptions.map(opt => (
+          <Card key={opt.id} style={{ padding: 13 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <span style={{ fontFamily: display, fontWeight: 800, fontSize: 15, color: "#ff8fa3" }}>{opt.label}</span>
+              <span style={{ fontSize: 12, color: "#54e0a0", fontWeight: 700 }}>${opt.cost}K</span>
+            </div>
+            <div style={{ fontSize: 12, color: "#9b94b3", margin: "5px 0 8px", lineHeight: 1.45 }}>{opt.desc}</div>
+            <button onClick={() => onSabotage(opt)} disabled={money < opt.cost} className="ptp-btn" style={{
+              width: "100%", padding: "9px", borderRadius: 5, cursor: money < opt.cost ? "default" : "pointer",
+              background: money < opt.cost ? "#23202e" : "#3a1b22", color: money < opt.cost ? "#6a6580" : "#ff8fa3",
+              border: "1px solid #5a2230", fontFamily: display, fontWeight: 800, fontSize: 12, letterSpacing: ".05em",
+            }}>{money < opt.cost ? "Can't afford" : "Pull it"}</button>
+          </Card>
+        ))}
+        <AccentBtn ghost onClick={onSkipSabotage}>Run clean · No tricks tonight</AccentBtn>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#ff3b5c", animation: "pulse 1s infinite", display: "inline-block" }} />
+            <span style={{ fontSize: 11, letterSpacing: ".2em", color: "#ff3b5c", fontWeight: 800 }}>LIVE · {player.tag}</span>
+          </div>
+          <h2 style={{ fontFamily: display, fontWeight: 900, fontSize: 24, margin: "3px 0 0" }}>Monday Night</h2>
+        </div>
+      </div>
+
+      {sabotageDone && !sabotageDone.skipped && (
+        <div style={{ fontSize: 12, color: sabotageDone.backfired ? "#ff7088" : "#54e0a0", background: "#15111f", border: "1px solid #261f38", borderRadius: 6, padding: "8px 11px", marginBottom: 10 }}>
+          <b>{sabotageDone.label}:</b> {sabotageDone.line}
+        </div>
+      )}
+
+      <Card style={{ padding: 0, maxHeight: done ? "none" : 420, overflow: "hidden" }}>
+        <div style={{ padding: "4px 14px" }}>
+          {stream.slice(0, revealIdx).map((b, i) => <TickerBeat key={i} b={b} />)}
+        </div>
+      </Card>
+
+      {!done && !started && (
+        <AccentBtn onClick={startBroadcast}>Start the broadcast</AccentBtn>
+      )}
+
+      {!done && started && (
+        <>
+          {/* primary action: always a clear way forward, never stuck */}
+          {auto ? (
+            <button onClick={() => setAuto(false)} className="ptp-btn" style={{
+              width: "100%", padding: "11px", background: "#15111f", color: "var(--accent)",
+              border: "1px solid var(--accent)", borderRadius: 5, fontFamily: display, fontWeight: 800, fontSize: 13, cursor: "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            }}>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--accent)", animation: "pulse 1s infinite" }} />
+              On air · Tap to pause
+            </button>
+          ) : (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={stepForward} className="ptp-btn" style={{
+                flex: 1, padding: "11px", background: "var(--accent)", color: "#07060e",
+                border: "none", borderRadius: 5, fontFamily: display, fontWeight: 800, fontSize: 13, cursor: "pointer",
+              }}>
+                {stream[revealIdx - 1] && stream[revealIdx - 1].pauseOn ? "Continue ▸" : "Next ▸"}
+              </button>
+              <button onClick={resumeRoll} className="ptp-btn" style={{
+                flex: 1, padding: "11px", background: "transparent", color: "var(--accent)",
+                border: "1px solid var(--accent)", borderRadius: 5, fontFamily: display, fontWeight: 800, fontSize: 13, cursor: "pointer",
+              }}>▸ Auto-play</button>
+            </div>
+          )}
+          <button onClick={() => { setAuto(false); setRevealIdx(stream.length); }} className="ptp-btn" style={{
+            width: "100%", padding: "11px", marginTop: 8, background: "transparent", color: "#9b94b3",
+            border: "1px solid #261f38", borderRadius: 5, fontFamily: display, fontWeight: 700, fontSize: 13, cursor: "pointer",
+          }}>Skip to end card</button>
+        </>
+      )}
+      {done && (
+        <div>
+          <div style={{ display: "flex", gap: 10, margin: "12px 0" }}>
+            <ScoreBox label={player.tag} val={pShow.nielsen} accent="var(--accent)" big />
+            <div style={{ display: "flex", alignItems: "center", fontFamily: display, fontWeight: 900, color: "#6f6889", fontSize: 16 }}>vs</div>
+            <ScoreBox label={rival.tag} val={rShow.nielsen} accent="#ff7088" big />
+          </div>
+          <AccentBtn onClick={onSettle}>See the overnight verdict</AccentBtn>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TickerBeat({ b }) {
+  if (b.type === "seghead") {
+    return (
+      <div style={{ margin: "14px 0 6px", paddingTop: 10, borderTop: "1px solid #1d1830" }}>
+        <div style={{ fontSize: 10, letterSpacing: ".14em", fontWeight: 800, color: b.main ? "#ffd54f" : "var(--accent)" }}>
+          {b.main ? "★ MAIN EVENT" : b.seg.label.toUpperCase()}
+        </div>
+        <div style={{ fontFamily: display, fontWeight: 800, fontSize: 15, color: "#f3eeff", marginTop: 2 }}>
+          {b.parts.map(p => p.name).join(b.seg.kind === "promo" && b.parts.length > 1 ? " & " : " vs ")}
+        </div>
+      </div>
+    );
+  }
+  if (b.type === "segend") {
+    return (
+      <div style={{ margin: "6px 0 4px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontSize: 12, color: "#9b94b3" }}>
+          {b.titleChange ? <span style={{ color: "#ffd54f", fontWeight: 700 }}>{b.titleChange}</span> : "Segment grade"}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Stars stars={b.stars} />
+          <span style={{ fontFamily: display, fontWeight: 900, fontSize: 16, color: b.rating >= 75 ? "#54e0a0" : b.rating >= 55 ? "#ffd54f" : "#ff7088" }}>{b.rating}</span>
+        </div>
+      </div>
+    );
+  }
+  const color = b.type === "good" ? "#cfeede" : b.type === "bad" ? "#ffd0d8" : "#bdb6d4";
+  const dot = b.type === "good" ? "#54e0a0" : b.type === "bad" ? "#ff7088" : "#5a5470";
+  return (
+    <div style={{ display: "flex", gap: 9, padding: "4px 0", animation: "fadeUp .25s ease both" }}>
+      <span style={{ width: 5, height: 5, borderRadius: "50%", background: dot, marginTop: 7, flexShrink: 0 }} />
+      <span style={{ fontSize: 13, color, lineHeight: 1.45 }}>{b.text}</span>
+    </div>
+  );
+}
+function Stars({ stars }) {
+  const full = Math.floor(stars);
+  const half = stars - full >= 0.5;
+  return (
+    <span style={{ fontSize: 12, color: "#ffd54f", letterSpacing: "1px" }}>
+      {"★".repeat(full)}{half ? "½" : ""}<span style={{ color: "#3a3354" }}>{"☆".repeat(Math.max(0, 5 - full - (half ? 1 : 0)))}</span>
+    </span>
+  );
+}
+function ScoreBox({ label, val, accent, big }) {
+  return (
+    <div style={{ flex: 1, textAlign: "center", padding: big ? "14px 8px" : "9px", background: "#120f1d", border: `1px solid ${accent}44`, borderRadius: 7 }}>
+      <div style={{ fontSize: 10, letterSpacing: ".14em", color: "#9b94b3", fontWeight: 700 }}>{label}</div>
+      <div style={{ fontFamily: display, fontWeight: 900, fontSize: big ? 34 : 22, color: accent, textShadow: `0 0 16px ${accent}66` }}>{val}</div>
+      <div style={{ fontSize: 9, color: "#6f6889", letterSpacing: ".1em" }}>RATING</div>
+    </div>
+  );
+}
+
+// ---------- Weekly Review ----------
+function Review({ review, player, rival, tagProposals, onAcceptTag, onDeclineTag, week, totalWeeks, wins, losses, streak, money, onNext, storylineFork, onResolveFork, onDismissFork }) {
+  const won = review.result === "win";
+  const forkArch = storylineFork ? storylineArchetypeById(storylineFork.archId) : null;
+  const forkResolved = storylineFork && storylineFork.resolved;
+  return (
+    <div>
+      <div style={{ textAlign: "center", marginBottom: 14 }}>
+        <div style={{ fontSize: 11, letterSpacing: ".2em", color: "var(--accent)", fontWeight: 800 }}>WEEK {week} · THE OVERNIGHTS</div>
+        <div style={{ fontFamily: display, fontWeight: 900, fontSize: 46, color: won ? "#54e0a0" : "#ff7088", textShadow: `0 0 22px ${won ? "#54e0a0" : "#ff7088"}55`, margin: "4px 0" }}>
+          {won ? "YOU WON THE NIGHT" : "OUT-DRAWN"}
+        </div>
+        <div style={{ display: "flex", justifyContent: "center", gap: 10, marginTop: 6 }}>
+          <ScoreBox label={player.tag} val={review.playerN} accent="var(--accent)" big />
+          <div style={{ display: "flex", alignItems: "center", fontFamily: display, fontWeight: 900, color: "#6f6889", fontSize: 16 }}>vs</div>
+          <ScoreBox label={rival.tag} val={review.rivalN} accent="#ff7088" big />
+        </div>
+        <div style={{ marginTop: 8, fontSize: 13, color: "#9b94b3" }}>
+          Margin: <b style={{ color: won ? "#54e0a0" : "#ff7088" }}>{review.diff > 0 ? "+" : ""}{review.diff}</b> · Show grade <b style={{ color: "#ffd54f" }}>{review.grade}</b>
+        </div>
+      </div>
+
+      {review.heistApplied && (
+        <Card style={{ borderColor: "#ffb454", background: "linear-gradient(160deg, #241a08, #1a1305)" }}>
+          <div style={{ fontSize: 9, letterSpacing: ".2em", color: "#ffb454", fontWeight: 800, marginBottom: 4 }}>★ CHAMPIONSHIP HEIST</div>
+          <div style={{ fontSize: 13, color: "#ffe2b0", lineHeight: 1.5 }}>
+            Raiding the rival's champion lit up your overnights. The spotlight you stole was worth <b style={{ color: "#ffd54f" }}>+{review.heistApplied}</b> to tonight's rating, and the enemy show now has a belt to scramble over.
+          </div>
+        </Card>
+      )}
+
+      <Card style={{ borderColor: won ? "#1f3a2e" : "#3a1f26" }}>
+        <div style={{ fontSize: 13, color: "#cfc8e6", lineHeight: 1.5, fontStyle: "italic" }}>{review.quip}</div>
+      </Card>
+
+      {review.nadine && (
+        review.nadine.isRevealWeek ? (
+          <Card style={{ borderColor: "#7a2a4a", background: "linear-gradient(160deg, #1c0e16, #160d14)" }}>
+            <div style={{ fontSize: 9, letterSpacing: ".2em", color: "#ff6fa3", fontWeight: 800, marginBottom: 4 }}>THE CURTAIN DROPS</div>
+            <div style={{ fontSize: 13, color: "#e8c4d4", lineHeight: 1.5, marginBottom: 8 }}>
+              The voice from the rival war room finally steps into the light. The boss across the aisle has a name, and she wants you to know it.
+            </div>
+            <div style={{ fontFamily: display, fontWeight: 900, fontSize: 26, color: "#ff6fa3", textShadow: "0 0 18px #ff6fa355" }}>NADINE NAOMI</div>
+            <div style={{ fontSize: 11, color: "#b98aa0", fontStyle: "italic", marginBottom: 9 }}>{NADINE_BIO.tagline}</div>
+            <div style={{ fontSize: 13, color: "#f0d4e0", lineHeight: 1.5, borderLeft: "2px solid #ff6fa3", paddingLeft: 10 }}>
+              "{review.nadine.line}"
+            </div>
+          </Card>
+        ) : (
+          <Card style={{ borderColor: review.nadine.masked ? "#2a2440" : "#5a2240", background: review.nadine.masked ? "#100d1a" : "#170d13" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <span style={{ fontSize: 16 }}>{review.nadine.masked ? "🕶️" : "💋"}</span>
+              <div>
+                <div style={{ fontSize: 9, letterSpacing: ".18em", color: review.nadine.masked ? "#8c85a6" : "#ff6fa3", fontWeight: 800 }}>
+                  {review.nadine.masked ? "VERDICT FROM…" : "NADINE NAOMI · RIVAL GM"}
+                </div>
+                <div style={{ fontFamily: display, fontWeight: 800, fontSize: 15, color: review.nadine.masked ? "#cfc8e6" : "#ff8fb3" }}>
+                  {review.nadine.name}
+                </div>
+              </div>
+            </div>
+            <div style={{ fontSize: 13, color: review.nadine.masked ? "#bdb6d4" : "#f0d4e0", lineHeight: 1.5, fontStyle: "italic" }}>
+              "{review.nadine.line}"
+            </div>
+          </Card>
+        )
+      )}
+
+      {review.notes && review.notes.length > 0 && (
+        <Card>
+          <div style={{ fontSize: 10, letterSpacing: ".15em", color: "var(--accent)", fontWeight: 800, marginBottom: 7 }}>HEADLINES</div>
+          {review.notes.map((n, i) => (
+            <div key={i} style={{ fontSize: 13, color: n.includes("captures") || n.includes("Championship") ? "#ffd54f" : "#cfc8e6", padding: "3px 0" }}>· {n}</div>
+          ))}
+        </Card>
+      )}
+
+      {(review.bestMatch || review.worstMatch) && (
+        <Card>
+          <div style={{ fontSize: 10, letterSpacing: ".15em", color: "var(--accent)", fontWeight: 800, marginBottom: 8 }}>MATCH OF THE NIGHT · ACROSS BOTH SHOWS</div>
+          {review.bestMatch && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0" }}>
+              <div>
+                <div style={{ fontSize: 9, color: "#54e0a0", fontWeight: 800, letterSpacing: ".1em" }}>BEST · {review.bestMatch.side}</div>
+                <div style={{ fontSize: 13, color: "#ece8f5" }}>{review.bestMatch.who}</div>
+                <div style={{ fontSize: 11, color: "#8c85a6" }}>{review.bestMatch.label}</div>
+              </div>
+              <div style={{ fontFamily: display, fontWeight: 900, fontSize: 22, color: "#54e0a0" }}>{review.bestMatch.rating}</div>
+            </div>
+          )}
+          {review.worstMatch && review.worstMatch.who !== (review.bestMatch && review.bestMatch.who) && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderTop: "1px solid #1d1830", marginTop: 4 }}>
+              <div>
+                <div style={{ fontSize: 9, color: "#ff7088", fontWeight: 800, letterSpacing: ".1em" }}>WORST · {review.worstMatch.side}</div>
+                <div style={{ fontSize: 13, color: "#ece8f5" }}>{review.worstMatch.who}</div>
+                <div style={{ fontSize: 11, color: "#8c85a6" }}>{review.worstMatch.label}</div>
+              </div>
+              <div style={{ fontFamily: display, fontWeight: 900, fontSize: 22, color: "#ff7088" }}>{review.worstMatch.rating}</div>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {review.storyNotes && review.storyNotes.length > 0 && (
+        <Card style={{ borderColor: "#3a2a4a" }}>
+          <div style={{ fontSize: 10, letterSpacing: ".15em", color: "#c79bff", fontWeight: 800, marginBottom: 10 }}>STORYLINE DESK</div>
+          {review.storyNotes.map((n, i) => (
+            <div key={i} style={{ marginBottom: i < review.storyNotes.length - 1 ? 12 : 0, paddingBottom: i < review.storyNotes.length - 1 ? 12 : 0, borderBottom: i < review.storyNotes.length - 1 ? "1px solid #241c34" : "none" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 8.5, letterSpacing: ".1em", fontWeight: 800, color: n.status === "forming" ? "#54e0a0" : "#c79bff", background: n.status === "forming" ? "#0e2418" : "#1e1430", border: `1px solid ${n.status === "forming" ? "#2a5a3f" : "#3a2a55"}`, borderRadius: 3, padding: "2px 6px" }}>
+                  {n.status === "forming" ? "NEW ANGLE" : "ESCALATING"}
+                </span>
+                <span style={{ fontFamily: display, fontWeight: 800, fontSize: 14, color: "#e7d6ff" }}>{n.tag}</span>
+                {n.heat != null && <span style={{ fontSize: 10, color: "#8c85a6", marginLeft: "auto" }}>heat {n.heat}</span>}
+              </div>
+              <div style={{ fontSize: 12, color: "#9d93b8", fontWeight: 600, marginBottom: 3 }}>{n.who}</div>
+              <div style={{ fontSize: 12.5, color: "#cfc8e6", lineHeight: 1.5 }}>{n.beat}</div>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {review.climbers && review.climbers.length > 0 && (
+        <Card style={{ borderColor: "#3a2230" }}>
+          <div style={{ fontSize: 10, letterSpacing: ".15em", color: "#ff9d6f", fontWeight: 800, marginBottom: 4 }}>RISING · NOW RAID TARGETS</div>
+          <div style={{ fontSize: 11, color: "#8c85a6", marginBottom: 7, lineHeight: 1.4 }}>These wrestlers got over tonight. The rival's booker will have noticed, so expect poach attempts.</div>
+          {review.climbers.map((c, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0" }}>
+              <span style={{ fontSize: 13, color: "#ece8f5" }}>{c.name}</span>
+              <span style={{ fontSize: 12, color: "#54e0a0", fontWeight: 700 }}>+{c.gain} pop <span style={{ color: "#6f6889" }}>→ {c.pop}</span></span>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {storylineFork && forkArch && (
+        <Card style={{ borderColor: "#5a3a7a", background: "#16101f" }}>
+          <div style={{ fontSize: 10, letterSpacing: ".15em", color: "#c79bff", fontWeight: 800, marginBottom: 6 }}>STORYLINE AT A CROSSROADS</div>
+          <div style={{ fontFamily: display, fontWeight: 800, fontSize: 16, color: "#e7d6ff" }}>{forkArch.name}</div>
+          <div style={{ fontSize: 12.5, color: "#cfc8e6", margin: "5px 0 4px", lineHeight: 1.5 }}>
+            <b style={{ color: "#c79bff" }}>{storylineFork.aName}</b> and <b style={{ color: "#c79bff" }}>{storylineFork.bName}</b> have built real heat ({storylineFork.heat}). {forkArch.blurb}
+          </div>
+          {!forkResolved ? (
+            <>
+              <div style={{ fontSize: 12, color: "#9b94b3", margin: "8px 0", lineHeight: 1.5 }}>
+                Cash in now for a reliable blow-off and a healthy payday, or push it further for a much bigger spike, at the risk of the whole thing going cold.
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={() => onResolveFork("cash")} className="ptp-btn" style={{ flex: 1, padding: "11px", background: "#2a1f3a", color: "#e7d6ff", border: "1px solid #5a3a7a", borderRadius: 6, fontFamily: display, fontWeight: 800, fontSize: 13, cursor: "pointer" }}>Cash it in now</button>
+                <button onClick={() => onResolveFork("push")} className="ptp-btn" style={{ flex: 1, padding: "11px", background: "transparent", color: "#c79bff", border: "1px solid #5a3a7a", borderRadius: 6, fontFamily: display, fontWeight: 800, fontSize: 13, cursor: "pointer" }}>Push it further</button>
+              </div>
+            </>
+          ) : (
+            <div style={{ marginTop: 6 }}>
+              <div style={{ fontSize: 13, color: forkResolved.success ? "#aed581" : "#ff7088", lineHeight: 1.5, fontStyle: "italic" }}>{forkResolved.line}</div>
+              <button onClick={onDismissFork} className="ptp-btn" style={{ width: "100%", marginTop: 10, padding: "9px", background: "transparent", color: "#9b94b3", border: "1px solid #261f38", borderRadius: 5, fontFamily: display, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Noted</button>
+            </div>
+          )}
+        </Card>
+      )}
+
+      <Card>
+        <div style={{ display: "flex", justifyContent: "space-between" }}>
+          {[["Record", `${wins}-${losses}`, "#cfc8e6"], ["Win streak", `${streak}`, streak > 0 ? "#54e0a0" : "#9b94b3"], ["Peak segment", `${review.peak}`, "#ffd54f"], ["Net $", `${review.net > 0 ? "+" : ""}${review.net}K`, review.net >= 0 ? "#54e0a0" : "#ff7088"]].map(([l, v, c], i) => (
+            <div key={i} style={{ textAlign: "center", flex: 1 }}>
+              <div style={{ fontFamily: display, fontWeight: 900, fontSize: 19, color: c }}>{v}</div>
+              <div style={{ fontSize: 9, color: "#6f6889", letterSpacing: ".08em" }}>{l.toUpperCase()}</div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      {tagProposals.length > 0 && (
+        <Card style={{ borderColor: "#2a3a1f" }}>
+          <div style={{ fontSize: 10, letterSpacing: ".15em", color: "#aed581", fontWeight: 800, marginBottom: 7 }}>CHEMISTRY · TAG TEAM PROPOSAL</div>
+          {tagProposals.map((p, i) => (
+            <div key={i} style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 13, color: "#cfc8e6", lineHeight: 1.5 }}>
+                <b>{p.a.name}</b> and <b>{p.b.name}</b> have real chemistry as a pair. Make them a permanent tag team?
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                <button onClick={() => onAcceptTag(p)} className="ptp-btn" style={{ flex: 1, padding: "8px", background: "#2a3a1f", color: "#aed581", border: "1px solid #3a4a2f", borderRadius: 5, fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: display }}>Form the team</button>
+                <button onClick={() => onDeclineTag(p)} className="ptp-btn" style={{ flex: 1, padding: "8px", background: "transparent", color: "#9b94b3", border: "1px solid #261f38", borderRadius: 5, fontWeight: 700, fontSize: 12, cursor: "pointer", fontFamily: display }}>Keep them singles</button>
+              </div>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      <AccentBtn onClick={onNext}>{week >= totalWeeks ? "See the final reckoning" : "Onto next week"}</AccentBtn>
+    </div>
+  );
+}
+
+// ============================================================
+// RUN END — the screenshot moment. Verdict, stats, awards, the war's shape,
+// and a real Monday Night Wars parallel chosen to fit how the run went.
+// ============================================================
+// authentic MNW parallels (verified history), matched to outcome
+const MNW_PARALLELS = {
+  blowout_win: [
+    "Like the WWF in 1999: you didn't just win the war, you lapped them. At their peak, Raw and Nitro each pulled over 10 million viewers a week, but once the momentum tipped it became a rout.",
+    "This is the Attitude-Era surge writ small. From late 1998 the WWF reeled off 80-plus straight weekly wins on the way to burying the competition.",
+  ],
+  win: [
+    "The real war flipped for good in late 1998, when Raw overtook Nitro and never gave the lead back. You pulled off the same turn.",
+    "WCW led for 83 consecutive weeks before the WWF clawed back. Building a lead is one thing, holding it is the war. You held it.",
+  ],
+  narrow_win: [
+    "For two years this thing was a coin-flip on a knife's edge before anyone pulled clear. Yours came right down to the wire too.",
+    "In the mid-90s the lead changed hands almost weekly. A war this close is exactly how the golden age felt.",
+  ],
+  narrow_loss: [
+    "The WWF spent most of 1996-97 chasing from behind before the comeback. You're in good company. The deficit is where legends are forged.",
+    "WCW's Nitro out-drew Raw for a year and a half before the tide turned. Losing the war isn't the end of the story, it's the first act of the comeback.",
+  ],
+  loss: [
+    "WCW had every advantage, Ted Turner's money, the nWo, the hottest angle in the business, and still lost the war through bad booking. Talent isn't enough. The book is everything.",
+    "The infamous 'Fingerpoke of Doom' in 1999 saw WCW torch its own momentum overnight. One bad call can undo a year of build. Learn it, rebook it.",
+  ],
+  blowout_loss: [
+    "By 2001 Nitro's rating had cratered and Vince McMahon bought the competition live on air for a reported 2.5 million dollars. Rock bottom is real, but so is the rebuild. Run it back.",
+    "WCW lost a reported 62 million dollars in 2000 amid a talent-spending binge and chaotic booking. Overspending without a plan sinks promotions. The roguelite gods demand a smarter run.",
+  ],
+};
+
+function RunEnd({ player, rival, history, wins, losses, totalWeeks, onRestart }) {
+  const margin = wins - losses;
+  const won = wins > losses;
+  const avgPlayer = round1(history.reduce((s, h) => s + h.playerN, 0) / Math.max(1, history.length));
+  const avgRival = round1(history.reduce((s, h) => s + h.rivalN, 0) / Math.max(1, history.length));
+  const bestWeek = history.reduce((b, h) => h.playerN > (b ? b.playerN : 0) ? h : b, null);
+  const peakSeg = Math.max(...history.map(h => h.peak));
+  // longest win streak across the run
+  let longest = 0, cur = 0;
+  history.forEach(h => { if (h.result === "win") { cur++; longest = Math.max(longest, cur); } else cur = 0; });
+
+  // verdict bucket
+  let bucket, verdict, vColor;
+  if (won && margin >= Math.ceil(totalWeeks * 0.55)) { bucket = "blowout_win"; verdict = "TOTAL DOMINATION"; vColor = "#ffd54f"; }
+  else if (won && margin >= 3) { bucket = "win"; verdict = "WAR WON"; vColor = "#54e0a0"; }
+  else if (won) { bucket = "narrow_win"; verdict = "EDGED IT OUT"; vColor = "#54e0a0"; }
+  else if (margin === 0) { bucket = "narrow_win"; verdict = "DEAD HEAT, YOUR SHADE"; vColor = "#cfc8e6"; }
+  else if (margin >= -2) { bucket = "narrow_loss"; verdict = "NARROWLY OUT-DRAWN"; vColor = "#ff9d7a"; }
+  else if (margin >= -Math.ceil(totalWeeks * 0.5)) { bucket = "loss"; verdict = "WAR LOST"; vColor = "#ff7088"; }
+  else { bucket = "blowout_loss"; verdict = "BURIED"; vColor = "#ff3b5c"; }
+  const parallel = pick(MNW_PARALLELS[bucket]);
+
+  // standout wrestlers
+  const topStar = [...player.roster].sort((a, b) => b.popularity - a.popularity)[0];
+  const champ = player.roster.find(w => w.id === player.titles.world.holderId);
+  const tagChamp = player.roster.find(w => w.id === player.titles.tag.holderId);
+  const mostTitles = [...player.roster].sort((a, b) => (b.titles || 0) - (a.titles || 0))[0];
+  const bestStealer = [...player.roster].sort((a, b) => (b.showStealers || 0) - (a.showStealers || 0))[0];
+  const wunder = player.roster.find(w => w.isWunderkind);
+
+  // fun titbits
+  const totalBotches = player.roster.reduce((s, w) => s + (w.botches || 0), 0);
+  const titbits = [
+    `Your show averaged a ${avgPlayer} rating across ${totalWeeks} weeks. The rival averaged ${avgRival}.`,
+    `Hottest single segment of the run peaked at ${peakSeg}.`,
+    longest > 1 ? `Longest unbeaten run: ${longest} straight Mondays on top.` : `You never strung more than one win together. Consistency is the next mountain.`,
+    totalBotches > 0 ? `Your roster botched ${totalBotches} spot${totalBotches > 1 ? "s" : ""} on live TV. The bloopers reel sells itself.` : `A clean run, zero botches on record. The agents slept easy.`,
+  ];
+
+  return (
+    <div>
+      <div style={{ textAlign: "center", padding: "10px 0 6px" }}>
+        <div style={{ fontSize: 11, letterSpacing: ".26em", color: "var(--accent)", fontWeight: 800 }}>{player.name.toUpperCase()} · FINAL RECKONING</div>
+        <div style={{ fontFamily: display, fontWeight: 900, fontSize: 44, color: vColor, textShadow: `0 0 26px ${vColor}66`, lineHeight: .95, margin: "8px 0" }}>{verdict}</div>
+        <div style={{ fontFamily: display, fontWeight: 900, fontSize: 30, color: "#f3eeff" }}>
+          {wins} <span style={{ color: "#6f6889", fontSize: 18 }}>—</span> {losses}
+        </div>
+        <div style={{ fontSize: 12, color: "#9b94b3" }}>{player.tag} vs {rival.tag} · {totalWeeks}-week war</div>
+      </div>
+
+      {/* the war's shape: a tiny sparkline of weekly margins */}
+      <Card style={{ padding: "14px 14px 10px" }}>
+        <div style={{ fontSize: 10, letterSpacing: ".15em", color: "#9b94b3", fontWeight: 700, marginBottom: 8 }}>THE SHAPE OF THE WAR</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 56 }}>
+          {history.map((h, i) => {
+            const d = h.playerN - h.rivalN;
+            const mag = Math.min(1, Math.abs(d) / 3);
+            const up = d >= 0;
+            return (
+              <div key={i} title={`Wk ${h.week}: ${h.playerN} vs ${h.rivalN}`} style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", height: "100%" }}>
+                <div style={{ width: "100%", height: `${(up ? mag : 0) * 100}%`, background: "var(--accent)", borderRadius: "2px 2px 0 0", minHeight: up ? 3 : 0 }} />
+                <div style={{ width: "100%", height: 1, background: "#3a3354" }} />
+                <div style={{ width: "100%", height: `${(!up ? mag : 0) * 100}%`, background: "#ff7088", borderRadius: "0 0 2px 2px", minHeight: !up ? 3 : 0 }} />
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "#6f6889", marginTop: 4 }}>
+          <span>Wk 1</span><span>Wk {totalWeeks}</span>
+        </div>
+      </Card>
+
+      {/* stat grid */}
+      <Card>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Stat label="Avg rating" val={avgPlayer} color="var(--accent)" />
+          <Stat label="Best week" val={bestWeek ? bestWeek.playerN : "-"} sub={bestWeek ? `Week ${bestWeek.week}` : ""} color="#54e0a0" />
+          <Stat label="Peak segment" val={peakSeg} color="#ffd54f" />
+          <Stat label="Longest streak" val={longest} sub="Mondays" color="#54e0ff" />
+        </div>
+      </Card>
+
+      {/* awards */}
+      <Card style={{ borderColor: "#2c2442" }}>
+        <div style={{ fontSize: 10, letterSpacing: ".15em", color: "var(--accent)", fontWeight: 800, marginBottom: 9 }}>END-OF-RUN HONOURS</div>
+        {[
+          ["Face of the promotion", topStar ? `${topStar.name} (${topStar.popularity} pop)` : "-"],
+          ["Reigning World Champ", champ ? champ.name : "Vacant, chaos reigns"],
+          ["Tag Champions", tagChamp ? tagChamp.name : "Vacant"],
+          ["Most decorated", mostTitles && mostTitles.titles ? `${mostTitles.name} (${mostTitles.titles} reign${mostTitles.titles > 1 ? "s" : ""})` : "-"],
+          ["Show-stealer", bestStealer && bestStealer.showStealers ? `${bestStealer.name} (${bestStealer.showStealers} classics)` : "-"],
+          wunder ? ["The phenom you landed", `${wunder.name}, ${wunder.nation ? wunder.nation.flag : ""} ${wunder.nickname}`] : null,
+        ].filter(Boolean).map(([l, v], i) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", borderBottom: "1px solid #1d1830", fontSize: 13 }}>
+            <span style={{ color: "#9b94b3" }}>{l}</span>
+            <span style={{ color: "#f3eeff", fontWeight: 600, textAlign: "right", maxWidth: "60%" }}>{v}</span>
+          </div>
+        ))}
+      </Card>
+
+      {/* titbits */}
+      <Card>
+        <div style={{ fontSize: 10, letterSpacing: ".15em", color: "#9b94b3", fontWeight: 700, marginBottom: 7 }}>RUN TITBITS</div>
+        {titbits.map((t, i) => <div key={i} style={{ fontSize: 12.5, color: "#cfc8e6", padding: "3px 0", lineHeight: 1.45 }}>· {t}</div>)}
+      </Card>
+
+      {/* MNW parallel */}
+      <Card style={{ borderColor: "#3a2f1a", background: "linear-gradient(180deg,#1a160c,#120f1d)" }}>
+        <div style={{ fontSize: 10, letterSpacing: ".15em", color: "#ffd54f", fontWeight: 800, marginBottom: 6 }}>VS THE REAL MONDAY NIGHT WARS</div>
+        <div style={{ fontSize: 13, color: "#e8dcc0", lineHeight: 1.55 }}>{parallel}</div>
+      </Card>
+
+      <AccentBtn onClick={onRestart}>Run it back · New war</AccentBtn>
+      <p style={{ textAlign: "center", color: "#5a5470", fontSize: 11, marginTop: 10 }}>
+        Screenshot the card. Every war is procedurally generated, the next one writes a different story.
+      </p>
+    </div>
+  );
+}
+function Stat({ label, val, sub, color }) {
+  return (
+    <div style={{ background: "#0f0c1a", borderRadius: 6, padding: "10px 12px", border: "1px solid #1d1830" }}>
+      <div style={{ fontSize: 9, color: "#8c85a6", letterSpacing: ".1em" }}>{label.toUpperCase()}</div>
+      <div style={{ fontFamily: display, fontWeight: 900, fontSize: 24, color: color || "#f3eeff" }}>{val}</div>
+      {sub && <div style={{ fontSize: 9, color: "#6f6889" }}>{sub}</div>}
+    </div>
+  );
+}
+
+// ---------- entry point ----------
+function App() { return <Game />; }
+</script>
+
+<script>
+(function () {
+  var ROOT = document.getElementById("root");
+  function showError(msg) {
+    ROOT.innerHTML = '<div class="errbox"><b>Something went wrong loading the game.</b>\n\n' +
+      String(msg).replace(/</g, "&lt;") +
+      '\n\nIf you are viewing this inside an app preview, open the real website link in your browser instead.</div>';
+  }
+  function loadScript(urls, done, fail) {
+    var i = 0;
+    function tryNext() {
+      if (i >= urls.length) { fail(); return; }
+      var s = document.createElement("script");
+      s.src = urls[i++]; s.crossOrigin = "anonymous";
+      s.onload = function () { done(); };
+      s.onerror = function () { tryNext(); };
+      document.head.appendChild(s);
+    }
+    tryNext();
+  }
+  var REACT = ["https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js","https://unpkg.com/react@18.3.1/umd/react.production.min.js","https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"];
+  var REACTDOM = ["https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js","https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js","https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"];
+  var BABEL = ["https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js","https://unpkg.com/@babel/standalone@7.25.6/babel.min.js","https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"];
+  function boot() {
+    try {
+      if (!window.React || !window.ReactDOM) { showError("React did not load from any CDN."); return; }
+      if (!window.Babel) { showError("Babel did not load."); return; }
+      var hooks = "var useState=React.useState,useMemo=React.useMemo,useEffect=React.useEffect,useRef=React.useRef;\n";
+      var mount = "\nReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));";
+      var src = document.getElementById("appsrc").textContent;
+      var compiled = Babel.transform(hooks + src + mount, { presets: ["react"] }).code;
+      (0, eval)(compiled);
+    } catch (err) { showError((err && err.stack) || err); }
+  }
+  loadScript(REACT, function () {
+    loadScript(REACTDOM, function () {
+      loadScript(BABEL, boot, function () { showError("Could not load Babel."); });
+    }, function () { showError("Could not load ReactDOM."); });
+  }, function () { showError("Could not load React."); });
+})();
+</script>
+</body>
+</html>
