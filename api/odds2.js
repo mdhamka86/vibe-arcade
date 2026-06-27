@@ -1,20 +1,20 @@
-// /api/odds2  -  Pull SGPools football odds for the slip builder.
+// /api/odds2  -  SGPools football odds for The Spread Slip, triage2-style.
 //
-// Strategy (per build decision): try BOTH sources in parallel and return
-// whichever yields usable data, each clearly labelled so you always know
-// which feed you're looking at.
-//   A) SGPools directly (server-side fetch, iPhone UA). The public site paints
-//      odds via JS, so this OFTEN returns only a skeleton, but server-side with
-//      a real UA sometimes reaches an embedded data blob, so we try anyway.
-//   B) sgodds.com mirror (renders odds as server-side text, reliably parseable,
-//      but LAGGING and uses its own match numbering, NOT SGPools app codes).
+// Two modes, mirroring triage2's list + deep split:
+//   (default)        list view: pull the mirror's current-odds page, return
+//                    every fixture with headline 1X2 + its per-match page URL.
+//   ?match=<url>     deep view: server-side fetch ONE fixture's own mirror page
+//                    and parse every market it exposes (1X2, Asian Handicap,
+//                    Total Goals O/U, Halftime), the football analogue of
+//                    triage2's deep racecard read.
 //
-// HARD RULE baked into the payload: sgodds codes are mirror codes, never
-// SGPools app codes. The UI must tell the user to card-match the real code
-// and confirm the live price in the SGPools app before betting.
+// Source is the sgodds.com mirror (renders as server-side text, like the SP
+// horse cards triage2 reads). HARD RULE: mirror codes are NOT SGPools app
+// codes, and payouts/exotics are not exhaustive. Card-match in the app before
+// betting. Mirror lags; your SGPools app is source of truth at bet time.
 
-const MIRROR_URL = "https://sgodds.com/football/current-odds";
-const SP_SPORTS = "https://online.singaporepools.com/en/sports";
+const MIRROR_BASE = "https://sgodds.com";
+const MIRROR_LIST = "https://sgodds.com/football/current-odds";
 
 async function getText(url, ms) {
   const ctrl = new AbortController();
@@ -34,9 +34,30 @@ async function getText(url, ms) {
   }
 }
 
-// --- Mirror parser: walk the rendered text stream, pair "Home vs Away" titles
-//     with the nearest preceding code/time and the next three decimal prices. ---
-function parseMirror(html) {
+function abs(href) {
+  if (!href) return href;
+  href = href.replace(/&amp;/g, "&");
+  if (href.startsWith("http")) return href;
+  return MIRROR_BASE + (href.startsWith("/") ? "" : "/") + href;
+}
+
+// ---- LIST: parse the current-odds page into fixtures with their match URLs ----
+function parseList(html) {
+  // Capture each fixture's link (carries home/away + mirror id) alongside the
+  // nearest code/time and the next three 1X2 prices.
+  const linkRe =
+    /href="([^"]*\/current-odds\/([^"]+?)-(\d+))"[^>]*>([^<]*vs[^<]*)<\/a>/gi;
+  const links = [];
+  let m;
+  while ((m = linkRe.exec(html)) !== null) {
+    links.push({
+      url: abs(m[1]),
+      mirror_id: m[3],
+      title: m[4].replace(/&amp;/g, "&").trim(),
+    });
+  }
+
+  // Flatten to a text stream to recover code/time/prices around each title.
   const text = html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -47,94 +68,135 @@ function parseMirror(html) {
     .filter(Boolean);
 
   const out = [];
-  for (let i = 0; i < text.length; i++) {
-    const vs = text[i].match(/^(.+?)\s+vs\s+(.+?)$/i);
-    if (!vs) continue;
+  for (const lk of links) {
+    const ti = text.findIndex((t) => t === lk.title);
+    if (ti === -1) continue;
     let code = null, time = null, league = null;
-    for (let b = i - 1; b >= Math.max(0, i - 6); b--) {
+    for (let b = ti - 1; b >= Math.max(0, ti - 6); b--) {
       if (!code && /^\d{4}$/.test(text[b])) code = text[b];
       if (!time && /^\d{1,2}:\d{2}$/.test(text[b])) time = text[b];
       if (!league && /(W Cup|League|Liga|Serie|Bundesliga|Ligue)/i.test(text[b])) league = text[b];
     }
     const prices = [];
-    for (let f = i + 1; f < Math.min(text.length, i + 12) && prices.length < 3; f++) {
+    for (let f = ti + 1; f < Math.min(text.length, ti + 12) && prices.length < 3; f++) {
       const p = text[f].match(/^(\d{1,2}\.\d{2})\b/);
       if (p) prices.push(parseFloat(p[1]));
     }
-    if (prices.length < 3) continue;
+    const vs = lk.title.match(/^(.+?)\s+vs\s+(.+?)$/i);
     out.push({
       mirror_code: code,
+      mirror_id: lk.mirror_id,
+      match_url: lk.url,
       time_sgt: time,
       league: league || "",
-      home: vs[1].trim(),
-      away: vs[2].trim(),
-      odds_1x2: { home: prices[0], draw: prices[1], away: prices[2] },
+      home: vs ? vs[1].trim() : lk.title,
+      away: vs ? vs[2].trim() : "",
+      odds_1x2: prices.length === 3 ? { home: prices[0], draw: prices[1], away: prices[2] } : null,
     });
   }
-  // de-dupe by fixture
+  // de-dupe by url
   const seen = new Set();
-  return out.filter((f) => {
-    const k = f.home + "|" + f.away;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
+  return out.filter((f) => (seen.has(f.match_url) ? false : (seen.add(f.match_url), true)));
 }
 
-// --- SGPools direct: try to recover any embedded JSON blob the page ships
-//     before hydration. If none is found we just report skeleton-only. ---
-function parseSgDirect(html) {
-  // Look for a large JSON-looking blob with event/odds keys. Defensive: many
-  // builds inline initial state in a window.__ var or a <script type=json>.
-  const out = [];
-  const blobs = html.match(/\{[^{}]*"(?:odds|markets|events?|fixtures?)"[\s\S]{0,40000}?\}/gi) || [];
-  // We don't trust a specific schema (it changes), so we only flag whether a
-  // data blob was present at all. Real parsing stays on the mirror.
-  return { recovered: out, sawDataBlob: blobs.length > 0, skeleton: blobs.length === 0 };
+// ---- DEEP: parse ONE match page for every market the mirror exposes ----
+function parseMatch(html) {
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, "\n")
+    .replace(/&amp;/g, "&")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  // Walk the stream; when we hit a known market heading, collect the
+  // selection/price pairs that follow until the next heading.
+  const MARKET_HEADS = [
+    { key: "1X2", re: /^1\s*X\s*2$/i },
+    { key: "Halftime 1X2", re: /^halftime\s*1\s*x\s*2/i },
+    { key: "Asian Handicap", re: /^asian\s*handicap/i },
+    { key: "Total Goals O/U", re: /^total\s*goals?\s*(over\/under|o\/u)?/i },
+    { key: "1/2 Goal", re: /^1\/2\s*goal/i },
+  ];
+  function isHead(s) {
+    for (const h of MARKET_HEADS) if (h.re.test(s)) return h.key;
+    return null;
+  }
+
+  const markets = {};
+  let cur = null;
+  for (let i = 0; i < text.length; i++) {
+    const head = isHead(text[i]);
+    if (head) { cur = head; markets[cur] = markets[cur] || []; continue; }
+    if (!cur) continue;
+    // A selection line is text; the price is the next decimal token.
+    const price = text[i].match(/^(\d{1,3}\.\d{2})\b/);
+    if (price) {
+      // selection label is the previous non-numeric line we haven't consumed
+      const prev = text[i - 1] || "";
+      if (prev && !/^\d/.test(prev) && prev.length < 40) {
+        markets[cur].push({ selection: prev, odds: parseFloat(price[1]) });
+      }
+    }
+  }
+  // drop empties, cap each market to a sane number of lines
+  Object.keys(markets).forEach((k) => {
+    if (!markets[k].length) delete markets[k];
+    else markets[k] = markets[k].slice(0, 12);
+  });
+
+  // title + stamp
+  let title = "";
+  const tm = html.match(/<title>([^<]+)<\/title>/i);
+  if (tm) title = tm[1].replace(/&amp;/g, "&").trim();
+  let stamp = null;
+  const sm = html.match(/Last Updated on\s*([\d-]+\s[\d:]+)/i);
+  if (sm) stamp = sm[1];
+
+  return { title, last_updated: stamp, markets };
 }
 
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "no-store, max-age=0");
   try {
-    const [mirrorHtml, spHtml] = await Promise.all([
-      getText(MIRROR_URL, 8000).catch(() => ""),
-      getText(SP_SPORTS, 8000).catch(() => ""),
-    ]);
+    const url = new URL(req.url, "http://localhost");
+    const matchUrl = url.searchParams.get("match");
 
-    const mirror = mirrorHtml ? parseMirror(mirrorHtml) : [];
-    const direct = spHtml ? parseSgDirect(spHtml) : { skeleton: true, sawDataBlob: false };
+    if (matchUrl) {
+      if (matchUrl.indexOf("sgodds.com") === -1) {
+        res.status(400).json({ error: "match url must be an sgodds.com fixture page" });
+        return;
+      }
+      const html = await getText(matchUrl, 9000);
+      const parsed = parseMatch(html);
+      res.status(200).json({
+        build: "odds2 v1.1 deep",
+        match_url: matchUrl,
+        ...parsed,
+        disclaimer:
+          "Mirror data, lagging and not exhaustive (no live payouts / some exotics absent). Card-match the real SGPools code and confirm live price in the app before betting.",
+      });
+      return;
+    }
 
-    // Pull "last updated" stamp off the mirror if present (honesty about lag).
-    let mirrorStamp = null;
-    const sm = mirrorHtml.match(/Last Updated on\s*([\d-]+\s[\d:]+)/i);
-    if (sm) mirrorStamp = sm[1];
+    const listHtml = await getText(MIRROR_LIST, 8000);
+    const fixtures = parseList(listHtml);
+    let stamp = null;
+    const sm = listHtml.match(/Last Updated on\s*([\d-]+\s[\d:]+)/i);
+    if (sm) stamp = sm[1];
 
-    const payload = {
-      build: "odds2 v1.0",
+    res.status(200).json({
+      build: "odds2 v1.1 list",
       pulled_at: new Date().toISOString(),
-      sources: {
-        sgpools_direct: {
-          ok: !direct.skeleton,
-          note: direct.skeleton
-            ? "SGPools returned skeleton only (odds are JS-rendered). Use mirror."
-            : "SGPools returned a data blob; treat with caution, schema unverified.",
-        },
-        sgodds_mirror: {
-          ok: mirror.length > 0,
-          last_updated: mirrorStamp,
-          note:
-            "Unofficial lagging mirror. mirror_code is NOT the SGPools app code. Card-match before betting.",
-        },
-      },
-      // The mirror is the trustworthy feed for actual numbers right now.
-      primary_source: mirror.length ? "sgodds_mirror" : "none",
-      fixtures: mirror,
-      fixture_count: mirror.length,
+      source: "sgodds.com (unofficial SGPools mirror)",
+      last_updated: stamp,
+      fixture_count: fixtures.length,
+      fixtures,
       disclaimer:
-        "Reference only. Always card-match the real SGPools code and confirm the live price in your SGPools app before placing any bet.",
-    };
-    res.status(200).json(payload);
+        "Reference only. mirror_code is NOT the SGPools app code. Always card-match and confirm the live price in your SGPools app before betting.",
+    });
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
