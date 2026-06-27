@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>The Spread Slip</title>
+<style>
+  :root{--bg:#0e1116;--card:#171b22;--line:#262b34;--ink:#e9edf2;--muted:#8b94a3;--accent:#2ecc71;--accent2:#1f9e57;--warn:#e6a23c;--gold:#d4a13c;--blue:#6db8ff;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:16px;max-width:680px;margin:0 auto;}
+  h1{font-size:20px;margin:4px 0 2px;}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:16px;line-height:1.5;}
+  .row{display:flex;gap:10px;align-items:center;margin-bottom:12px;}
+  select,button,input{font-size:16px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:12px 14px;}
+  select{flex:1;}
+  button.go{background:var(--accent);color:#04210f;font-weight:700;border:none;width:100%;padding:16px;font-size:17px;border-radius:14px;}
+  button.go:active{background:var(--accent2);}
+  button.copy{background:var(--card);color:var(--accent);border:1px solid var(--accent2);width:100%;padding:14px;font-weight:600;margin:12px 0;}
+  .status{color:var(--muted);font-size:13px;margin:12px 2px;min-height:18px;}
+  .srcline{font-size:12px;margin:6px 2px 14px;line-height:1.5;}
+  .srcok{color:var(--accent);} .srcbad{color:var(--muted);} .srcwarn{color:var(--warn);}
+  #gate{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;z-index:9999;}
+  #gate h2{font-size:18px;margin:0;}
+  #gate p{color:var(--muted);font-size:13px;margin:0;text-align:center;}
+  #gate input{font-size:16px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:13px 14px;width:100%;max-width:280px;}
+  #gate button{background:var(--accent);color:#04210f;font-weight:700;border:none;padding:13px 24px;font-size:16px;border-radius:12px;width:100%;max-width:280px;}
+  #gateErr{color:var(--warn);font-size:13px;min-height:16px;}
+  #app{display:none;}
+  .match{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px;}
+  .match h2{margin:0 0 4px;font-size:16px;display:flex;justify-content:space-between;gap:10px;align-items:center;}
+  .mcode{font-size:12px;font-weight:700;color:var(--gold);border:1px solid var(--gold);border-radius:999px;padding:2px 9px;white-space:nowrap;}
+  .mtime{font-size:12.5px;color:var(--muted);margin-bottom:10px;}
+  .odds3{display:flex;gap:8px;margin-bottom:12px;}
+  .o{flex:1;text-align:center;background:#11161c;border:1px solid var(--line);border-radius:10px;padding:8px 4px;}
+  .o .lab{font-size:11px;color:var(--muted);} .o .val{font-size:15px;font-weight:700;}
+  .picker{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
+  .opt{font-size:13px;padding:8px 12px;border-radius:10px;background:#11161c;border:1px solid var(--line);color:var(--ink);cursor:pointer;}
+  .opt.sel{border-color:var(--accent2);color:var(--accent);background:#0f1a13;}
+  .conf{display:flex;gap:6px;margin-bottom:10px;}
+  .conf .opt{flex:1;text-align:center;}
+  .mkbtn{background:var(--accent);color:#04210f;font-weight:700;border:none;border-radius:10px;padding:10px;width:100%;}
+  .slip{margin-top:12px;background:#0b0e13;border:1px solid var(--line);border-radius:10px;padding:12px;font-size:13px;white-space:pre-wrap;display:none;line-height:1.5;}
+  .cmatch{background:#1a1410;border:1px solid var(--gold);border-radius:10px;padding:10px;font-size:12px;color:var(--gold);margin-bottom:12px;line-height:1.5;}
+  footer{color:var(--muted);font-size:12px;margin-top:20px;line-height:1.5;}
+  label.field{font-size:12px;color:var(--muted);display:block;margin:2px 0 4px;}
+</style>
+</head>
+<body>
+  <div id="gate">
+    <h2>The Spread Slip</h2>
+    <p>Enter password to continue.</p>
+    <input id="gatePass" type="password" placeholder="Password" autocomplete="current-password" />
+    <button id="gateBtn">Unlock</button>
+    <div id="gateErr"></div>
+  </div>
+  <div id="app">
+  <h1>The Spread Slip</h1>
+  <div class="sub">Pulls live SGPools football odds (via direct + sgodds mirror), then builds your bet slip in app-input order. Sibling tool to Outsider Triage, for The Spread WC journal.</div>
+
+  <div class="cmatch">⚠ Card-match rule: the code shown is from the lagging mirror and may NOT equal the SGPools app code. Always confirm the real code and live price in the SGPools app before betting.</div>
+
+  <button class="go" id="goBtn">Pull odds</button>
+  <div class="status" id="status"></div>
+  <div class="srcline" id="srcline"></div>
+  <button class="copy" id="copyBtn" style="display:none">Copy all slips (paste to Claude)</button>
+  <div id="out"></div>
+
+  <footer>Core markets: 1X2, Asian Handicap, Totals O/U, BTTS. Confidence tiers stake (High/Med-High/Medium/Low). Odds are reference only; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">The Spread Slip v1.0</span> &middot; hammyLabs &middot; built 28/06/2026</footer>
+  </div>
+
+<script>
+// ---- password gate: reuses the SAME hash as Outsider Triage (one password) ----
+const PASS_HASH = "c283bf2ce8d3227f28166598d4087c6d10e7b5141d142ff4ad2df3bc73c532b4";
+async function sha256Hex(str){
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+function unlockApp(){document.getElementById("gate").style.display="none";document.getElementById("app").style.display="block";}
+async function tryUnlock(){
+  const pass=document.getElementById("gatePass").value;const err=document.getElementById("gateErr");
+  try{const h=await sha256Hex(pass);if(h===PASS_HASH){sessionStorage.setItem("ot_ok","1");unlockApp();}else{err.textContent="Wrong password.";}}
+  catch(e){err.textContent="Error: "+e;}
+}
+if(sessionStorage.getItem("ot_ok")==="1"){unlockApp();}
+document.getElementById("gateBtn").addEventListener("click",tryUnlock);
+document.getElementById("gatePass").addEventListener("keydown",e=>{if(e.key==="Enter")tryUnlock();});
+
+const ODDS="/api/odds2";
+const goBtn=document.getElementById("goBtn"),statusEl=document.getElementById("status"),srcline=document.getElementById("srcline"),out=document.getElementById("out"),copyBtn=document.getElementById("copyBtn");
+let allSlips=[];
+function esc(s){return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+function setStatus(s){statusEl.textContent=s||"";}
+
+const MARKETS=["1X2","Asian Handicap","Total Goals O/U","BTTS"];
+const CONF=["High","Med-High","Medium","Low"];
+const STAKE={High:15,"Med-High":10,Medium:7,Low:5};
+
+function render(data){
+  out.innerHTML="";allSlips=[];
+  const sp=data.sources.sgpools_direct, mr=data.sources.sgodds_mirror;
+  srcline.innerHTML=
+    '<span class="'+(sp.ok?"srcok":"srcbad")+'">● SGPools direct: '+(sp.ok?"data returned":"skeleton only")+'</span><br>'+
+    '<span class="'+(mr.ok?"srcok":"srcbad")+'">● sgodds mirror: '+(mr.ok?("live, updated "+(mr.last_updated||"?")):"unavailable")+'</span>';
+
+  if(!data.fixtures||!data.fixtures.length){out.innerHTML='<div class="status">No fixtures parsed. Mirror may be down; screenshot the SGPools card and I will read it manually.</div>';return;}
+
+  data.fixtures.forEach((f,idx)=>{
+    const div=document.createElement("div");div.className="match";
+    const o=f.odds_1x2||{};
+    div.innerHTML=
+      '<h2><span>'+esc(f.home)+' v '+esc(f.away)+'</span><span class="mcode">'+esc(f.mirror_code||"?")+'</span></h2>'+
+      '<div class="mtime">'+esc(f.time_sgt||"")+' SGT · '+esc(f.league||"")+'</div>'+
+      '<div class="odds3"><div class="o"><div class="lab">1 '+esc(f.home)+'</div><div class="val">'+esc(o.home)+'</div></div>'+
+      '<div class="o"><div class="lab">X Draw</div><div class="val">'+esc(o.draw)+'</div></div>'+
+      '<div class="o"><div class="lab">2 '+esc(f.away)+'</div><div class="val">'+esc(o.away)+'</div></div></div>'+
+      '<label class="field">Bet type</label><div class="picker" data-k="mkt">'+MARKETS.map(m=>'<div class="opt" data-v="'+m+'">'+m+'</div>').join("")+'</div>'+
+      '<label class="field">Selection</label><input class="selinp" placeholder="e.g. '+esc(f.home)+' +0.5  /  Over 2.5  /  Yes" style="width:100%;margin-bottom:10px;" />'+
+      '<label class="field">Confidence (sets stake)</label><div class="picker conf" data-k="conf">'+CONF.map(c=>'<div class="opt" data-v="'+c+'">'+c+'</div>').join("")+'</div>'+
+      '<button class="mkbtn">Build slip line</button>'+
+      '<div class="slip"></div>';
+    out.appendChild(div);
+
+    let mkt=null,conf=null;
+    div.querySelectorAll('.picker').forEach(pk=>{
+      pk.querySelectorAll('.opt').forEach(op=>{
+        op.addEventListener("click",()=>{
+          pk.querySelectorAll('.opt').forEach(x=>x.classList.remove("sel"));
+          op.classList.add("sel");
+          if(pk.getAttribute("data-k")==="mkt")mkt=op.getAttribute("data-v");else conf=op.getAttribute("data-v");
+        });
+      });
+    });
+    div.querySelector(".mkbtn").addEventListener("click",()=>{
+      const sel=div.querySelector(".selinp").value.trim();
+      const slipEl=div.querySelector(".slip");
+      if(!mkt||!conf||!sel){slipEl.style.display="block";slipEl.textContent="Pick a bet type, confidence, and type a selection first.";return;}
+      const stake=STAKE[conf];
+      const txt=
+        "SGPools BET SLIP\n"+
+        "Code (CARD-MATCH IN APP): "+(f.mirror_code||"?")+"\n"+
+        "Match: "+f.home+" v "+f.away+"  ("+(f.time_sgt||"")+" SGT)\n"+
+        "Bet Type: "+mkt+"\n"+
+        "Selection: "+sel+"\n"+
+        "Confidence: "+conf+"   Stake: $"+stake+"\n"+
+        "Ledger: "+((mkt==="1X2"||mkt==="Asian Handicap"||mkt==="Total Goals O/U"||mkt==="BTTS")?"Core":"Variance")+"\n"+
+        "(Confirm live price in SGPools app before placing.)";
+      slipEl.style.display="block";slipEl.textContent=txt;
+      allSlips.push(txt);
+      copyBtn.style.display="block";
+    });
+  });
+}
+
+async function pull(){
+  goBtn.disabled=true;out.innerHTML="";copyBtn.style.display="none";srcline.innerHTML="";
+  setStatus("Pulling odds from SGPools + mirror…");
+  try{
+    const r=await fetch(ODDS);const j=await r.json();
+    if(j.error){setStatus("Error: "+j.error);}
+    else{render(j);setStatus("Pulled "+j.fixture_count+" fixtures. Build slip lines below.");}
+  }catch(e){setStatus("Request failed: "+e);}
+  finally{goBtn.disabled=false;}
+}
+copyBtn.addEventListener("click",async()=>{
+  const blob=allSlips.join("\n\n----------------\n\n");
+  try{await navigator.clipboard.writeText(blob);}
+  catch(e){const ta=document.createElement("textarea");ta.value=blob;document.body.appendChild(ta);ta.select();document.execCommand("copy");document.body.removeChild(ta);}
+  copyBtn.textContent="Copied!";setTimeout(()=>copyBtn.textContent="Copy all slips (paste to Claude)",1500);
+});
+goBtn.addEventListener("click",pull);
+</script>
+</body>
+</html>
