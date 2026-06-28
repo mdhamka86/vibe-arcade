@@ -144,6 +144,10 @@ module.exports = async (req, res) => {
       return;
     }
 
+   if (url.searchParams.get("dump")) {
+      res.status(200).json({ source, totalChars: fullText.length, dump: fullText.slice(0, 6000) });
+      return;
+    }
     let races = [];
     try {
       races = parseRaces(fullText);
