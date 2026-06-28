@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Mission Phuket — D-Day Checklist</title>
+<meta name="description" content="A gamified relocation checklist for the big move from Singapore to Phuket. Tick tasks, bank points, unlock stickers." />
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: #fff6e6; }
+  #root { min-height: 100vh; }
+  .loading { color:#ff7a3d; font-family:'Space Mono',monospace; text-align:center; padding-top:42vh;
+    font-size:13px; letter-spacing:.3em; text-transform:uppercase; }
+  .errbox { color:#c0392b; font-family:monospace; font-size:12px; white-space:pre-wrap; padding:20px; line-height:1.5; }
+</style>
+</head>
+<body>
+<div id="root"><div class="loading">Catching the breeze…</div></div>
+
+<script id="appsrc" type="text/plain">
+
+// ============================================================
+// MISSION PHUKET — a gamified D-Day relocation checklist.
+// Singapore -> Bangkok -> Phuket, 1 July 2026. Five cats, two humans.
+// Phase 1: full checklist game with points, a collection meter, and a
+// rewards store of unlockable stickers. Local-save first; a shared
+// household backend comes in Phase 2.
+// Scaffold pattern matches the established hammyLabs single-file React apps.
+// ============================================================
+
+// ---------- tiny helpers ----------
+const uid = () => Math.random().toString(36).slice(2, 9);
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+const pct = (a, b) => (b === 0 ? 0 : Math.round((a / b) * 100));
+
+// ============================================================
+// THE CHECKLIST — seeded from the real D-Day workbook. Eight sections,
+// in journey order. Each task carries a point value tuned to how much it
+// matters: the things that ruin the trip if forgotten (passports, cat
+// headcounts, import paperwork) are worth more. ★ NEW items from the
+// expanded list are flagged so they read the same as the spreadsheet.
+// ============================================================
+
+// point bands
+const P = { low: 10, mid: 15, high: 25, critical: 40 };
+
+const SECTIONS = [
+  {
+    id: "night-before",
+    no: "01",
+    title: "Night Before",
+    sub: "Pack & stage",
+    icon: "moon",
+    tasks: [
+      { t: "Passports (all travellers)", p: P.critical, note: "No passport, no trip" },
+      { t: "Boarding passes (SQ + VietJet)", p: P.high },
+      { t: "Pet export documents", p: P.critical },
+      { t: "Thailand import permit", p: P.critical },
+      { t: "Vaccination records", p: P.high },
+      { t: "Microchip records", p: P.high },
+      { t: "Health certificates", p: P.high },
+      { t: "Relo4Paws contact details", p: P.mid },
+      { t: "Phuket accommodation details", p: P.mid },
+      { t: "Credit cards", p: P.high },
+      { t: "Thai Baht cash", p: P.mid },
+      { t: "Phones, laptop & chargers packed", p: P.mid },
+      { t: "Travel/pet insurance documents printed", p: P.mid, new: true, note: "Both family and any pet cover" },
+      { t: "Cash in SGD kept aside for airport/taxi", p: P.low, new: true, note: "Don't pack every dollar deep" },
+      { t: "SIM / eSIM / roaming sorted for Thailand", p: P.mid, new: true, note: "Arrive connected, not scrambling" },
+      { t: "Power bank charged & in cabin bag", p: P.low, new: true, note: "Long travel day, devices will drain" },
+      { t: "Phones, watches & power banks on charge overnight", p: P.low, new: true },
+    ],
+  },
+  {
+    id: "cat-checklist",
+    no: "02",
+    title: "Cat Checklist",
+    sub: "Repeat per cat: Rocket, Oscar, Selina, Smokey, Goku",
+    icon: "paw",
+    tasks: [
+      { t: "Crate locked", p: P.high },
+      { t: "Labels attached", p: P.mid },
+      { t: "Water bowl attached", p: P.mid },
+      { t: "Puppy pad fitted", p: P.low },
+      { t: "Comfort towel / blanket", p: P.low },
+      { t: "Final visual health check", p: P.high },
+      { t: "Given anti-stress medicine", p: P.mid },
+      { t: "Crate matches the cat on its paperwork", p: P.critical, new: true, note: "Right cat, right crate, right name" },
+      { t: "Photo of each cat in its crate before handover", p: P.mid, new: true, note: "Proof of condition at handover" },
+    ],
+  },
+  {
+    id: "cat-supplies",
+    no: "03",
+    title: "Cat Supplies",
+    sub: "Travel kit",
+    icon: "bag",
+    tasks: [
+      { t: "Dry food", p: P.mid },
+      { t: "Wet food", p: P.mid },
+      { t: "Treats", p: P.low },
+      { t: "Wet wipes", p: P.low },
+      { t: "Anti-stress medicine, toys, catnip spray", p: P.mid },
+      { t: "Spare puppy pads", p: P.low },
+      { t: "Cable ties", p: P.low },
+      { t: "Marker pen", p: P.low },
+      { t: "Scissors", p: P.low },
+      { t: "Printed spare document copies", p: P.high },
+      { t: "Litter + small scoop / bags for arrival", p: P.mid, new: true, note: "First night in Phuket sorted" },
+      { t: "Each cat's regular meds (if any)", p: P.high, new: true, note: "Ongoing prescriptions, not just calming aid" },
+    ],
+  },
+  {
+    id: "before-leaving",
+    no: "04",
+    title: "Before Leaving Home",
+    sub: "Shut the flat down",
+    icon: "home",
+    tasks: [
+      { t: "Empty rubbish", p: P.low },
+      { t: "Wash dishes", p: P.low },
+      { t: "Remove perishables", p: P.low },
+      { t: "Flush toilets", p: P.low },
+      { t: "Windows closed and locked", p: P.mid },
+      { t: "Curtains partly drawn", p: P.low },
+      { t: "Air conditioners OFF", p: P.mid },
+      { t: "Water heaters OFF", p: P.mid },
+      { t: "Gas OFF", p: P.high },
+      { t: "Washing machine OFF", p: P.low },
+      { t: "Washing machine tap OFF", p: P.low },
+      { t: "Unplug unnecessary electronics", p: P.mid },
+      { t: "Fridge ON", p: P.mid, note: "Leave this one running" },
+      { t: "Main door locked", p: P.high },
+      { t: "Keep physical keys of gate & door", p: P.high, note: "Note down where kept" },
+      { t: "Main water stopcock OFF", p: P.mid, new: true, note: "Stops any burst-pipe nightmare" },
+      { t: "Letterbox / mail redirect or someone collecting", p: P.low, new: true, note: "Overflowing mailbox = empty home flag" },
+      { t: "Keys handed to landlord / agent / trusted person", p: P.mid, new: true, note: "Whoever needs access while away" },
+      { t: "Final walk-through of every room", p: P.mid, new: true, note: "Last pair of eyes catches the obvious" },
+      { t: "Bins put out for next collection", p: P.low, new: true },
+    ],
+  },
+  {
+    id: "final-departure",
+    no: "05",
+    title: "Final Departure",
+    sub: "Out the door",
+    icon: "door",
+    tasks: [
+      { t: "Passports checked", p: P.critical },
+      { t: "Wallets checked", p: P.high },
+      { t: "Phones checked", p: P.mid },
+      { t: "Count all 5 cats", p: P.critical, note: "Rocket, Oscar, Selina, Smokey, Goku" },
+      { t: "Mission Control document folder – one designated owner", p: P.high, note: "Single person owns the papers" },
+      { t: "Leave for Changi 4 – 4.5 hours early", p: P.high },
+      { t: "Confirm transport fits 5 crates + luggage + people", p: P.high, new: true, note: "Book the right size vehicle in advance" },
+      { t: "Gut-check: anyone need the loo / water before the off", p: P.low, new: true },
+    ],
+  },
+  {
+    id: "bangkok",
+    no: "06",
+    title: "Bangkok",
+    sub: "Transit & pet clearance",
+    icon: "plane",
+    tasks: [
+      { t: "Clear immigration", p: P.high },
+      { t: "Collect luggage", p: P.mid },
+      { t: "Pet customs / import clearance", p: P.critical },
+      { t: "Meet Relo4Paws", p: P.high },
+      { t: "Take photos", p: P.low },
+      { t: "Confirm Phuket ETA", p: P.mid },
+      { t: "Exchange phone details", p: P.mid },
+      { t: "Confirm all 5 cats accounted for & healthy at handover", p: P.critical, new: true, note: "Headcount again, eyes on each cat" },
+      { t: "Keep import-clearance paperwork on you", p: P.high, new: true, note: "May be checked again onward" },
+    ],
+  },
+  {
+    id: "before-vietjet",
+    no: "07",
+    title: "Before VietJet Flight",
+    sub: "Final leg to Phuket",
+    icon: "plane",
+    tasks: [
+      { t: "Receive confirmation Relo4Paws has departed with the cats", p: P.high },
+      { t: "Charge phones", p: P.low },
+      { t: "Eat and hydrate", p: P.low },
+      { t: "Board Phuket flight", p: P.high },
+      { t: "Agree arrival rendezvous point with Relo4Paws", p: P.mid, new: true, note: "Know where you meet the cats" },
+    ],
+  },
+  {
+    id: "arrival",
+    no: "08",
+    title: "On Arrival — Phuket",
+    sub: "The landing",
+    icon: "palm",
+    tasks: [
+      { t: "Collect cats / confirm Relo4Paws delivery time", p: P.critical, new: true },
+      { t: "Headcount all 5 cats once more & quick health look", p: P.critical, new: true },
+      { t: "Set up litter, water & food at accommodation first", p: P.high, new: true, note: "Cats settle before anything else" },
+      { t: "Keep cats confined to one room initially", p: P.mid, new: true, note: "Calmer decompression after the trip" },
+      { t: "Locate nearest vet & save the number", p: P.high, new: true, note: "Just in case, before you need it" },
+    ],
+  },
+];
+
+// give every task a stable id derived from section + index, so saved
+// progress survives across reloads regardless of array order.
+SECTIONS.forEach(sec => {
+  sec.tasks.forEach((task, i) => { task.id = `${sec.id}:${i}`; });
+});
+
+const ALL_TASKS = SECTIONS.flatMap(s => s.tasks);
+const TOTAL_TASKS = ALL_TASKS.length;
+const TOTAL_POINTS = ALL_TASKS.reduce((s, t) => s + t.p, 0);
+
+// ============================================================
+// REWARDS STORE — unlockable stickers. Two themed sets: SAFE TRAVELS
+// (luggage-tag / transit flavour) and PHUKET (the tropical payoff).
+// Each sticker is drawn inline as an SVG so the whole thing stays
+// single-file and crisp at any size. Costs ramp so the store lasts the
+// whole run and the best stickers feel earned.
+// ============================================================
+const STICKERS = [
+  // ---- SAFE TRAVELS set ----
+  { id: "boarding", set: "Safe Travels", name: "Boarding Pass", cost: 30, art: "boarding",
+    blurb: "The first stamp in the book. You're really doing this." },
+  { id: "luggage", set: "Safe Travels", name: "Lucky Luggage Tag", cost: 60, art: "luggage",
+    blurb: "May every bag you check arrive on the same carousel as you." },
+  { id: "passport", set: "Safe Travels", name: "Well-Stamped Passport", cost: 110, art: "passport",
+    blurb: "A passport with character. The good kind of dog-eared." },
+  { id: "compass", set: "Safe Travels", name: "True North Compass", cost: 170, art: "compass",
+    blurb: "For always knowing which way is home, even when home moves." },
+  { id: "plane", set: "Safe Travels", name: "Wheels Up", cost: 240, art: "plane",
+    blurb: "That stomach-flip moment when the runway drops away." },
+  // ---- PHUKET set ----
+  { id: "palm", set: "Phuket", name: "Two Palms", cost: 320, art: "palm",
+    blurb: "Shade, breeze, and absolutely nowhere to be." },
+  { id: "longtail", set: "Phuket", name: "Longtail Boat", cost: 410, art: "longtail",
+    blurb: "The painted prow and puttering engine of the Andaman." },
+  { id: "tuktuk", set: "Phuket", name: "Phuket Tuk-Tuk", cost: 520, art: "tuktuk",
+    blurb: "Bright, boxy, and gloriously over the top. A local icon." },
+  { id: "mango", set: "Phuket", name: "Mango Sticky Rice", cost: 640, art: "mango",
+    blurb: "The unofficial flag of a life well relocated." },
+  { id: "sunset", set: "Phuket", name: "Andaman Sunset", cost: 800, art: "sunset",
+    blurb: "The reward at the end of the whole mission. You earned the view." },
+];
+
+// ============================================================
+// PROGRESS COPY — the meter speaks to where you are in the journey.
+// ============================================================
+function statusLine(done, total) {
+  const p = pct(done, total);
+  if (p === 0) return "Pre-flight. Nothing ticked yet.";
+  if (p < 20) return "Wheels still chocked. Early days.";
+  if (p < 40) return "Taxiing to the runway.";
+  if (p < 60) return "Climbing nicely. Keep going.";
+  if (p < 80) return "Cruising altitude reached.";
+  if (p < 100) return "Beginning the descent into Phuket.";
+  return "Touchdown. Every box ticked. Welcome home.";
+}
+
+// rank by points banked — a little flavour ladder
+function rankFor(points) {
+  if (points >= TOTAL_POINTS) return { name: "Mission Commander", color: "#e6892b" };
+  if (points >= TOTAL_POINTS * 0.75) return { name: "Flight Captain", color: "#1f9fb8" };
+  if (points >= TOTAL_POINTS * 0.5) return { name: "First Officer", color: "#3a8ac4" };
+  if (points >= TOTAL_POINTS * 0.25) return { name: "Cabin Crew", color: "#7a9a6f" };
+  if (points > 0) return { name: "Ground Staff", color: "#9a8a72" };
+  return { name: "Standby Passenger", color: "#a0846a" };
+}
+
+// ============================================================
+// SAVE STATE — Phase 1 keeps it simple and in-memory with a localStorage
+// mirror so a reload doesn't wipe progress. (Artifact sandboxes block
+// storage, so every call is wrapped: it just falls back to memory there,
+// and works for real on the live Vercel site.) Phase 2 swaps this whole
+// layer for the shared household backend.
+// ============================================================
+const SAVE_KEY = "mission-phuket-v1";
+
+function loadSave() {
+  try {
+    const raw = window.localStorage.getItem(SAVE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch (e) { /* sandboxed or unavailable: fall through to default */ }
+  return { checked: {}, spent: 0, owned: [], lastBy: {} };
+}
+function persist(state) {
+  try { window.localStorage.setItem(SAVE_KEY, JSON.stringify(state)); }
+  catch (e) { /* no-op in sandbox */ }
+}
+
+// ============================================================
+// STICKER ART — compact inline SVGs. Kept deliberately simple and bold so
+// they read at small sizes, like a sheet of vinyl stickers.
+// ============================================================
+function StickerArt({ art, size = 84, locked }) {
+  const dim = locked ? 0.0 : 1;
+  const common = { width: size, height: size, viewBox: "0 0 100 100", style: { display: "block" } };
+  const stroke = "#1a2236";
+  const sw = 2.4;
+  switch (art) {
+    case "boarding":
+      return (<svg {...common}><g opacity={dim}>
+        <rect x="14" y="30" width="72" height="40" rx="5" fill="#ffb347" stroke={stroke} strokeWidth={sw}/>
+        <rect x="62" y="30" width="24" height="40" rx="5" fill="#ff8c42" stroke={stroke} strokeWidth={sw}/>
+        <line x1="62" y1="30" x2="62" y2="70" stroke={stroke} strokeWidth="1.6" strokeDasharray="3 3"/>
+        <circle cx="74" cy="50" r="7" fill="#fff3df" stroke={stroke} strokeWidth="1.8"/>
+        <path d="M71 50l2.4 2.4L77 47.6" fill="none" stroke={stroke} strokeWidth="2"/>
+        <rect x="20" y="38" width="30" height="4" rx="2" fill="#1a2236"/>
+        <rect x="20" y="47" width="22" height="3" rx="1.5" fill="#1a2236" opacity=".6"/>
+        <rect x="20" y="55" width="34" height="3" rx="1.5" fill="#1a2236" opacity=".6"/>
+      </g></svg>);
+    case "luggage":
+      return (<svg {...common}><g opacity={dim}>
+        <path d="M50 16l4 8h-8z" fill="#7fe0c0" stroke={stroke} strokeWidth={sw} strokeLinejoin="round"/>
+        <line x1="50" y1="22" x2="50" y2="34" stroke={stroke} strokeWidth={sw}/>
+        <rect x="30" y="32" width="40" height="50" rx="8" fill="#7fe0c0" stroke={stroke} strokeWidth={sw}/>
+        <circle cx="41" cy="40" r="2.4" fill="#1a2236"/>
+        <rect x="36" y="48" width="28" height="4" rx="2" fill="#0b1020" opacity=".25"/>
+        <rect x="36" y="58" width="28" height="4" rx="2" fill="#0b1020" opacity=".25"/>
+        <rect x="36" y="68" width="28" height="4" rx="2" fill="#0b1020" opacity=".25"/>
+      </g></svg>);
+    case "passport":
+      return (<svg {...common}><g opacity={dim}>
+        <rect x="26" y="18" width="48" height="64" rx="5" fill="#c0455b" stroke={stroke} strokeWidth={sw}/>
+        <circle cx="50" cy="44" r="13" fill="none" stroke="#ffd76a" strokeWidth="2.4"/>
+        <path d="M37 44h26M50 31v26" stroke="#ffd76a" strokeWidth="1.6"/>
+        <ellipse cx="50" cy="44" rx="6" ry="13" fill="none" stroke="#ffd76a" strokeWidth="1.4"/>
+        <rect x="38" y="66" width="24" height="4" rx="2" fill="#ffd76a"/>
+        <rect x="68" y="30" width="10" height="10" rx="2" fill="#7fe0c0" stroke={stroke} strokeWidth="1.6" transform="rotate(12 73 35)"/>
+      </g></svg>);
+    case "compass":
+      return (<svg {...common}><g opacity={dim}>
+        <circle cx="50" cy="50" r="32" fill="#1b2540" stroke={stroke} strokeWidth={sw}/>
+        <circle cx="50" cy="50" r="32" fill="none" stroke="#ffd76a" strokeWidth="1.4"/>
+        <path d="M50 26l7 24-7 6-7-6z" fill="#ff6b6b" stroke={stroke} strokeWidth="1.4" strokeLinejoin="round"/>
+        <path d="M50 74l-7-24 7-6 7 6z" fill="#fff3df" stroke={stroke} strokeWidth="1.4" strokeLinejoin="round"/>
+        <circle cx="50" cy="50" r="3" fill="#ffd76a" stroke={stroke} strokeWidth="1.2"/>
+      </g></svg>);
+    case "plane":
+      return (<svg {...common}><g opacity={dim}>
+        <path d="M18 60l64-22c4-1.4 7 3 4 6L40 78l-8-2 6-12-14 3z" fill="#9fb6ff" stroke={stroke} strokeWidth={sw} strokeLinejoin="round"/>
+        <path d="M60 40l-6-14 5-1 10 12z" fill="#7e97e6" stroke={stroke} strokeWidth="1.8" strokeLinejoin="round"/>
+        <circle cx="70" cy="34" r="2" fill="#fff"/>
+      </g></svg>);
+    case "palm":
+      return (<svg {...common}><g opacity={dim}>
+        <path d="M46 84c-2-22 0-38 2-46" fill="none" stroke="#8a5a2b" strokeWidth="5" strokeLinecap="round"/>
+        <path d="M48 38c-10-6-20-4-26 2 8-1 14 0 18 4" fill="#39b87a" stroke={stroke} strokeWidth="1.6" strokeLinejoin="round"/>
+        <path d="M48 38c10-6 20-4 26 2-8-1-14 0-18 4" fill="#39b87a" stroke={stroke} strokeWidth="1.6" strokeLinejoin="round"/>
+        <path d="M48 38c-3-10-12-16-20-16 6 4 10 9 12 16" fill="#2ea36a" stroke={stroke} strokeWidth="1.6" strokeLinejoin="round"/>
+        <path d="M48 38c3-10 12-16 20-16-6 4-10 9-12 16" fill="#2ea36a" stroke={stroke} strokeWidth="1.6" strokeLinejoin="round"/>
+        <ellipse cx="50" cy="86" rx="22" ry="4" fill="#ffd76a" opacity=".5"/>
+      </g></svg>);
+    case "longtail":
+      return (<svg {...common}><g opacity={dim}>
+        <path d="M20 60h48l-6 12H30z" fill="#ff6b6b" stroke={stroke} strokeWidth={sw} strokeLinejoin="round"/>
+        <path d="M68 60c8-2 14-8 18-16-10 2-16 6-18 10z" fill="#ffd76a" stroke={stroke} strokeWidth="1.8" strokeLinejoin="round"/>
+        <line x1="40" y1="60" x2="40" y2="44" stroke={stroke} strokeWidth="2.4"/>
+        <path d="M40 44l10 6-10 4z" fill="#7fe0c0" stroke={stroke} strokeWidth="1.4"/>
+        <path d="M16 74c6 3 12 3 18 0 6 3 12 3 18 0 6 3 12 3 18 0" fill="none" stroke="#5fd0e8" strokeWidth="2.4" strokeLinecap="round"/>
+      </g></svg>);
+    case "tuktuk":
+      return (<svg {...common}><g opacity={dim}>
+        <path d="M24 64V44c0-4 3-7 7-7h22l10 12h6c3 0 5 2 5 5v10" fill="#ff8c42" stroke={stroke} strokeWidth={sw} strokeLinejoin="round"/>
+        <rect x="30" y="44" width="18" height="10" rx="2" fill="#bdeaff" stroke={stroke} strokeWidth="1.6"/>
+        <circle cx="36" cy="68" r="7" fill="#1b2540" stroke={stroke} strokeWidth={sw}/>
+        <circle cx="68" cy="68" r="7" fill="#1b2540" stroke={stroke} strokeWidth={sw}/>
+        <circle cx="36" cy="68" r="2.4" fill="#ffd76a"/>
+        <circle cx="68" cy="68" r="2.4" fill="#ffd76a"/>
+      </g></svg>);
+    case "mango":
+      return (<svg {...common}><g opacity={dim}>
+        <path d="M30 64c0-12 8-20 18-20 4 0 7 1 9 3-4 1-7 4-7 9 7-2 12 1 14 6-2 10-12 16-22 16-7 0-12-6-12-14z" fill="#ffd23f" stroke={stroke} strokeWidth={sw} strokeLinejoin="round"/>
+        <path d="M48 74c8 0 16-2 22-2" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round"/>
+        <rect x="44" y="78" width="26" height="6" rx="3" fill="#fff" stroke={stroke} strokeWidth="1.6"/>
+        <circle cx="62" cy="50" r="2" fill="#39b87a"/>
+      </g></svg>);
+    case "sunset":
+      return (<svg {...common}><g opacity={dim}>
+        <defs><linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#ff8c42"/><stop offset="1" stopColor="#ffd23f"/></linearGradient></defs>
+        <circle cx="50" cy="50" r="32" fill="url(#sky)" stroke={stroke} strokeWidth={sw}/>
+        <circle cx="50" cy="56" r="13" fill="#fff3df"/>
+        <path d="M18 62h64M24 70h52M30 78h40" stroke="#1b2540" strokeWidth="2.6" strokeLinecap="round" opacity=".8"/>
+        <path d="M40 50c3-3 6-3 9 0" fill="none" stroke="#1b2540" strokeWidth="1.8" strokeLinecap="round"/>
+      </g></svg>);
+    default:
+      return <svg {...common}><circle cx="50" cy="50" r="30" fill="#2a3658"/></svg>;
+  }
+}
+
+// ============================================================
+// ICONS — tiny line glyphs for section headers.
+// ============================================================
+function Glyph({ name, size = 20, color = "#ffb347" }) {
+  const c = { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" };
+  switch (name) {
+    case "moon": return <svg {...c}><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>;
+    case "paw": return <svg {...c}><circle cx="6" cy="10" r="2"/><circle cx="10.5" cy="6.5" r="2"/><circle cx="15" cy="6.5" r="2"/><circle cx="18.5" cy="10" r="2"/><path d="M8 16c0-2.2 1.8-3.5 4-3.5s4 1.3 4 3.5-1.8 4-4 4-4-1.8-4-4z"/></svg>;
+    case "bag": return <svg {...c}><path d="M6 7h12l-1 13H7z"/><path d="M9 7V5a3 3 0 016 0v2"/></svg>;
+    case "home": return <svg {...c}><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>;
+    case "door": return <svg {...c}><path d="M5 21V4a1 1 0 011-1h9a1 1 0 011 1v17"/><path d="M5 21h14"/><circle cx="13" cy="12" r="1"/></svg>;
+    case "plane": return <svg {...c}><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 00-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L11 19v-5.5z"/></svg>;
+    case "palm": return <svg {...c}><path d="M12 22V11"/><path d="M12 11c-3-2-6-1-8 1M12 11c3-2 6-1 8 1M12 11c-1-3-4-5-7-5M12 11c1-3 4-5 7-5"/></svg>;
+    default: return <svg {...c}><circle cx="12" cy="12" r="9"/></svg>;
+  }
+}
+
+// ============================================================
+// MAIN APP
+// ============================================================
+function App() {
+  const [save, setSave] = useState(loadSave);
+  const [tab, setTab] = useState("checklist"); // checklist | store | progress
+  const [openSection, setOpenSection] = useState("night-before");
+  const [who, setWho] = useState(() => {
+    try { return window.localStorage.getItem("mission-phuket-who") || "Hammy"; }
+    catch (e) { return "Hammy"; }
+  });
+  const [toast, setToast] = useState(null);
+  const [justChecked, setJustChecked] = useState(null);
+
+  // persist on every save change
+  useEffect(() => { persist(save); }, [save]);
+  useEffect(() => {
+    try { window.localStorage.setItem("mission-phuket-who", who); } catch (e) {}
+  }, [who]);
+
+  // derived totals
+  const checkedIds = save.checked || {};
+  const doneTasks = ALL_TASKS.filter(t => checkedIds[t.id]);
+  const doneCount = doneTasks.length;
+  const earned = doneTasks.reduce((s, t) => s + t.p, 0);
+  const balance = earned - (save.spent || 0);
+  const rank = rankFor(earned);
+
+  function flashToast(msg, kind) {
+    setToast({ msg, kind, id: uid() });
+    setTimeout(() => setToast(t => (t && t.kind === kind ? null : t)), 2600);
+  }
+
+  function toggleTask(task) {
+    setSave(s => {
+      const checked = { ...(s.checked || {}) };
+      const lastBy = { ...(s.lastBy || {}) };
+      const wasOn = !!checked[task.id];
+      if (wasOn) {
+        delete checked[task.id];
+        delete lastBy[task.id];
+      } else {
+        checked[task.id] = true;
+        lastBy[task.id] = who;
+      }
+      return { ...s, checked, lastBy };
+    });
+    if (!checkedIds[task.id]) {
+      setJustChecked(task.id);
+      setTimeout(() => setJustChecked(j => (j === task.id ? null : j)), 700);
+      flashToast(`+${task.p} pts banked`, "earn");
+    }
+  }
+
+  function buySticker(st) {
+    if ((save.owned || []).includes(st.id)) return;
+    if (balance < st.cost) { flashToast("Not enough points yet", "warn"); return; }
+    setSave(s => ({ ...s, spent: (s.spent || 0) + st.cost, owned: [...(s.owned || []), st.id] }));
+    flashToast(`Unlocked: ${st.name}`, "unlock");
+  }
+
+  function resetAll() {
+    if (!window.confirm("Reset every tick, point, and unlocked sticker? This can't be undone.")) return;
+    setSave({ checked: {}, spent: 0, owned: [], lastBy: {} });
+    flashToast("Mission reset", "warn");
+  }
+
+  return (
+    <Shell>
+      <Header who={who} setWho={setWho} balance={balance} rank={rank} />
+
+      <ProgressBar doneCount={doneCount} earned={earned} balance={balance} />
+
+      <Tabs tab={tab} setTab={setTab} ownedCount={(save.owned || []).length} />
+
+      {tab === "checklist" && (
+        <Checklist
+          openSection={openSection} setOpenSection={setOpenSection}
+          checkedIds={checkedIds} lastBy={save.lastBy || {}}
+          onToggle={toggleTask} justChecked={justChecked} who={who}
+        />
+      )}
+
+      {tab === "store" && (
+        <Store owned={save.owned || []} balance={balance} onBuy={buySticker} earned={earned} />
+      )}
+
+      {tab === "progress" && (
+        <ProgressTab
+          save={save} doneCount={doneCount} earned={earned} balance={balance}
+          rank={rank} onReset={resetAll}
+        />
+      )}
+
+      {toast && <Toast toast={toast} />}
+      <Footer />
+    </Shell>
+  );
+}
+
+// ---------- Shell ----------
+function Shell({ children }) {
+  const css = `
+    *{box-sizing:border-box;}
+    ::selection{background:#ff9b54;color:#fff;}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+    @keyframes pop{0%{transform:scale(.7);opacity:0;}60%{transform:scale(1.15);}100%{transform:scale(1);opacity:1;}}
+    @keyframes flip{0%{transform:rotateX(-90deg);opacity:0;}100%{transform:rotateX(0);opacity:1;}}
+    @keyframes slidein{from{transform:translateY(20px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+    @keyframes shimmer{0%{background-position:-200% 0;}100%{background-position:200% 0;}}
+    @keyframes sway{0%,100%{transform:rotate(-2deg);}50%{transform:rotate(2deg);}}
+    .mp-card{animation:fadeUp .3s ease both;}
+    .mp-btn{transition:transform .08s ease,filter .15s ease,background .15s ease;}
+    .mp-btn:active{transform:scale(.97);}
+    .mp-btn:hover{filter:brightness(1.05);}
+    .mp-btn:focus-visible{outline:2px solid #ff7a3d;outline-offset:2px;}
+    .mp-tick:focus-visible{outline:2px solid #ff7a3d;outline-offset:3px;border-radius:8px;}
+    @media (prefers-reduced-motion:reduce){.mp-card,.mp-tick *{animation:none!important;}}
+  `;
+  return (
+    <div style={{
+      minHeight: "100vh", color: "#3a2e2a",
+      fontFamily: "'Inter',system-ui,sans-serif",
+      background: "linear-gradient(180deg,#7fdbff 0%,#a8e6cf 32%,#ffe9b0 64%,#ffd59e 100%)",
+      backgroundAttachment: "fixed",
+    }}>
+      <style>{css}</style>
+      {/* radiant sun glow top-centre */}
+      <div style={{ position: "fixed", top: -120, left: "50%", transform: "translateX(-50%)", width: 360, height: 360,
+        background: "radial-gradient(circle, #fff3c4cc 0%, #ffe9a8aa 30%, transparent 68%)", pointerEvents: "none", zIndex: 0 }} />
+      <div style={{ maxWidth: 480, margin: "0 auto", padding: "16px 14px 40px", position: "relative", zIndex: 1 }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Header: split-flap title + who-am-I toggle ----------
+const cond = "'Barlow Condensed',sans-serif";
+const monoF = "'Space Mono',monospace";
+
+function Header({ who, setWho, balance, rank }) {
+  return (
+    <div className="mp-card" style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div style={{ fontFamily: monoF, fontSize: 10, letterSpacing: ".28em", color: "#ff7a3d", textTransform: "uppercase" }}>
+            Departure · 01 JUL 2026
+          </div>
+          <h1 style={{ fontFamily: cond, fontWeight: 800, fontSize: 40, lineHeight: .92, margin: "4px 0 0", letterSpacing: ".01em", color: "#1f6f8b" }}>
+            MISSION <span style={{ color: "#ff7a3d" }}>PHUKET</span>
+          </h1>
+          <div style={{ fontFamily: monoF, fontSize: 11, color: "#5a8a6f", marginTop: 5, letterSpacing: ".08em" }}>
+            SIN <span style={{ color: "#1f9fb8" }}>➔</span> BKK <span style={{ color: "#1f9fb8" }}>➔</span> HKT
+          </div>
+        </div>
+        <div style={{ textAlign: "right", background: "#ffffffcc", border: "1px solid #ffd59e", borderRadius: 14, padding: "8px 12px", boxShadow: "0 4px 14px #ff9b5422" }}>
+          <div style={{ fontFamily: cond, fontWeight: 800, fontSize: 30, color: "#ff7a3d", lineHeight: 1 }}>{balance}</div>
+          <div style={{ fontFamily: monoF, fontSize: 8.5, color: "#a0846a", letterSpacing: ".14em" }}>POINTS</div>
+          <div style={{ fontFamily: monoF, fontSize: 8.5, color: rank.color, letterSpacing: ".06em", marginTop: 4, maxWidth: 90 }}>{rank.name}</div>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginTop: 12, alignItems: "center" }}>
+        <span style={{ fontFamily: monoF, fontSize: 9.5, color: "#9a8a72", letterSpacing: ".1em" }}>TICKING AS</span>
+        {["Hammy", "Naddy"].map(name => (
+          <button key={name} onClick={() => setWho(name)} className="mp-btn" style={{
+            padding: "5px 12px", borderRadius: 20, cursor: "pointer", fontFamily: cond, fontWeight: 700, fontSize: 13, letterSpacing: ".03em",
+            background: who === name ? (name === "Hammy" ? "#ff9b54" : "#ff7eb6") : "#ffffffaa",
+            color: who === name ? "#fff" : "#9a8a72",
+            border: who === name ? "none" : "1px solid #ecd9bf",
+            boxShadow: who === name ? "0 3px 10px #ff9b5444" : "none",
+          }}>{name}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Progress bar: a gate / runway meter ----------
+function ProgressBar({ doneCount, earned, balance }) {
+  const p = pct(doneCount, TOTAL_TASKS);
+  return (
+    <div className="mp-card" style={{ background: "#ffffffdd", border: "1px solid #ffe1b0", borderRadius: 14, padding: "13px 15px", marginBottom: 12, boxShadow: "0 6px 18px #ff9b5418" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8 }}>
+        <span style={{ fontFamily: cond, fontWeight: 700, fontSize: 16, color: "#3a2e2a" }}>{doneCount} <span style={{ color: "#a0846a", fontSize: 13 }}>/ {TOTAL_TASKS} done</span></span>
+        <span style={{ fontFamily: monoF, fontSize: 12, color: "#ff7a3d" }}>{p}%</span>
+      </div>
+      <div style={{ height: 10, background: "#fff0d6", borderRadius: 6, overflow: "hidden", border: "1px solid #ffe1b0", position: "relative" }}>
+        <div style={{
+          width: `${p}%`, height: "100%", borderRadius: 6,
+          background: "linear-gradient(90deg,#ff7a3d,#ffb347,#ffd76a)",
+          transition: "width .5s cubic-bezier(.2,.7,.2,1)",
+          boxShadow: p > 0 ? "0 0 12px #ff9b5488" : "none",
+        }} />
+        {/* dashed runway centreline */}
+        <div style={{ position: "absolute", top: "50%", left: 0, right: 0, height: 1, transform: "translateY(-.5px)",
+          backgroundImage: "repeating-linear-gradient(90deg,#ffffff88 0 6px,transparent 6px 12px)", opacity: p > 4 ? .7 : 0 }} />
+      </div>
+      <div style={{ fontFamily: monoF, fontSize: 10.5, color: "#7a6a55", marginTop: 8, letterSpacing: ".02em" }}>
+        {statusLine(doneCount, TOTAL_TASKS)}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Tabs ----------
+function Tabs({ tab, setTab, ownedCount }) {
+  const items = [["checklist", "Checklist"], ["store", `Rewards${ownedCount ? ` · ${ownedCount}` : ""}`], ["progress", "Progress"]];
+  return (
+    <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+      {items.map(([k, lab]) => (
+        <button key={k} onClick={() => setTab(k)} className="mp-btn" style={{
+          flex: 1, padding: "10px", borderRadius: 10, cursor: "pointer", fontFamily: cond, fontWeight: 700, fontSize: 14, letterSpacing: ".03em",
+          background: tab === k ? "#ff7a3d" : "#ffffffcc",
+          color: tab === k ? "#fff" : "#9a8a72",
+          border: tab === k ? "none" : "1px solid #ecd9bf",
+          boxShadow: tab === k ? "0 4px 12px #ff7a3d44" : "none",
+        }}>{lab}</button>
+      ))}
+    </div>
+  );
+}
+
+// ---------- Checklist ----------
+function Checklist({ openSection, setOpenSection, checkedIds, lastBy, onToggle, justChecked, who }) {
+  return (
+    <div>
+      {SECTIONS.map(sec => {
+        const done = sec.tasks.filter(t => checkedIds[t.id]).length;
+        const all = sec.tasks.length;
+        const complete = done === all;
+        const open = openSection === sec.id;
+        return (
+          <div key={sec.id} className="mp-card" style={{ marginBottom: 10 }}>
+            <button onClick={() => setOpenSection(open ? null : sec.id)} className="mp-btn" style={{
+              width: "100%", textAlign: "left", cursor: "pointer", border: "1px solid #ffe1b0",
+              background: complete ? "linear-gradient(100deg,#d6f5e3,#ffffff)" : "#ffffffdd",
+              borderRadius: open ? "12px 12px 0 0" : 12, padding: "13px 15px",
+              borderColor: complete ? "#8fd9b0" : "#ffe1b0",
+              boxShadow: "0 4px 14px #ff9b5414",
+              display: "flex", alignItems: "center", gap: 12,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 11, flex: 1, minWidth: 0 }}>
+                <Glyph name={sec.icon} color={complete ? "#1f9d6b" : "#ff7a3d"} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontFamily: monoF, fontSize: 10, color: "#bca889" }}>{sec.no}</span>
+                    <span style={{ fontFamily: cond, fontWeight: 700, fontSize: 18, color: "#3a2e2a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sec.title}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "#9a8a72", marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sec.sub}</div>
+                </div>
+              </div>
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <div style={{ fontFamily: cond, fontWeight: 700, fontSize: 15, color: complete ? "#1f9d6b" : "#bca889" }}>{done}/{all}</div>
+                <div style={{ fontSize: 14, color: "#c9b495", transform: open ? "rotate(180deg)" : "none", transition: "transform .2s" }}>▾</div>
+              </div>
+            </button>
+
+            {open && (
+              <div style={{ border: "1px solid #ffe1b0", borderTop: "none", borderRadius: "0 0 12px 12px", background: "#fffaf0", overflow: "hidden" }}>
+                {sec.tasks.map(task => {
+                  const on = !!checkedIds[task.id];
+                  const flash = justChecked === task.id;
+                  const by = lastBy[task.id];
+                  return (
+                    <div
+                      key={task.id}
+                      role="button"
+                      tabIndex={0}
+                      className="mp-tick"
+                      onClick={() => onToggle(task)}
+                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(task); } }}
+                      style={{
+                        display: "flex", alignItems: "flex-start", gap: 11, padding: "11px 15px",
+                        borderBottom: "1px solid #f4e6cf", cursor: "pointer",
+                        background: on ? "#eafaf0" : "transparent",
+                        transition: "background .2s",
+                      }}
+                    >
+                      <div style={{
+                        flexShrink: 0, width: 22, height: 22, borderRadius: 6, marginTop: 1,
+                        border: on ? "none" : "2px solid #e0b97f",
+                        background: on ? "linear-gradient(135deg,#39b87a,#2c9e64)" : "#fff",
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        animation: flash ? "pop .4s ease" : "none",
+                        boxShadow: on ? "0 0 10px #39b87a55" : "none",
+                      }}>
+                        {on && <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12l5 5L20 6"/></svg>}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "baseline", gap: 7, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 14, color: on ? "#a89a82" : "#3a2e2a", textDecoration: on ? "line-through" : "none", lineHeight: 1.35, fontWeight: 500 }}>{task.t}</span>
+                          {task.new && <span style={{ fontFamily: monoF, fontSize: 8, color: "#e6892b", background: "#fff2d6", border: "1px solid #ffd591", borderRadius: 3, padding: "1px 4px", letterSpacing: ".06em" }}>NEW</span>}
+                        </div>
+                        {task.note && <div style={{ fontSize: 11.5, color: "#a0846a", marginTop: 2, fontStyle: "italic" }}>{task.note}</div>}
+                        {on && by && <div style={{ fontFamily: monoF, fontSize: 9.5, color: by === "Naddy" ? "#e85a9b" : "#e6892b", marginTop: 3, letterSpacing: ".04em" }}>ticked by {by}</div>}
+                      </div>
+                      <span style={{ fontFamily: cond, fontWeight: 700, fontSize: 14, color: on ? "#39b87a" : "#c98a3d", flexShrink: 0, marginTop: 1 }}>+{task.p}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------- Store ----------
+function Store({ owned, balance, onBuy, earned }) {
+  const sets = ["Safe Travels", "Phuket"];
+  const ownedCount = owned.length;
+  return (
+    <div className="mp-card">
+      <div style={{ background: "#ffffffdd", border: "1px solid #ffe1b0", borderRadius: 12, padding: "12px 15px", marginBottom: 14, boxShadow: "0 4px 14px #ff9b5414" }}>
+        <div style={{ fontFamily: cond, fontWeight: 700, fontSize: 17, color: "#3a2e2a" }}>Rewards Store</div>
+        <div style={{ fontSize: 12, color: "#9a8a72", marginTop: 3, lineHeight: 1.5 }}>
+          Spend banked points on stickers. {ownedCount} of {STICKERS.length} unlocked. The Phuket set is the payoff for the back half of the mission.
+        </div>
+      </div>
+
+      {sets.map(setName => (
+        <div key={setName} style={{ marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <span style={{ fontFamily: monoF, fontSize: 10, letterSpacing: ".18em", color: setName === "Phuket" ? "#1f9d6b" : "#1f9fb8", textTransform: "uppercase" }}>{setName}</span>
+            <div style={{ flex: 1, height: 1, background: "#ffe1b0" }} />
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            {STICKERS.filter(s => s.set === setName).map(st => {
+              const have = owned.includes(st.id);
+              const afford = balance >= st.cost;
+              return (
+                <div key={st.id} style={{
+                  background: have ? "linear-gradient(160deg,#e3faec,#ffffff)" : "#ffffffdd",
+                  border: `1px solid ${have ? "#8fd9b0" : "#ffe1b0"}`,
+                  borderRadius: 14, padding: "14px 12px 12px", textAlign: "center", position: "relative", overflow: "hidden",
+                  boxShadow: "0 4px 14px #ff9b5414",
+                }}>
+                  {have && <div style={{ position: "absolute", top: 8, right: 8, fontFamily: monoF, fontSize: 8, color: "#1f9d6b", background: "#d6f5e3", border: "1px solid #8fd9b0", borderRadius: 4, padding: "2px 5px", letterSpacing: ".08em" }}>OWNED</div>}
+                  <div style={{ display: "flex", justifyContent: "center", marginBottom: 8, filter: have ? "none" : "grayscale(.85) brightness(.97)", opacity: have ? 1 : .55, transition: "all .3s" }}>
+                    <div style={{ animation: have ? "pop .5s ease" : "none" }}>
+                      <StickerArt art={st.art} size={74} />
+                    </div>
+                  </div>
+                  <div style={{ fontFamily: cond, fontWeight: 700, fontSize: 15, color: "#3a2e2a", lineHeight: 1.1 }}>{st.name}</div>
+                  {have ? (
+                    <div style={{ fontSize: 10.5, color: "#7a9a6f", marginTop: 5, lineHeight: 1.4, fontStyle: "italic", minHeight: 42 }}>{st.blurb}</div>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 10.5, color: "#a0846a", marginTop: 5, lineHeight: 1.4, minHeight: 42 }}>{st.blurb}</div>
+                      <button onClick={() => onBuy(st)} disabled={!afford} className="mp-btn" style={{
+                        width: "100%", marginTop: 8, padding: "8px", borderRadius: 8, cursor: afford ? "pointer" : "default",
+                        fontFamily: cond, fontWeight: 700, fontSize: 14, letterSpacing: ".03em",
+                        background: afford ? "#ff7a3d" : "#f4e6cf", color: afford ? "#fff" : "#bca889",
+                        border: "none", boxShadow: afford ? "0 3px 10px #ff7a3d44" : "none",
+                      }}>{afford ? `Unlock · ${st.cost}` : `${st.cost} pts`}</button>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------- Progress tab ----------
+function ProgressTab({ save, doneCount, earned, balance, rank, onReset }) {
+  const spent = save.spent || 0;
+  const owned = save.owned || [];
+  // per-person tick tally from lastBy
+  const byTally = { Hammy: 0, Naddy: 0 };
+  Object.values(save.lastBy || {}).forEach(name => { if (byTally[name] != null) byTally[name]++; });
+
+  const stats = [
+    ["Tasks done", `${doneCount} / ${TOTAL_TASKS}`, "#ff7a3d"],
+    ["Points earned", `${earned}`, "#e6892b"],
+    ["Points spent", `${spent}`, "#e85a9b"],
+    ["Balance", `${balance}`, "#1f9d6b"],
+    ["Stickers", `${owned.length} / ${STICKERS.length}`, "#1f9fb8"],
+    ["Rank", rank.name, rank.color],
+  ];
+
+  return (
+    <div className="mp-card">
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+        {stats.map(([l, v, c], i) => (
+          <div key={i} style={{ background: "#ffffffdd", border: "1px solid #ffe1b0", borderRadius: 12, padding: "12px 14px", boxShadow: "0 4px 14px #ff9b5414" }}>
+            <div style={{ fontFamily: monoF, fontSize: 9, color: "#a0846a", letterSpacing: ".1em", textTransform: "uppercase" }}>{l}</div>
+            <div style={{ fontFamily: cond, fontWeight: 800, fontSize: 22, color: c, marginTop: 3, lineHeight: 1 }}>{v}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ background: "#ffffffdd", border: "1px solid #ffe1b0", borderRadius: 12, padding: "14px 15px", marginBottom: 14, boxShadow: "0 4px 14px #ff9b5414" }}>
+        <div style={{ fontFamily: cond, fontWeight: 700, fontSize: 16, color: "#3a2e2a", marginBottom: 10 }}>Who's pulling their weight</div>
+        {["Hammy", "Naddy"].map(name => {
+          const v = byTally[name];
+          const total = byTally.Hammy + byTally.Naddy;
+          const w = total === 0 ? 0 : Math.round((v / total) * 100);
+          const col = name === "Naddy" ? "#e85a9b" : "#ff9b54";
+          return (
+            <div key={name} style={{ marginBottom: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
+                <span style={{ color: col, fontWeight: 600 }}>{name}</span>
+                <span style={{ color: "#9a8a72", fontFamily: monoF, fontSize: 11 }}>{v} ticks</span>
+              </div>
+              <div style={{ height: 7, background: "#fff0d6", borderRadius: 4, overflow: "hidden", border: "1px solid #ffe1b0" }}>
+                <div style={{ width: `${w}%`, height: "100%", background: col, transition: "width .4s" }} />
+              </div>
+            </div>
+          );
+        })}
+        <div style={{ fontSize: 10.5, color: "#a0846a", marginTop: 8, fontStyle: "italic", lineHeight: 1.4 }}>
+          Friendly note: once the shared backend is wired up in the next phase, this splits live between the two of you across both phones.
+        </div>
+      </div>
+
+      <button onClick={onReset} className="mp-btn" style={{
+        width: "100%", padding: "11px", borderRadius: 10, cursor: "pointer",
+        background: "#fff0f3", color: "#d6486b", border: "1px solid #f5c6d4",
+        fontFamily: cond, fontWeight: 700, fontSize: 14, letterSpacing: ".03em",
+      }}>Reset the whole mission</button>
+    </div>
+  );
+}
+
+// ---------- Toast ----------
+function Toast({ toast }) {
+  const colors = {
+    earn: ["#1f9d6b", "#1f9d6b", "#ffffff"],
+    unlock: ["#ff7a3d", "#ff7a3d", "#ffffff"],
+    warn: ["#e85a9b", "#e85a9b", "#ffffff"],
+  };
+  const [bg, bd, fg] = colors[toast.kind] || colors.earn;
+  return (
+    <div style={{
+      position: "fixed", left: "50%", bottom: 24, transform: "translateX(-50%)",
+      background: bg, border: `1px solid ${bd}`, color: fg,
+      padding: "10px 18px", borderRadius: 24, fontFamily: cond, fontWeight: 700, fontSize: 15, letterSpacing: ".03em",
+      animation: "slidein .25s ease both", zIndex: 50, boxShadow: "0 8px 24px #3a2e2a33", whiteSpace: "nowrap",
+    }}>{toast.msg}</div>
+  );
+}
+
+// ---------- Footer ----------
+function Footer() {
+  return (
+    <div style={{ textAlign: "center", marginTop: 24, fontFamily: monoF, fontSize: 9.5, color: "#b09a7e", letterSpacing: ".06em", lineHeight: 1.6 }}>
+      <div style={{ color: "#9a8a72" }}>hammyLabs · Mission Phuket</div>
+      <div style={{ color: "#bca889", marginTop: 2 }}>Built for the 1 July run. Made with love for Lil Naddy & the 5 cats.</div>
+    </div>
+  );
+}
+
+</script>
+
+<script>
+(function () {
+  var ROOT = document.getElementById("root");
+  function showError(msg) {
+    ROOT.innerHTML = '<div class="errbox"><b>Something went wrong loading Mission Phuket.</b>\n\n' +
+      String(msg).replace(/</g, "&lt;") +
+      '\n\nIf you are viewing this inside an app preview, open the real website link in your browser instead.</div>';
+  }
+  function loadScript(urls, done, fail) {
+    var i = 0;
+    function tryNext() {
+      if (i >= urls.length) { fail(); return; }
+      var s = document.createElement("script");
+      s.src = urls[i++]; s.crossOrigin = "anonymous";
+      s.onload = function () { done(); };
+      s.onerror = function () { tryNext(); };
+      document.head.appendChild(s);
+    }
+    tryNext();
+  }
+  var REACT = ["https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js","https://unpkg.com/react@18.3.1/umd/react.production.min.js","https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"];
+  var REACTDOM = ["https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js","https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js","https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"];
+  var BABEL = ["https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js","https://unpkg.com/@babel/standalone@7.25.6/babel.min.js","https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"];
+  function boot() {
+    try {
+      if (!window.React || !window.ReactDOM) { showError("React did not load from any CDN."); return; }
+      if (!window.Babel) { showError("Babel did not load."); return; }
+      var hooks = "var useState=React.useState,useMemo=React.useMemo,useEffect=React.useEffect,useRef=React.useRef;\n";
+      var mount = "\nReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));";
+      var src = document.getElementById("appsrc").textContent;
+      var compiled = Babel.transform(hooks + src + mount, { presets: ["react"] }).code;
+      (0, eval)(compiled);
+    } catch (err) { showError((err && err.stack) || err); }
+  }
+  loadScript(REACT, function () {
+    loadScript(REACTDOM, function () {
+      loadScript(BABEL, boot, function () { showError("Could not load Babel."); });
+    }, function () { showError("Could not load ReactDOM."); });
+  }, function () { showError("Could not load React."); });
+})();
+</script>
+</body>
+</html>
