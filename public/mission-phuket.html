@@ -248,6 +248,200 @@ const STICKERS = [
 ];
 
 // ============================================================
+// MONEY TOOLS DATA — Phase 3.
+// Real Phuket 2026 figures, all in Thai Baht (THB), pulled from current
+// cost-of-living and rental sources (late June 2026). Every line is a
+// starting point the user can edit; the lifestyle presets just pre-fill
+// sensible numbers. Sources are summarised in NOTE strings so the app can
+// show where a figure came from, matching the "ground it in real data" rule.
+//
+// FX seed: 1 SGD ~ 25.5 THB (late June 2026). User-editable in the UI.
+// ============================================================
+const FX_SGD_THB_DEFAULT = 25.5;
+
+// --- Cost of Living: monthly lines, with a value per lifestyle preset ---
+// thrifty / comfortable / plush are all in THB per month.
+const COL_PRESETS = ["Thrifty", "Comfortable", "Plush"];
+const COL_LINES = [
+  { id: "rent", label: "Rent", icon: "home",
+    vals: [18000, 30000, 60000],
+    note: "1-bed inland (Kathu/Chalong) ~18-25k; mid 1-2 bed ~25-40k; premium Bang Tao/villa 60k+. Sources: HolyCow, Phuket Prime, Thailand-Property 2026." },
+  { id: "utilities", label: "Electric, water & aircon", icon: "bolt",
+    vals: [3000, 5000, 8000],
+    note: "Electric is the big swing with aircon use (~7 THB/kWh). Water cheap. ~3-8k/mo for a 1-2 bed. Sources: Siam Expat, Mango Phuket 2026." },
+  { id: "internet", label: "Internet & phone", icon: "wifi",
+    vals: [1000, 1500, 2500],
+    note: "Home fibre ~600-900, plus mobile data plans. Sources: Reloc8, Thailand Insider 2026." },
+  { id: "groceries", label: "Groceries", icon: "cart",
+    vals: [10000, 16000, 24000],
+    note: "Local-heavy basket ~6-10k; Western/imported basket 12-20k+. Per couple. Sources: Reloc8, Siam Expat 2026." },
+  { id: "eatout", label: "Eating out", icon: "food",
+    vals: [6000, 14000, 28000],
+    note: "Thai local 50-150 THB/meal; Western cafes far more. Couple, varies hugely by habit. Sources: Phuket Prime, Thailand Routes 2026." },
+  { id: "transport", label: "Transport (fuel/Grab)", icon: "car",
+    vals: [2500, 5000, 9000],
+    note: "Scooter fuel is tiny; Grab/taxis add up fast for non-riders. Excludes the car rental itself (see Setup). Sources: Asia Lifestyle, Thailand Insider 2026." },
+  { id: "health", label: "Health insurance", icon: "health",
+    vals: [4000, 9000, 18000],
+    note: "Expat private cover ~60-300 USD/person/mo depending on age & level. Per couple here. Sources: Asia Lifestyle 2026." },
+  { id: "cats", label: "Cat food & litter", icon: "paw",
+    vals: [4000, 7000, 11000],
+    note: "Five cats: food, litter, treats. Quality and imported brands push this up. Estimate from pet-cost ranges." },
+  { id: "catvet", label: "Cat vet & meds", icon: "health",
+    vals: [1500, 3000, 6000],
+    note: "Monthly average across checkups, parasite prevention, the odd issue, spread over five cats." },
+  { id: "fun", label: "Fun & social", icon: "star",
+    vals: [5000, 12000, 25000],
+    note: "Massage, gym, cinema, island tours, nights out. Couple. Sources: HolyCow, Thailand Routes 2026." },
+  { id: "misc", label: "Misc & buffer", icon: "dots",
+    vals: [3000, 6000, 12000],
+    note: "Toiletries, household bits, the unexpected. Always budget a cushion." },
+];
+
+// --- Setup Costs: one-off landing bill. amount in THB, with an optional
+//     'recurring' flag for the car rental which is monthly not one-off.
+//     Furnishing prices anchored to live Big C (bigc.co.th) figures pulled
+//     late June 2026; promo prices move, so these are starting points. ---
+const SETUP_GROUPS = [
+  {
+    group: "Home & deposit",
+    items: [
+      { id: "deposit", label: "Rental deposit (2 months)", val: 60000,
+        note: "Standard Phuket lease = 2 months deposit. Scales with rent; shown at a 30k/mo example. Sources: Hipflat, Thailand-Property 2026." },
+      { id: "advance", label: "First month advance rent", val: 30000,
+        note: "1 month rent up front on signing, on top of the deposit. Same 30k/mo example." },
+      { id: "agent", label: "Agent fee (if any)", val: 0,
+        note: "Most long-term Phuket rentals charge the landlord, not you. Leave 0 unless your agent bills the tenant." },
+    ],
+  },
+  {
+    group: "Getting around",
+    items: [
+      { id: "car", label: "Car rental (monthly)", val: 15000, recurring: true,
+        note: "Long-term hire incl. insurance & servicing: eco ~12.5-15k/mo. This is per month, not one-off. Sources: Siam.rent, Phuket Prime 2026." },
+      { id: "scooter", label: "Scooter (deposit/first month)", val: 4000,
+        note: "Monthly scooter hire ~3-5k, sometimes a deposit too. Handy second set of wheels." },
+      { id: "helmets", label: "Helmets x2 & phone mounts", val: 2500,
+        note: "Two decent helmets and mounts for island riding." },
+    ],
+  },
+  {
+    group: "Big-ticket furniture (Big C)",
+    bigc: true,
+    items: [
+      { id: "recliners", label: "Recliners x2 (Besico adjustable sofa)", val: 5980,
+        note: "Big C: Besico adjustable/reclining sofa, grey, 175cm, ฿2,990 each (was ฿3,990). Two = ฿5,980. The ones you both wanted." },
+      { id: "sofa", label: "2-seat sofa (Bofa)", val: 3500,
+        note: "Big C: Bofa 2-seat fabric sofa, grey. Roughly ฿3,000-4,000. Skip if the recliners cover your seating." },
+      { id: "bedframe", label: "Bed frame & mattress", val: 15000,
+        note: "Most Phuket condos rent furnished, so this is only if yours is bare. Big C / Big Power mid-range queen set." },
+      { id: "wardrobe", label: "Wardrobe / storage", val: 6000,
+        note: "Big C: freestanding wardrobe or shelving if the unit's short on storage." },
+      { id: "diningset", label: "Dining table & chairs", val: 5000,
+        note: "Big C: small dining set, 4 chairs. Local-market pricing is similar." },
+    ],
+  },
+  {
+    group: "Big-ticket appliances (Big C)",
+    bigc: true,
+    items: [
+      { id: "tv1", label: "TV main (Philips 43\" FHD)", val: 3494,
+        note: "Big C: Philips 43\" Full HD, ฿3,494 (was ฿6,990). Bump to a 50-55\" 4K (TCL/Hisense/Samsung) for ฿8-13k." },
+      { id: "tv2", label: "TV bedroom (optional 2nd)", val: 0,
+        note: "Big C: a second small TV for the bedroom if you want one. Leave 0 to skip." },
+      { id: "fridge", label: "Fridge (2-door)", val: 9000,
+        note: "Big C / Big Power: 2-door 7-9 cu ft (Haier/Toshiba/LG) ~฿6-10k; bigger 13-16 cu ft ~฿12-16k. Often already in the unit." },
+      { id: "washer", label: "Washing machine", val: 7000,
+        note: "Big C / Big Power: twin-tub from ฿4k, top-load auto ฿7-12k (Toshiba/Samsung/LG). Often provided." },
+      { id: "fan", label: "Standing fans x2", val: 2000,
+        note: "Big C: a fan or two for rooms the aircon doesn't reach. ~฿700-1,200 each." },
+      { id: "microwave", label: "Microwave", val: 2500,
+        note: "Big C: basic microwave for the kitchen. ~฿2,000-3,500." },
+    ],
+  },
+  {
+    group: "Day-one home kit (Big C)",
+    bigc: true,
+    items: [
+      { id: "pillows", label: "Pillows x4", val: 800,
+        note: "Big C: Besico/own-brand pillows, ~฿180-250 each. You'll want spares from night one." },
+      { id: "bedding", label: "Bedding set (sheets + cases)", val: 1200,
+        note: "Big C: Besico 4-piece bedding set, king. Sheets, pillowcases, fitted sheet." },
+      { id: "duvet", label: "Duvet / blanket & protector", val: 1500,
+        note: "Big C: light duvet or blanket plus a mattress protector. AC nights still want a cover." },
+      { id: "towels", label: "Towels (bath + hand set)", val: 1000,
+        note: "Big C: a set of bath and hand towels for the two of you." },
+      { id: "waterfilter", label: "Water filter / purifier", val: 2500,
+        note: "Big C: counter gravity/carbon filter ~฿2-3k; plumbed-in RO units more. Tap water needs filtering. A bottle dispenser is ~฿800 as the cheap start." },
+      { id: "kitchenkit", label: "Pots, pans & kitchenware", val: 3000,
+        note: "Big C: starter set of pots, pans, knives, chopping board, the basics to cook from day one." },
+      { id: "dishes", label: "Plates, bowls, cutlery, glasses", val: 1500,
+        note: "Big C: a dinner set and cutlery for two, plus mugs and glasses." },
+      { id: "kettle", label: "Kettle & basics", val: 800,
+        note: "Big C: electric kettle, and the odd small thing (toaster optional)." },
+      { id: "cleaning", label: "Cleaning kit & bin", val: 1200,
+        note: "Big C: mop, bucket, broom, bin, sprays, sponges. The unglamorous day-one stuff." },
+      { id: "toiletries", label: "Toiletries & paper goods", val: 1000,
+        note: "Big C: loo roll, soap, shampoo, the first shop before the cupboards are stocked." },
+    ],
+  },
+  {
+    group: "Connectivity & admin",
+    items: [
+      { id: "router", label: "Router / WiFi setup", val: 2000,
+        note: "Install or a better router than the freebie. Sometimes landlord-provided." },
+      { id: "sims", label: "SIMs / eSIMs x2", val: 1500,
+        note: "Two local numbers with data. Cheap and quick at the airport or a mall." },
+    ],
+  },
+  {
+    group: "The five cats - day one (Big C)",
+    bigc: true,
+    items: [
+      { id: "littertrays", label: "Litter trays x5", val: 1500,
+        note: "Big C: open litter pans ~฿250-300 each, one per cat for five. Hooded or Catit sifting trays cost more." },
+      { id: "scoops", label: "Litter scoops x2 & tracking mat", val: 400,
+        note: "Big C: a couple of scoops and a mat to catch tracked litter." },
+      { id: "litterstock", label: "Cat litter starter stock", val: 800,
+        note: "Big C: Happy Price own-brand 5L bags (~฿70-100) or Meo clumping 5-10L. Several bags to start five cats off." },
+      { id: "peepads", label: "Pee pads / puppy pads (bulk)", val: 500,
+        note: "Big C: a bulk pack for the first settling-in days and any travel accidents." },
+      { id: "bowls", label: "Food & water bowls x5 sets", val: 700,
+        note: "Big C: five sets of food and water bowls, or a couple of multi-feeders." },
+      { id: "catfood1", label: "Initial food stock (wet + dry)", val: 1200,
+        note: "Big C: stock the brands the cats know (Whiskas, Sheba, Cat'N'Joy all carried) so day one isn't a diet change on top of the move." },
+      { id: "scratch", label: "Scratching posts & cosy beds", val: 4000,
+        note: "Posts, a small tree, and snug beds to help all five decompress after the trip. Big C carries basics; pet shops have more." },
+      { id: "catstarter", label: "Vet registration & starter meds", val: 3000,
+        note: "Registering with a local Phuket vet and topping up any prescriptions on arrival." },
+    ],
+  },
+];
+
+// helper: format a THB integer with thousands separators
+function fmtTHB(n) {
+  const v = Math.round(Number(n) || 0);
+  return "฿" + v.toLocaleString("en-US");
+}
+// helper: convert THB -> SGD at the given rate, formatted
+function fmtSGD(thb, rate) {
+  const r = Number(rate) || FX_SGD_THB_DEFAULT;
+  const v = (Number(thb) || 0) / r;
+  return "S$" + v.toLocaleString("en-US", { maximumFractionDigits: 0 });
+}
+
+// build the default budget blob (used first time, before any edits)
+function defaultBudget() {
+  // cost-of-living defaults seed from the "Comfortable" preset (index 1)
+  const col = {};
+  COL_LINES.forEach(l => { col[l.id] = l.vals[1]; });
+  // setup defaults seed from each item's val
+  const setup = {};
+  SETUP_GROUPS.forEach(g => g.items.forEach(it => { setup[it.id] = it.val; }));
+  return { col, colPreset: "Comfortable", setup, fx: FX_SGD_THB_DEFAULT };
+}
+
+// ============================================================
 // PROGRESS COPY — the meter speaks to where you are in the journey.
 // ============================================================
 function statusLine(done, total) {
@@ -292,7 +486,7 @@ const API_URL = "/api/mission";          // backend endpoint (same origin)
 const POLL_MS = 4000;                    // how often to check the other phone
 
 function emptyState() {
-  return { checked: {}, spent: 0, owned: [], lastBy: {}, updatedAt: 0 };
+  return { checked: {}, spent: 0, owned: [], lastBy: {}, budget: defaultBudget(), updatedAt: 0 };
 }
 
 // local mirror (offline cushion only) ----------------------------------------
@@ -446,6 +640,17 @@ function Glyph({ name, size = 20, color = "#ffb347" }) {
     case "door": return <svg {...c}><path d="M5 21V4a1 1 0 011-1h9a1 1 0 011 1v17"/><path d="M5 21h14"/><circle cx="13" cy="12" r="1"/></svg>;
     case "plane": return <svg {...c}><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 00-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L11 19v-5.5z"/></svg>;
     case "palm": return <svg {...c}><path d="M12 22V11"/><path d="M12 11c-3-2-6-1-8 1M12 11c3-2 6-1 8 1M12 11c-1-3-4-5-7-5M12 11c1-3 4-5 7-5"/></svg>;
+    case "check": return <svg {...c}><path d="M4 12l5 5L20 6"/></svg>;
+    case "wallet": return <svg {...c}><path d="M3 7h15a2 2 0 012 2v8a2 2 0 01-2 2H4a1 1 0 01-1-1V7z"/><path d="M3 7l12-3v3"/><circle cx="17" cy="13" r="1.2"/></svg>;
+    case "box": return <svg {...c}><path d="M3 8l9-4 9 4-9 4-9-4z"/><path d="M3 8v8l9 4 9-4V8"/><path d="M12 12v8"/></svg>;
+    case "bolt": return <svg {...c}><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>;
+    case "wifi": return <svg {...c}><path d="M5 12.5a10 10 0 0114 0M8 16a5.5 5.5 0 018 0"/><circle cx="12" cy="19.5" r="1"/></svg>;
+    case "cart": return <svg {...c}><circle cx="9" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/><path d="M3 4h2l2.2 12h10l2-8H6"/></svg>;
+    case "food": return <svg {...c}><path d="M5 3v8M8 3v8M6.5 3v18M16 3c-1.5 0-2 2-2 5s.5 5 2 5v8"/></svg>;
+    case "car": return <svg {...c}><path d="M5 13l1.5-4.5A2 2 0 018.4 7h7.2a2 2 0 011.9 1.5L19 13M4 13h16v4H4z"/><circle cx="7.5" cy="17.5" r="1.3"/><circle cx="16.5" cy="17.5" r="1.3"/></svg>;
+    case "health": return <svg {...c}><path d="M12 21s-7-4.5-7-10a4 4 0 017-2.6A4 4 0 0119 11c0 5.5-7 10-7 10z"/><path d="M12 8v5M9.5 10.5h5"/></svg>;
+    case "star": return <svg {...c}><path d="M12 3l2.5 5.5L20 9.5l-4 4 1 6-5-3-5 3 1-6-4-4 5.5-1z"/></svg>;
+    case "dots": return <svg {...c}><circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/></svg>;
     default: return <svg {...c}><circle cx="12" cy="12" r="9"/></svg>;
   }
 }
@@ -457,7 +662,8 @@ function App() {
   // start from the local cache for an instant first paint; the server copy
   // replaces it a moment later once the mount sync completes.
   const [save, setSave] = useState(loadLocal);
-  const [tab, setTab] = useState("checklist"); // checklist | store | progress
+  const [view, setView] = useState("home"); // home | checklist | costs | setup
+  const [tab, setTab] = useState("checklist"); // within the checklist tool: checklist | store | progress
   const [openSection, setOpenSection] = useState("night-before");
   const [who, setWho] = useState(() => {
     try { return window.localStorage.getItem("mission-phuket-who") || "Hammy"; }
@@ -522,6 +728,18 @@ function App() {
   const balance = earned - (save.spent || 0);
   const rank = rankFor(earned);
 
+  // budget always falls back to defaults, so a Phase-2 blob with no budget
+  // key still works the first time the money tools are opened.
+  const budget = save.budget || defaultBudget();
+  // merge a partial budget change into the shared state via the one write path
+  function setBudget(patch) {
+    commit(s => {
+      const cur = s.budget || defaultBudget();
+      const next = typeof patch === "function" ? patch(cur) : { ...cur, ...patch };
+      return { ...s, budget: next };
+    });
+  }
+
   function flashToast(msg, kind) {
     setToast({ msg, kind, id: uid() });
     setTimeout(() => setToast(t => (t && t.kind === kind ? null : t)), 2600);
@@ -563,29 +781,47 @@ function App() {
 
   return (
     <Shell>
-      <Header who={who} setWho={setWho} balance={balance} rank={rank} sync={sync} />
-
-      <ProgressBar doneCount={doneCount} earned={earned} balance={balance} />
-
-      <Tabs tab={tab} setTab={setTab} ownedCount={(save.owned || []).length} />
-
-      {tab === "checklist" && (
-        <Checklist
-          openSection={openSection} setOpenSection={setOpenSection}
-          checkedIds={checkedIds} lastBy={save.lastBy || {}}
-          onToggle={toggleTask} justChecked={justChecked} who={who}
+      {view === "home" && (
+        <Home
+          who={who} setWho={setWho} balance={balance} rank={rank} sync={sync}
+          doneCount={doneCount} earned={earned}
+          onOpen={setView}
         />
       )}
 
-      {tab === "store" && (
-        <Store owned={save.owned || []} balance={balance} onBuy={buySticker} earned={earned} />
+      {view !== "home" && (
+        <ToolBar title={VIEW_TITLES[view]} onBack={() => setView("home")} sync={sync} />
       )}
 
-      {tab === "progress" && (
-        <ProgressTab
-          save={save} doneCount={doneCount} earned={earned} balance={balance}
-          rank={rank} onReset={resetAll}
-        />
+      {view === "checklist" && (
+        <>
+          <ProgressBar doneCount={doneCount} earned={earned} balance={balance} />
+          <Tabs tab={tab} setTab={setTab} ownedCount={(save.owned || []).length} />
+          {tab === "checklist" && (
+            <Checklist
+              openSection={openSection} setOpenSection={setOpenSection}
+              checkedIds={checkedIds} lastBy={save.lastBy || {}}
+              onToggle={toggleTask} justChecked={justChecked} who={who}
+            />
+          )}
+          {tab === "store" && (
+            <Store owned={save.owned || []} balance={balance} onBuy={buySticker} earned={earned} />
+          )}
+          {tab === "progress" && (
+            <ProgressTab
+              save={save} doneCount={doneCount} earned={earned} balance={balance}
+              rank={rank} onReset={resetAll}
+            />
+          )}
+        </>
+      )}
+
+      {view === "costs" && (
+        <CostOfLiving budget={budget} setBudget={setBudget} />
+      )}
+
+      {view === "setup" && (
+        <SetupCosts budget={budget} setBudget={setBudget} />
       )}
 
       {toast && <Toast toast={toast} />}
@@ -593,6 +829,12 @@ function App() {
     </Shell>
   );
 }
+
+const VIEW_TITLES = {
+  checklist: "D-Day Checklist",
+  costs: "Cost of Living",
+  setup: "Setup Costs",
+};
 
 // ---------- Shell ----------
 function Shell({ children }) {
@@ -636,51 +878,337 @@ function Shell({ children }) {
 const cond = "'Barlow Condensed',sans-serif";
 const monoF = "'Space Mono',monospace";
 
-function Header({ who, setWho, balance, rank, sync }) {
-  const syncMeta = {
+// ---------- small shared bits ----------
+function SyncDot({ sync, withLabel }) {
+  const meta = {
     connecting: { dot: "#ffb347", label: "syncing", pulse: true },
     online: { dot: "#1f9d6b", label: "shared · live", pulse: false },
     offline: { dot: "#e07a3d", label: "offline · saved on phone", pulse: false },
   }[sync] || { dot: "#9a8a72", label: "", pulse: false };
   return (
-    <div className="mp-card" style={{ marginBottom: 14 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <div style={{ fontFamily: monoF, fontSize: 10, letterSpacing: ".28em", color: "#ff7a3d", textTransform: "uppercase" }}>
-            Departure · 01 JUL 2026
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: meta.dot, display: "inline-block",
+        animation: meta.pulse ? "pulse 1.2s infinite" : "none", boxShadow: `0 0 6px ${meta.dot}88` }} />
+      {withLabel && <span style={{ fontFamily: monoF, fontSize: 8.5, color: "#9a8a72", letterSpacing: ".08em" }}>{meta.label}</span>}
+    </span>
+  );
+}
+
+// ---------- Home hub: the landing screen with tool cards ----------
+function Home({ who, setWho, balance, rank, sync, doneCount, earned, onOpen }) {
+  const checkPct = pct(doneCount, TOTAL_TASKS);
+  const tools = [
+    { id: "checklist", title: "D-Day Checklist", icon: "check",
+      desc: "Tick off the move, bank points, unlock stickers.",
+      meta: `${doneCount}/${TOTAL_TASKS} done · ${checkPct}%`, accent: "#ff7a3d", live: true },
+    { id: "costs", title: "Cost of Living", icon: "wallet",
+      desc: "Your monthly Phuket budget in baht and SGD.",
+      meta: "Monthly estimator", accent: "#1f9fb8", live: true },
+    { id: "setup", title: "Setup Costs", icon: "box",
+      desc: "The one-off landing bill. Furniture, car, cat kit, day-one gear.",
+      meta: "Big C prices baked in", accent: "#1f9d6b", live: true },
+    { id: "explore", title: "Around Phuket", icon: "palm",
+      desc: "Cool spots, neighbourhood notes, island titbits.",
+      meta: "Coming soon", accent: "#c98a3d", live: false },
+  ];
+  return (
+    <div>
+      {/* hero header */}
+      <div className="mp-card" style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontFamily: monoF, fontSize: 10, letterSpacing: ".28em", color: "#ff7a3d", textTransform: "uppercase" }}>
+              Departure · 01 JUL 2026
+            </div>
+            <h1 style={{ fontFamily: cond, fontWeight: 800, fontSize: 40, lineHeight: .92, margin: "4px 0 0", letterSpacing: ".01em", color: "#1f6f8b" }}>
+              MISSION <span style={{ color: "#ff7a3d" }}>PHUKET</span>
+            </h1>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 5, flexWrap: "wrap" }}>
+              <span style={{ fontFamily: monoF, fontSize: 11, color: "#5a8a6f", letterSpacing: ".08em" }}>
+                SIN <span style={{ color: "#1f9fb8" }}>➔</span> BKK <span style={{ color: "#1f9fb8" }}>➔</span> HKT
+              </span>
+              <SyncDot sync={sync} withLabel />
+            </div>
           </div>
-          <h1 style={{ fontFamily: cond, fontWeight: 800, fontSize: 40, lineHeight: .92, margin: "4px 0 0", letterSpacing: ".01em", color: "#1f6f8b" }}>
-            MISSION <span style={{ color: "#ff7a3d" }}>PHUKET</span>
-          </h1>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 5, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: monoF, fontSize: 11, color: "#5a8a6f", letterSpacing: ".08em" }}>
-              SIN <span style={{ color: "#1f9fb8" }}>➔</span> BKK <span style={{ color: "#1f9fb8" }}>➔</span> HKT
-            </span>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              <span style={{ width: 7, height: 7, borderRadius: "50%", background: syncMeta.dot, display: "inline-block",
-                animation: syncMeta.pulse ? "pulse 1.2s infinite" : "none", boxShadow: `0 0 6px ${syncMeta.dot}88` }} />
-              <span style={{ fontFamily: monoF, fontSize: 8.5, color: "#9a8a72", letterSpacing: ".08em" }}>{syncMeta.label}</span>
-            </span>
+          <div style={{ textAlign: "right", background: "#ffffffcc", border: "1px solid #ffd59e", borderRadius: 14, padding: "8px 12px", boxShadow: "0 4px 14px #ff9b5422" }}>
+            <div style={{ fontFamily: cond, fontWeight: 800, fontSize: 30, color: "#ff7a3d", lineHeight: 1 }}>{balance}</div>
+            <div style={{ fontFamily: monoF, fontSize: 8.5, color: "#a0846a", letterSpacing: ".14em" }}>POINTS</div>
+            <div style={{ fontFamily: monoF, fontSize: 8.5, color: rank.color, letterSpacing: ".06em", marginTop: 4, maxWidth: 90 }}>{rank.name}</div>
           </div>
         </div>
-        <div style={{ textAlign: "right", background: "#ffffffcc", border: "1px solid #ffd59e", borderRadius: 14, padding: "8px 12px", boxShadow: "0 4px 14px #ff9b5422" }}>
-          <div style={{ fontFamily: cond, fontWeight: 800, fontSize: 30, color: "#ff7a3d", lineHeight: 1 }}>{balance}</div>
-          <div style={{ fontFamily: monoF, fontSize: 8.5, color: "#a0846a", letterSpacing: ".14em" }}>POINTS</div>
-          <div style={{ fontFamily: monoF, fontSize: 8.5, color: rank.color, letterSpacing: ".06em", marginTop: 4, maxWidth: 90 }}>{rank.name}</div>
+        <div style={{ display: "flex", gap: 6, marginTop: 12, alignItems: "center" }}>
+          <span style={{ fontFamily: monoF, fontSize: 9.5, color: "#9a8a72", letterSpacing: ".1em" }}>YOU ARE</span>
+          {["Hammy", "Naddy"].map(name => (
+            <button key={name} onClick={() => setWho(name)} className="mp-btn" style={{
+              padding: "5px 12px", borderRadius: 20, cursor: "pointer", fontFamily: cond, fontWeight: 700, fontSize: 13, letterSpacing: ".03em",
+              background: who === name ? (name === "Hammy" ? "#ff9b54" : "#ff7eb6") : "#ffffffaa",
+              color: who === name ? "#fff" : "#9a8a72",
+              border: who === name ? "none" : "1px solid #ecd9bf",
+              boxShadow: who === name ? "0 3px 10px #ff9b5444" : "none",
+            }}>{name}</button>
+          ))}
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 6, marginTop: 12, alignItems: "center" }}>
-        <span style={{ fontFamily: monoF, fontSize: 9.5, color: "#9a8a72", letterSpacing: ".1em" }}>TICKING AS</span>
-        {["Hammy", "Naddy"].map(name => (
-          <button key={name} onClick={() => setWho(name)} className="mp-btn" style={{
-            padding: "5px 12px", borderRadius: 20, cursor: "pointer", fontFamily: cond, fontWeight: 700, fontSize: 13, letterSpacing: ".03em",
-            background: who === name ? (name === "Hammy" ? "#ff9b54" : "#ff7eb6") : "#ffffffaa",
-            color: who === name ? "#fff" : "#9a8a72",
-            border: who === name ? "none" : "1px solid #ecd9bf",
-            boxShadow: who === name ? "0 3px 10px #ff9b5444" : "none",
-          }}>{name}</button>
+      <div style={{ fontFamily: monoF, fontSize: 10, letterSpacing: ".16em", color: "#a0846a", textTransform: "uppercase", marginBottom: 10, paddingLeft: 2 }}>
+        Mission tools
+      </div>
+
+      {/* tool cards */}
+      {tools.map(t => (
+        <button key={t.id} className="mp-card mp-btn" disabled={!t.live}
+          onClick={() => t.live && onOpen(t.id)} style={{
+            display: "block", width: "100%", textAlign: "left", cursor: t.live ? "pointer" : "default",
+            background: t.live ? "#ffffffdd" : "#ffffff99", border: `1px solid ${t.live ? "#ffe1b0" : "#eee2cc"}`,
+            borderRadius: 16, padding: "16px 16px", marginBottom: 12, opacity: t.live ? 1 : 0.7,
+            boxShadow: t.live ? "0 5px 16px #ff9b5418" : "none",
+          }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{ flexShrink: 0, width: 46, height: 46, borderRadius: 13, background: `${t.accent}1a`,
+              display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Glyph name={t.icon} size={24} color={t.accent} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontFamily: cond, fontWeight: 700, fontSize: 20, color: "#3a2e2a" }}>{t.title}</span>
+                {!t.live && <span style={{ fontFamily: monoF, fontSize: 8, color: "#c98a3d", background: "#fff2d6", border: "1px solid #ffd591", borderRadius: 3, padding: "1px 5px", letterSpacing: ".06em" }}>SOON</span>}
+              </div>
+              <div style={{ fontSize: 12.5, color: "#9a8a72", lineHeight: 1.4, marginTop: 2 }}>{t.desc}</div>
+              <div style={{ fontFamily: monoF, fontSize: 9.5, color: t.accent, letterSpacing: ".04em", marginTop: 5 }}>{t.meta}</div>
+            </div>
+            {t.live && <div style={{ fontSize: 22, color: "#d8c4a4", flexShrink: 0 }}>›</div>}
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ---------- ToolBar: the back bar shown inside each tool ----------
+function ToolBar({ title, onBack, sync }) {
+  return (
+    <div className="mp-card" style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
+      <button onClick={onBack} className="mp-btn" style={{
+        flexShrink: 0, display: "flex", alignItems: "center", gap: 5, cursor: "pointer",
+        background: "#ffffffcc", border: "1px solid #ecd9bf", borderRadius: 10, padding: "8px 12px",
+        fontFamily: cond, fontWeight: 700, fontSize: 14, color: "#1f6f8b",
+      }}>‹ Home</button>
+      <h2 style={{ fontFamily: cond, fontWeight: 800, fontSize: 24, color: "#1f6f8b", margin: 0, flex: 1, minWidth: 0,
+        whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{title}</h2>
+      <SyncDot sync={sync} />
+    </div>
+  );
+}
+
+// ---------- Cost of Living tool ----------
+function CostOfLiving({ budget, setBudget }) {
+  const col = budget.col || {};
+  const fx = budget.fx || FX_SGD_THB_DEFAULT;
+  const [openNote, setOpenNote] = useState(null);
+
+  const total = COL_LINES.reduce((s, l) => s + (Number(col[l.id]) || 0), 0);
+
+  function setLine(id, v) {
+    const n = Math.max(0, Math.round(Number(v) || 0));
+    setBudget(cur => ({ ...cur, col: { ...(cur.col || {}), [id]: n } }));
+  }
+  function applyPreset(name) {
+    const idx = COL_PRESETS.indexOf(name);
+    const next = {};
+    COL_LINES.forEach(l => { next[l.id] = l.vals[idx]; });
+    setBudget(cur => ({ ...cur, col: next, colPreset: name }));
+  }
+  function setFx(v) {
+    const n = Number(v);
+    if (n > 0) setBudget(cur => ({ ...cur, fx: n }));
+  }
+
+  return (
+    <div className="mp-card">
+      {/* total card */}
+      <div style={{ background: "linear-gradient(160deg,#e8f7fb,#ffffff)", border: "1px solid #b8e2ec", borderRadius: 16, padding: "16px 16px", marginBottom: 14, boxShadow: "0 5px 16px #1f9fb81a" }}>
+        <div style={{ fontFamily: monoF, fontSize: 10, letterSpacing: ".14em", color: "#1f9fb8", textTransform: "uppercase" }}>Estimated monthly total</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
+          <span style={{ fontFamily: cond, fontWeight: 800, fontSize: 38, color: "#16708a", lineHeight: 1 }}>{fmtTHB(total)}</span>
+          <span style={{ fontFamily: cond, fontWeight: 700, fontSize: 20, color: "#5a8a6f" }}>{fmtSGD(total, fx)}/mo</span>
+        </div>
+        <div style={{ fontSize: 11, color: "#6a8a96", marginTop: 6, lineHeight: 1.4 }}>
+          For the two of you plus five cats. Yearly: about {fmtTHB(total * 12)} ({fmtSGD(total * 12, fx)}).
+        </div>
+      </div>
+
+      {/* preset + fx */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 6, alignItems: "center", flexWrap: "wrap" }}>
+        <span style={{ fontFamily: monoF, fontSize: 9.5, color: "#a0846a", letterSpacing: ".1em" }}>PRESET</span>
+        {COL_PRESETS.map(p => (
+          <button key={p} onClick={() => applyPreset(p)} className="mp-btn" style={{
+            padding: "5px 11px", borderRadius: 18, cursor: "pointer", fontFamily: cond, fontWeight: 700, fontSize: 13,
+            background: budget.colPreset === p ? "#1f9fb8" : "#ffffffcc",
+            color: budget.colPreset === p ? "#fff" : "#9a8a72",
+            border: budget.colPreset === p ? "none" : "1px solid #ecd9bf",
+          }}>{p}</button>
         ))}
+      </div>
+      <div style={{ fontSize: 10.5, color: "#a0846a", marginBottom: 12, fontStyle: "italic", lineHeight: 1.4, paddingLeft: 2 }}>
+        Presets just pre-fill the lines below. Tweak any figure freely; it saves and syncs to both phones.
+      </div>
+
+      {/* lines */}
+      <div style={{ background: "#ffffffdd", border: "1px solid #ffe1b0", borderRadius: 14, overflow: "hidden", marginBottom: 12 }}>
+        {COL_LINES.map((l, i) => (
+          <div key={l.id} style={{ borderBottom: i < COL_LINES.length - 1 ? "1px solid #f4e6cf" : "none" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 14px" }}>
+              <Glyph name={l.icon} size={18} color="#ff9b54" />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 13.5, color: "#3a2e2a", fontWeight: 500 }}>{l.label}</span>
+                  <button onClick={() => setOpenNote(openNote === l.id ? null : l.id)} style={{
+                    cursor: "pointer", border: "none", background: "transparent", color: "#c98a3d", fontFamily: monoF, fontSize: 11, padding: 0, lineHeight: 1 }}>ⓘ</button>
+                </div>
+                <div style={{ fontFamily: monoF, fontSize: 9.5, color: "#9a8a72", marginTop: 1 }}>{fmtSGD(col[l.id] || 0, fx)}/mo</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+                <span style={{ fontFamily: cond, fontWeight: 700, fontSize: 15, color: "#16708a" }}>฿</span>
+                <input type="number" inputMode="numeric" value={col[l.id] || 0}
+                  onChange={e => setLine(l.id, e.target.value)} style={{
+                    width: 74, textAlign: "right", fontFamily: cond, fontWeight: 700, fontSize: 16, color: "#3a2e2a",
+                    border: "1px solid #ecd9bf", borderRadius: 8, padding: "5px 8px", background: "#fffaf0",
+                  }} />
+              </div>
+            </div>
+            {openNote === l.id && (
+              <div style={{ fontSize: 11, color: "#7a6a55", lineHeight: 1.45, padding: "0 14px 11px 43px", fontStyle: "italic" }}>{l.note}</div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <FxControl fx={fx} setFx={setFx} />
+    </div>
+  );
+}
+
+// ---------- Setup Costs tool ----------
+function SetupCosts({ budget, setBudget }) {
+  const setup = budget.setup || {};
+  const fx = budget.fx || FX_SGD_THB_DEFAULT;
+  const [openNote, setOpenNote] = useState(null);
+  const [openGroups, setOpenGroups] = useState(() => {
+    // first two groups open by default, rest collapsed to keep it tidy
+    const o = {};
+    SETUP_GROUPS.forEach((g, i) => { o[g.group] = i < 2; });
+    return o;
+  });
+
+  // one-off total excludes the recurring car line; that's shown separately
+  let oneOff = 0, recurring = 0;
+  SETUP_GROUPS.forEach(g => g.items.forEach(it => {
+    const v = Number(setup[it.id]) || 0;
+    if (it.recurring) recurring += v; else oneOff += v;
+  }));
+
+  function setItem(id, v) {
+    const n = Math.max(0, Math.round(Number(v) || 0));
+    setBudget(cur => ({ ...cur, setup: { ...(cur.setup || {}), [id]: n } }));
+  }
+  function setFx(v) {
+    const n = Number(v);
+    if (n > 0) setBudget(cur => ({ ...cur, fx: n }));
+  }
+  function groupTotal(g) {
+    return g.items.reduce((s, it) => s + (Number(setup[it.id]) || 0), 0);
+  }
+
+  return (
+    <div className="mp-card">
+      {/* total card */}
+      <div style={{ background: "linear-gradient(160deg,#e6f7ee,#ffffff)", border: "1px solid #b5e3cb", borderRadius: 16, padding: "16px 16px", marginBottom: 14, boxShadow: "0 5px 16px #1f9d6b1a" }}>
+        <div style={{ fontFamily: monoF, fontSize: 10, letterSpacing: ".14em", color: "#1f9d6b", textTransform: "uppercase" }}>One-off landing bill</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginTop: 4, flexWrap: "wrap" }}>
+          <span style={{ fontFamily: cond, fontWeight: 800, fontSize: 38, color: "#15784f", lineHeight: 1 }}>{fmtTHB(oneOff)}</span>
+          <span style={{ fontFamily: cond, fontWeight: 700, fontSize: 20, color: "#5a8a6f" }}>{fmtSGD(oneOff, fx)}</span>
+        </div>
+        <div style={{ fontSize: 11, color: "#5f8a72", marginTop: 6, lineHeight: 1.4 }}>
+          Plus the car at {fmtTHB(recurring)}/mo ({fmtSGD(recurring, fx)}/mo), which recurs and isn't in the one-off total.
+        </div>
+      </div>
+
+      <div style={{ fontSize: 10.5, color: "#a0846a", marginBottom: 12, fontStyle: "italic", lineHeight: 1.4, paddingLeft: 2 }}>
+        Furniture, appliances, day-one kit and cat gear are anchored to live Big C prices (late June 2026). Promos shift, so treat them as starting points and edit freely. Tap ⓘ for the detail on any line.
+      </div>
+
+      {/* groups */}
+      {SETUP_GROUPS.map(g => {
+        const open = openGroups[g.group];
+        return (
+          <div key={g.group} style={{ marginBottom: 10 }}>
+            <button onClick={() => setOpenGroups(s => ({ ...s, [g.group]: !s[g.group] }))} className="mp-btn" style={{
+              width: "100%", textAlign: "left", cursor: "pointer", border: "1px solid #ffe1b0",
+              background: "#ffffffdd", borderRadius: open ? "12px 12px 0 0" : 12, padding: "12px 14px",
+              display: "flex", alignItems: "center", gap: 10, boxShadow: "0 3px 12px #ff9b5414",
+            }}>
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                <span style={{ fontFamily: cond, fontWeight: 700, fontSize: 16, color: "#3a2e2a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{g.group}</span>
+                {g.bigc && <span style={{ fontFamily: monoF, fontSize: 7.5, color: "#1f9d6b", background: "#dff5e8", border: "1px solid #9bdcb8", borderRadius: 3, padding: "2px 5px", letterSpacing: ".06em", flexShrink: 0 }}>BIG C</span>}
+              </div>
+              <span style={{ fontFamily: cond, fontWeight: 700, fontSize: 14, color: "#15784f", flexShrink: 0 }}>{fmtTHB(groupTotal(g))}</span>
+              <span style={{ fontSize: 13, color: "#c9b495", transform: open ? "rotate(180deg)" : "none", transition: "transform .2s", flexShrink: 0 }}>▾</span>
+            </button>
+            {open && (
+              <div style={{ border: "1px solid #ffe1b0", borderTop: "none", borderRadius: "0 0 12px 12px", background: "#fffaf0", overflow: "hidden" }}>
+                {g.items.map((it, i) => (
+                  <div key={it.id} style={{ borderBottom: i < g.items.length - 1 ? "1px solid #f4e6cf" : "none" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 13, color: "#3a2e2a", fontWeight: 500 }}>{it.label}</span>
+                          {it.recurring && <span style={{ fontFamily: monoF, fontSize: 7.5, color: "#1f9fb8", border: "1px solid #b8e2ec", borderRadius: 3, padding: "1px 4px", letterSpacing: ".04em" }}>MONTHLY</span>}
+                          <button onClick={() => setOpenNote(openNote === it.id ? null : it.id)} style={{
+                            cursor: "pointer", border: "none", background: "transparent", color: "#c98a3d", fontFamily: monoF, fontSize: 11, padding: 0, lineHeight: 1 }}>ⓘ</button>
+                        </div>
+                        <div style={{ fontFamily: monoF, fontSize: 9, color: "#9a8a72", marginTop: 1 }}>{fmtSGD(setup[it.id] || 0, fx)}</div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+                        <span style={{ fontFamily: cond, fontWeight: 700, fontSize: 14, color: "#15784f" }}>฿</span>
+                        <input type="number" inputMode="numeric" value={setup[it.id] || 0}
+                          onChange={e => setItem(it.id, e.target.value)} style={{
+                            width: 72, textAlign: "right", fontFamily: cond, fontWeight: 700, fontSize: 15, color: "#3a2e2a",
+                            border: "1px solid #ecd9bf", borderRadius: 8, padding: "5px 8px", background: "#ffffff",
+                          }} />
+                      </div>
+                    </div>
+                    {openNote === it.id && (
+                      <div style={{ fontSize: 11, color: "#7a6a55", lineHeight: 1.45, padding: "0 14px 10px 14px", fontStyle: "italic" }}>{it.note}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      <div style={{ height: 4 }} />
+      <FxControl fx={fx} setFx={setFx} />
+    </div>
+  );
+}
+
+// ---------- shared FX rate control ----------
+function FxControl({ fx, setFx }) {
+  return (
+    <div style={{ background: "#fffaf0", border: "1px dashed #e0c79a", borderRadius: 12, padding: "11px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontFamily: cond, fontWeight: 700, fontSize: 14, color: "#3a2e2a" }}>Exchange rate</div>
+        <div style={{ fontSize: 10.5, color: "#a0846a", lineHeight: 1.4 }}>1 SGD = ฿{fx}. Edit to the live rate when you budget (was ~25.5 late June 2026).</div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+        <span style={{ fontFamily: cond, fontWeight: 700, fontSize: 13, color: "#9a8a72" }}>S$1=฿</span>
+        <input type="number" inputMode="decimal" step="0.1" value={fx}
+          onChange={e => setFx(e.target.value)} style={{
+            width: 60, textAlign: "right", fontFamily: cond, fontWeight: 700, fontSize: 15, color: "#16708a",
+            border: "1px solid #ecd9bf", borderRadius: 8, padding: "5px 8px", background: "#ffffff",
+          }} />
       </div>
     </div>
   );
