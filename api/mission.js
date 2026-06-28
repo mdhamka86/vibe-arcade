@@ -55,7 +55,7 @@ async function redisSet(url, token, key, value) {
 
 // the empty mission, used the very first time before anyone has ticked a thing
 function emptyState() {
-  return { checked: {}, spent: 0, owned: [], lastBy: {}, updatedAt: 0 };
+  return { checked: {}, spent: 0, owned: [], lastBy: {}, budget: null, updatedAt: 0 };
 }
 
 export default async function handler(req, res) {
@@ -99,6 +99,7 @@ export default async function handler(req, res) {
         spent: Number(incoming.spent) || 0,
         owned: Array.isArray(incoming.owned) ? incoming.owned : [],
         lastBy: incoming.lastBy || {},
+        budget: incoming.budget || null,
         updatedAt: Date.now(),
       };
       await redisSet(url, token, KEY, JSON.stringify(toSave));
