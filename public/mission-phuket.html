@@ -272,24 +272,64 @@ function rankFor(points) {
 }
 
 // ============================================================
-// SAVE STATE — Phase 1 keeps it simple and in-memory with a localStorage
-// mirror so a reload doesn't wipe progress. (Artifact sandboxes block
-// storage, so every call is wrapped: it just falls back to memory there,
-// and works for real on the live Vercel site.) Phase 2 swaps this whole
-// layer for the shared household backend.
+// SAVE STATE — Phase 2: shared household save via the backend.
+//
+// The whole mission lives as ONE blob on the server (api/mission), so both
+// phones share ticked boxes and a combined points pool. A localStorage mirror
+// is kept purely as an offline cushion: if the signal drops at the airport,
+// the app keeps working on the last known state and re-syncs when it returns.
+//
+// Flow:
+//   - on open: pull the shared state from the server (fall back to local cache)
+//   - on any change: write the full state up, and mirror it locally
+//   - every few seconds: poll the server so the other phone's ticks appear
+//
+// "Last write wins" is fine for a two-person list: writes are near-instant and
+// the poll is short, so the two phones converge within a few seconds.
 // ============================================================
-const SAVE_KEY = "mission-phuket-v1";
+const SAVE_KEY = "mission-phuket-v1";   // local mirror key
+const API_URL = "/api/mission";          // backend endpoint (same origin)
+const POLL_MS = 4000;                    // how often to check the other phone
 
-function loadSave() {
+function emptyState() {
+  return { checked: {}, spent: 0, owned: [], lastBy: {}, updatedAt: 0 };
+}
+
+// local mirror (offline cushion only) ----------------------------------------
+function loadLocal() {
   try {
     const raw = window.localStorage.getItem(SAVE_KEY);
     if (raw) return JSON.parse(raw);
-  } catch (e) { /* sandboxed or unavailable: fall through to default */ }
-  return { checked: {}, spent: 0, owned: [], lastBy: {} };
+  } catch (e) { /* sandboxed or unavailable */ }
+  return emptyState();
 }
-function persist(state) {
+function saveLocal(state) {
   try { window.localStorage.setItem(SAVE_KEY, JSON.stringify(state)); }
-  catch (e) { /* no-op in sandbox */ }
+  catch (e) { /* no-op */ }
+}
+
+// backend sync ---------------------------------------------------------------
+// Returns the server state, or null if the server can't be reached.
+async function fetchRemote() {
+  try {
+    const res = await fetch(API_URL, { method: "GET", cache: "no-store" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data && data.state ? data.state : null;
+  } catch (e) { return null; }
+}
+// Pushes the full state up. Returns the saved server state, or null on failure.
+async function pushRemote(state) {
+  try {
+    const res = await fetch(API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ state }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data && data.state ? data.state : null;
+  } catch (e) { return null; }
 }
 
 // ============================================================
@@ -414,7 +454,9 @@ function Glyph({ name, size = 20, color = "#ffb347" }) {
 // MAIN APP
 // ============================================================
 function App() {
-  const [save, setSave] = useState(loadSave);
+  // start from the local cache for an instant first paint; the server copy
+  // replaces it a moment later once the mount sync completes.
+  const [save, setSave] = useState(loadLocal);
   const [tab, setTab] = useState("checklist"); // checklist | store | progress
   const [openSection, setOpenSection] = useState("night-before");
   const [who, setWho] = useState(() => {
@@ -423,12 +465,54 @@ function App() {
   });
   const [toast, setToast] = useState(null);
   const [justChecked, setJustChecked] = useState(null);
+  const [sync, setSync] = useState("connecting"); // connecting | online | offline
+  const saveRef = useRef(save);
+  saveRef.current = save;
 
-  // persist on every save change
-  useEffect(() => { persist(save); }, [save]);
+  // remember the who-toggle locally (it's a per-phone preference, not shared)
   useEffect(() => {
     try { window.localStorage.setItem("mission-phuket-who", who); } catch (e) {}
   }, [who]);
+
+  // ---- on mount: pull the shared state, then poll for the other phone ----
+  useEffect(() => {
+    let alive = true;
+    async function syncDown() {
+      const remote = await fetchRemote();
+      if (!alive) return;
+      if (remote) {
+        setSync("online");
+        // only adopt the server copy if it's newer than what we're holding,
+        // so a slow poll can't clobber a tick you just made on this phone.
+        setSave(local => {
+          const localT = local.updatedAt || 0;
+          const remoteT = remote.updatedAt || 0;
+          if (remoteT >= localT) { saveLocal(remote); return remote; }
+          return local;
+        });
+      } else {
+        setSync("offline");
+      }
+    }
+    syncDown(); // immediate
+    const id = setInterval(syncDown, POLL_MS);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  // ---- commit a new state: update screen, mirror locally, push to server ----
+  // every user action routes through here so there's one clean write path.
+  function commit(updater) {
+    setSave(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      const stamped = { ...next, updatedAt: Date.now() };
+      saveLocal(stamped);
+      // fire-and-forget push; flip the badge based on whether it lands
+      pushRemote(stamped).then(saved => {
+        setSync(saved ? "online" : "offline");
+      });
+      return stamped;
+    });
+  }
 
   // derived totals
   const checkedIds = save.checked || {};
@@ -444,7 +528,7 @@ function App() {
   }
 
   function toggleTask(task) {
-    setSave(s => {
+    commit(s => {
       const checked = { ...(s.checked || {}) };
       const lastBy = { ...(s.lastBy || {}) };
       const wasOn = !!checked[task.id];
@@ -467,19 +551,19 @@ function App() {
   function buySticker(st) {
     if ((save.owned || []).includes(st.id)) return;
     if (balance < st.cost) { flashToast("Not enough points yet", "warn"); return; }
-    setSave(s => ({ ...s, spent: (s.spent || 0) + st.cost, owned: [...(s.owned || []), st.id] }));
+    commit(s => ({ ...s, spent: (s.spent || 0) + st.cost, owned: [...(s.owned || []), st.id] }));
     flashToast(`Unlocked: ${st.name}`, "unlock");
   }
 
   function resetAll() {
-    if (!window.confirm("Reset every tick, point, and unlocked sticker? This can't be undone.")) return;
-    setSave({ checked: {}, spent: 0, owned: [], lastBy: {} });
+    if (!window.confirm("Reset every tick, point, and unlocked sticker for BOTH of you? This clears the shared mission and can't be undone.")) return;
+    commit({ checked: {}, spent: 0, owned: [], lastBy: {} });
     flashToast("Mission reset", "warn");
   }
 
   return (
     <Shell>
-      <Header who={who} setWho={setWho} balance={balance} rank={rank} />
+      <Header who={who} setWho={setWho} balance={balance} rank={rank} sync={sync} />
 
       <ProgressBar doneCount={doneCount} earned={earned} balance={balance} />
 
@@ -517,6 +601,7 @@ function Shell({ children }) {
     ::selection{background:#ff9b54;color:#fff;}
     @keyframes fadeUp{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
     @keyframes pop{0%{transform:scale(.7);opacity:0;}60%{transform:scale(1.15);}100%{transform:scale(1);opacity:1;}}
+    @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
     @keyframes flip{0%{transform:rotateX(-90deg);opacity:0;}100%{transform:rotateX(0);opacity:1;}}
     @keyframes slidein{from{transform:translateY(20px);opacity:0;}to{transform:translateY(0);opacity:1;}}
     @keyframes shimmer{0%{background-position:-200% 0;}100%{background-position:200% 0;}}
@@ -551,7 +636,12 @@ function Shell({ children }) {
 const cond = "'Barlow Condensed',sans-serif";
 const monoF = "'Space Mono',monospace";
 
-function Header({ who, setWho, balance, rank }) {
+function Header({ who, setWho, balance, rank, sync }) {
+  const syncMeta = {
+    connecting: { dot: "#ffb347", label: "syncing", pulse: true },
+    online: { dot: "#1f9d6b", label: "shared · live", pulse: false },
+    offline: { dot: "#e07a3d", label: "offline · saved on phone", pulse: false },
+  }[sync] || { dot: "#9a8a72", label: "", pulse: false };
   return (
     <div className="mp-card" style={{ marginBottom: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
@@ -562,8 +652,15 @@ function Header({ who, setWho, balance, rank }) {
           <h1 style={{ fontFamily: cond, fontWeight: 800, fontSize: 40, lineHeight: .92, margin: "4px 0 0", letterSpacing: ".01em", color: "#1f6f8b" }}>
             MISSION <span style={{ color: "#ff7a3d" }}>PHUKET</span>
           </h1>
-          <div style={{ fontFamily: monoF, fontSize: 11, color: "#5a8a6f", marginTop: 5, letterSpacing: ".08em" }}>
-            SIN <span style={{ color: "#1f9fb8" }}>➔</span> BKK <span style={{ color: "#1f9fb8" }}>➔</span> HKT
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 5, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: monoF, fontSize: 11, color: "#5a8a6f", letterSpacing: ".08em" }}>
+              SIN <span style={{ color: "#1f9fb8" }}>➔</span> BKK <span style={{ color: "#1f9fb8" }}>➔</span> HKT
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: syncMeta.dot, display: "inline-block",
+                animation: syncMeta.pulse ? "pulse 1.2s infinite" : "none", boxShadow: `0 0 6px ${syncMeta.dot}88` }} />
+              <span style={{ fontFamily: monoF, fontSize: 8.5, color: "#9a8a72", letterSpacing: ".08em" }}>{syncMeta.label}</span>
+            </span>
           </div>
         </div>
         <div style={{ textAlign: "right", background: "#ffffffcc", border: "1px solid #ffd59e", borderRadius: 14, padding: "8px 12px", boxShadow: "0 4px 14px #ff9b5422" }}>
@@ -829,7 +926,7 @@ function ProgressTab({ save, doneCount, earned, balance, rank, onReset }) {
           );
         })}
         <div style={{ fontSize: 10.5, color: "#a0846a", marginTop: 8, fontStyle: "italic", lineHeight: 1.4 }}>
-          Friendly note: once the shared backend is wired up in the next phase, this splits live between the two of you across both phones.
+          This splits live between the two of you. Tick on one phone and it shows up on the other within a few seconds.
         </div>
       </div>
 
