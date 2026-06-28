@@ -264,14 +264,14 @@ const FX_SGD_THB_DEFAULT = 25.5;
 const COL_PRESETS = ["Thrifty", "Comfortable", "Plush"];
 const COL_LINES = [
   { id: "rent", label: "Rent", icon: "home",
-    vals: [18000, 30000, 60000],
-    note: "1-bed inland (Kathu/Chalong) ~18-25k; mid 1-2 bed ~25-40k; premium Bang Tao/villa 60k+. Sources: HolyCow, Phuket Prime, Thailand-Property 2026." },
+    vals: [32000, 32000, 32000],
+    note: "Your Habitown lease is ฿32,000/mo flat, WiFi and garden upkeep included. Fixed here since it's your actual signed rent, not an estimate." },
   { id: "utilities", label: "Electric, water & aircon", icon: "bolt",
     vals: [3000, 5000, 8000],
     note: "Electric is the big swing with aircon use (~7 THB/kWh). Water cheap. ~3-8k/mo for a 1-2 bed. Sources: Siam Expat, Mango Phuket 2026." },
   { id: "internet", label: "Internet & phone", icon: "wifi",
-    vals: [1000, 1500, 2500],
-    note: "Home fibre ~600-900, plus mobile data plans. Sources: Reloc8, Thailand Insider 2026." },
+    vals: [400, 600, 1000],
+    note: "Home WiFi is included in your Habitown rent, so this is just mobile data plans for the two of you. Presets are low for that reason. Sources: Reloc8, Thailand Insider 2026." },
   { id: "groceries", label: "Groceries", icon: "cart",
     vals: [10000, 16000, 24000],
     note: "Local-heavy basket ~6-10k; Western/imported basket 12-20k+. Per couple. Sources: Reloc8, Siam Expat 2026." },
@@ -306,12 +306,14 @@ const SETUP_GROUPS = [
   {
     group: "Home & deposit",
     items: [
-      { id: "deposit", label: "Rental deposit (2 months)", val: 60000,
-        note: "Standard Phuket lease = 2 months deposit. Scales with rent; shown at a 30k/mo example. Sources: Hipflat, Thailand-Property 2026." },
-      { id: "advance", label: "First month advance rent", val: 30000,
-        note: "1 month rent up front on signing, on top of the deposit. Same 30k/mo example." },
+      { id: "deposit", label: "Security deposit (2 months)", val: 64000,
+        note: "Your Habitown lease: ฿64,000 deposit (2 months at ฿32,000). Refundable at the end if all's well. Forfeited in full if you leave before 28 Feb 2027." },
+      { id: "petdeposit", label: "Pet deposit (the cats)", val: 15000,
+        note: "Your lease: ฿15,000 pet security deposit for the five cats, on top of the standard deposit. Refundable, same terms." },
+      { id: "advance", label: "First month rent", val: 32000,
+        note: "Your lease: ฿32,000/mo. First ฿32,000 was paid 19 May (non-refundable if you pull out before 1 July); the rest lands 1 July." },
       { id: "agent", label: "Agent fee (if any)", val: 0,
-        note: "Most long-term Phuket rentals charge the landlord, not you. Leave 0 unless your agent bills the tenant." },
+        note: "Your lease doesn't bill a tenant agent fee, so this stays 0." },
     ],
   },
   {
@@ -319,10 +321,12 @@ const SETUP_GROUPS = [
     items: [
       { id: "car", label: "Car rental (monthly)", val: 15000, recurring: true,
         note: "Long-term hire incl. insurance & servicing: eco ~12.5-15k/mo. This is per month, not one-off. Sources: Siam.rent, Phuket Prime 2026." },
+      { id: "naddybike", label: "Naddy's motorbike (monthly)", val: 5000, recurring: true,
+        note: "Lil Naddy's Yamaha FZS 150 or similar (the FZS is Yamaha, not Honda). Geared 150-160cc naked bikes long-term run ~฿4-6k/mo in Phuket, above scooter rates but below big bikes. Per month, not one-off. Needs an 'A' category IDP since it's manual. Sources: Byklo, Andrei Motorbike Rent 2026." },
       { id: "scooter", label: "Scooter (deposit/first month)", val: 4000,
-        note: "Monthly scooter hire ~3-5k, sometimes a deposit too. Handy second set of wheels." },
+        note: "Monthly scooter hire ~3-5k, sometimes a deposit too. A twist-and-go Honda Click tier is cheaper and needs no gear-bike licence." },
       { id: "helmets", label: "Helmets x2 & phone mounts", val: 2500,
-        note: "Two decent helmets and mounts for island riding." },
+        note: "Two decent helmets and mounts for island riding. Helmets are mandatory by law for rider and passenger." },
     ],
   },
   {
@@ -388,8 +392,8 @@ const SETUP_GROUPS = [
   {
     group: "Connectivity & admin",
     items: [
-      { id: "router", label: "Router / WiFi setup", val: 2000,
-        note: "Install or a better router than the freebie. Sometimes landlord-provided." },
+      { id: "router", label: "Router / WiFi setup", val: 0,
+        note: "Your lease includes WiFi internet, so this is 0. Bump it only if you want a better router than the landlord's." },
       { id: "sims", label: "SIMs / eSIMs x2", val: 1500,
         note: "Two local numbers with data. Cheap and quick at the airport or a mall." },
     ],
@@ -1129,7 +1133,7 @@ function SetupCosts({ budget, setBudget }) {
           <span style={{ fontFamily: cond, fontWeight: 700, fontSize: 20, color: "#5a8a6f" }}>{fmtSGD(oneOff, fx)}</span>
         </div>
         <div style={{ fontSize: 11, color: "#5f8a72", marginTop: 6, lineHeight: 1.4 }}>
-          Plus the car at {fmtTHB(recurring)}/mo ({fmtSGD(recurring, fx)}/mo), which recurs and isn't in the one-off total.
+          Plus monthly wheels at {fmtTHB(recurring)}/mo ({fmtSGD(recurring, fx)}/mo), which recurs and isn't in the one-off total.
         </div>
       </div>
 
