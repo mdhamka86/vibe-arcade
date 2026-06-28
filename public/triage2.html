@@ -32,10 +32,11 @@
   .score.mid{color:var(--gold);border-color:var(--gold);}
   .score.lo{color:var(--muted);}
   .reason{font-size:12.5px;color:var(--muted);margin-bottom:8px;}
-  .hdr{font-size:12.5px;color:var(--muted);margin-bottom:8px;line-height:1.45;}
+  .feat{font-size:12.5px;color:var(--gold);margin-bottom:8px;line-height:1.45;}
   .pills{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;}
   .pill{font-size:12.5px;padding:4px 9px;border-radius:999px;background:#11161c;border:1px solid var(--line);}
   .pill.big{border-color:var(--accent2);color:var(--accent);}
+  .pill.coupon{border-color:var(--gold);color:var(--gold);}
   .deepbtn{background:#11161c;color:#6db8ff;border:1px solid #2a3a4d;border-radius:10px;padding:8px 12px;font-size:13px;font-weight:600;}
   .deepbtn:disabled{opacity:0.5;}
   .deepout{margin-top:10px;font-size:12px;color:var(--ink);background:#0b0e13;border:1px solid var(--line);border-radius:10px;padding:10px;white-space:pre-wrap;max-height:240px;overflow:auto;display:none;}
@@ -52,7 +53,7 @@
   </div>
   <div id="app">
   <h1>Outsider Triage</h1>
-  <div class="sub">Stage 1: one tap ranks every meet by diveability (analysis docs + class spread + depth, not just prize). Stage 2: deep-read the tipster PDFs on the meets worth it.</div>
+  <div class="sub">Stage 1: one tap ranks every meet by diveability (analysis docs + class spread + whole-card field depth, with feature races detected anywhere in the card). Stage 2: deep-read the tipster PDFs on the meets worth it.</div>
 
   <div class="row"><select id="dateSel"><option value="">Loading dates…</option></select></div>
   <button class="go" id="goBtn">Rank meets</button>
@@ -61,13 +62,11 @@
   <button class="copy" id="copyBtn" style="display:none">Copy ranked summary (paste to Claude)</button>
   <div id="out"></div>
 
-  <footer>Score weights analysis-doc availability (40), class spread (25), field depth (20), race count (15). Maiden-heavy cards penalised. Deep read extracts tipster text via serverless PDF parsing; convergence call still happens in chat.<br><br><span style="color:var(--accent2);font-weight:600;">Outsider Triage v1.0</span> &middot; hammyLabs &middot; built 22/06/2026</footer>
+  <footer>Score weights analysis-doc availability (40), class/feature anywhere in card (25), whole-card avg field depth (20) + deep-race bonus (8), race count (7). Maiden-heavy cards penalised. Deep read extracts tipster text via serverless PDF parsing; convergence call still happens in chat.<br><br><span style="color:var(--accent2);font-weight:600;">Outsider Triage v2.0</span> &middot; hammyLabs &middot; updated 28/06/2026</footer>
   </div>
 
 <script>
 // ---- password gate (client-side; keeps casual visitors out, not bulletproof) ----
-// Stores only a SHA-256 hash of the password, never the plain text.
-// To set your password: hash it and paste the hex below. See instructions in chat.
 const PASS_HASH = "c283bf2ce8d3227f28166598d4087c6d10e7b5141d142ff4ad2df3bc73c532b4";
 
 async function sha256Hex(str){
@@ -91,7 +90,6 @@ async function tryUnlock(){
     }
   }catch(e){ err.textContent = "Error: "+e; }
 }
-// already unlocked this tab session?
 if(sessionStorage.getItem("ot_ok")==="1"){ unlockApp(); }
 document.getElementById("gateBtn").addEventListener("click", tryUnlock);
 document.getElementById("gatePass").addEventListener("keydown", e=>{ if(e.key==="Enter") tryUnlock(); });
@@ -99,6 +97,7 @@ document.getElementById("gatePass").addEventListener("keydown", e=>{ if(e.key===
 const TRIAGE="/api/triage2", DEEP="/api/deep2";
 const dateSel=document.getElementById("dateSel"),goBtn=document.getElementById("goBtn"),copyBtn=document.getElementById("copyBtn"),statusEl=document.getElementById("status"),out=document.getElementById("out");
 let lastText="";
+let lastData=null;
 function setStatus(s){statusEl.textContent=s||"";}
 function esc(s){return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 
@@ -111,32 +110,50 @@ async function loadDates(){
 
 function scoreClass(s){return s>=70?"hi":s>=50?"mid":"lo";}
 
+// Compact feature-race string, e.g. "R7 IRISH DERBY (GR1) [14]"
+function featLine(m){
+  if(!m.featureRaces||!m.featureRaces.length) return "";
+  return m.featureRaces.map(f=>"R"+f.raceNo+" "+f.title.replace(/\s+-\s+\d.*$/,"").slice(0,48)+" ["+f.fieldSize+"]").join("  •  ");
+}
+
 function render(data){
+  lastData=data;
   out.innerHTML="";
   const lines=[];
   lines.push("OUTSIDER TRIAGE (ranked)  -  "+data.date);
-  lines.push("Meets: "+data.count+"   |   ranked by diveability score");
+  lines.push("Meets: "+data.count+"   |   ranked by diveability (whole-card)");
   lines.push("========================================");
   data.meets.forEach((m,i)=>{
     const div=document.createElement("div");
     div.className="meet"+(i===0&&m.score>=60?" top":"");
-    const docs=[];
-    if(m.pdfs&&m.pdfs.card)docs.push('<a href="'+m.pdfs.card+'" target="_blank" style="color:#6db8ff">card</a>');
-    if(m.pdfs&&m.pdfs.tips)docs.push('<a href="'+m.pdfs.tips+'" target="_blank" style="color:#6db8ff">tips</a>');
-    if(m.pdfs&&m.pdfs.analysis)docs.push('<a href="'+m.pdfs.analysis+'" target="_blank" style="color:#6db8ff">analysis</a>');
+    const feat=featLine(m);
     div.innerHTML=
       '<h2><span>'+(i+1)+'. '+esc(m.venue)+'</span><span class="score '+scoreClass(m.score)+'">'+esc(m.score)+'</span></h2>'+
       '<div class="reason">'+esc(m.reason)+'</div>'+
-      '<div class="hdr">'+esc(m.r1)+'</div>'+
-      '<div class="pills"><span class="pill big">'+esc(m.races)+' races</span><span class="pill">R1 field '+esc(m.r1Field)+'</span><span class="pill">'+esc(m.dist)+'</span><span class="pill">'+esc(m.prize)+'</span></div>'+
+      (feat?'<div class="feat">★ '+esc(feat)+'</div>':'')+
+      '<div class="pills">'+
+        '<span class="pill big">'+esc(m.races)+' races</span>'+
+        '<span class="pill">avg field '+esc(m.avgField)+'</span>'+
+        '<span class="pill">max '+esc(m.maxField)+'</span>'+
+        (m.coupon?'<span class="pill coupon">'+esc(m.coupon)+'</span>':'')+
+      '</div>'+
       (m.docCount?'<button class="deepbtn" data-url="'+encodeURIComponent(m.url)+'" data-venue="'+esc(m.venue)+'">Deep read tipster PDFs</button>':'<span class="reason">No PDFs to deep-read</span>')+
       '<div class="deepout"></div>';
     out.appendChild(div);
+    // ---- copy-summary text (new fields, no more undefined) ----
     lines.push("\n"+(i+1)+". "+m.venue+"   [score "+m.score+"]");
     lines.push("   "+m.reason);
-    lines.push("   R1: "+m.r1);
-    lines.push("   "+m.races+" races | R1 field "+m.r1Field+" | "+m.dist+" | "+m.prize);
+    if(m.coupon) lines.push("   SGPools: "+m.coupon);
+    if(feat) lines.push("   Feature: "+feat);
+    lines.push("   "+m.races+" races | avg field "+m.avgField+" | max "+m.maxField);
     lines.push("   Card: "+m.url);
+    // include the full race -> horse coupon map so slips can be built without hunting
+    if(m.raceMap&&m.raceMap.length){
+      m.raceMap.forEach(r=>{
+        const runners=(r.runners||[]).map(h=>h.no+" "+h.name).join(", ");
+        lines.push("     R"+r.raceNo+" ("+(r.dist||"?")+", "+(r.coupon||m.coupon||"")+"): "+runners);
+      });
+    }
   });
   lastText=lines.join("\n");
   copyBtn.style.display="block";
@@ -158,7 +175,6 @@ async function deepRead(btn){
       let t="DEEP READ — "+venue+"\n";
       j.docs.forEach(d=>{t+="\n["+d.label+"]"+(d.error?(" failed: "+d.error):(" ("+d.chars+" chars)\n"+d.text))+"\n";});
       box.textContent=t;
-      // append to copy buffer so the chat paste includes the deep text
       lastText+="\n\n"+t;
     }
   }catch(e){box.textContent="Request failed: "+e;}
