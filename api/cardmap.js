@@ -1,8 +1,9 @@
 // /api/cardmap  -  Build the SGPools INTEGRATED race -> horse-number map for one
-// meet, so a bet slip can be keyed to the exact coupon numbers the app shows.
+// meet, keyed to the exact coupon numbers the app shows (no manual translation).
 //
 // ?url=<full ViewRaceCard URL>   the meet to map (required)
 // ?raw=1                          also return raw extracted text per race
+// ?dump=1                         return first 6000 chars of raw PDF text (debug)
 
 const SP_BASE = "https://www.singaporepools.com.sg";
 
@@ -62,35 +63,42 @@ function findPdfs(html) {
   return pdfs;
 }
 
+// SP integrated form card extracts as: each race begins "R<n> <date> | Venue |
+// Distance: <d>m | Class: ..." then per-horse form blocks, then a clean summary
+// table headed "Tab Form Name WT BP Jockey Trainer ...". The Tab column IS the
+// SGPools coupon horse number, so we parse that table.
 function parseRaces(text) {
   const races = [];
-  const headerRe = /RACE\s*(\d+)\s*:\s*([\s\S]*?)(?=RACE\s*\d+\s*:|$)/gi;
+  const headerRe = /R(\d+)\s+(\d{1,2}\s+\w+\s+\d{4})\s*\|([\s\S]*?)(?=R\d+\s+\d{1,2}\s+\w+\s+\d{4}\s*\||$)/g;
   let m;
   while ((m = headerRe.exec(text)) !== null) {
     const raceNo = parseInt(m[1], 10);
-    const block = m[2];
+    const block = m[3];
 
-    const titleMatch = block.match(/^(.*?)(?=PRIZE MONEY|HORSE\s*NO|NO\.\s*HORSE|$)/i);
-    let title = titleMatch ? titleMatch[1].replace(/\s+/g, " ").trim() : "";
-    title = title.slice(0, 140);
+    const titleMatch = block.match(/^([\s\S]*?(?:KRW[\d,]+|PRIZE\s*MONEY[^|]*))/i);
+    let title = titleMatch ? titleMatch[1].replace(/\s+/g, " ").trim() : block.slice(0, 80).replace(/\s+/g, " ").trim();
+    title = title.replace(/^\|?\s*/, "").slice(0, 140);
 
     let dist = "?";
-    const dm = title.match(/(\d{3,5})\s*M\b/i) || block.match(/(\d{3,5})\s*M\b/i);
+    const dm = block.match(/Distance:\s*(\d{3,5})\s*m/i);
     if (dm) dist = dm[1] + "m";
 
     const runners = [];
-    const body = block.replace(/\s+/g, " ");
-    const runnerRe =
-      /(?:^|\s)(\d{1,2})\s+(?:[0-9xX\/-]{2,7}\s+)?([A-Z][A-Z'’\.\-]+(?:\s+[A-Z'’\.\-]+){0,4})(?=\s+\d{1,2}\s|\s+[A-Z]{1,3}\s|\s+\d{2,3}\s)/g;
-    let rm;
-    const seen = new Set();
-    while ((rm = runnerRe.exec(body)) !== null) {
-      const no = parseInt(rm[1], 10);
-      const name = rm[2].replace(/\s+/g, " ").trim();
-      if (no >= 1 && no <= 24 && name.length >= 2 && !seen.has(no) &&
-          !/^(WIN|PLA|NB|NO|HORSE|JOCKEY|TRAINER|BARRIER|RATING|WEIGHT|TIME|PRIZE|MONEY|RACE|TURF|TRACK|FROM|CLASS|DISTANCE)$/.test(name)) {
-        runners.push({ no, name });
-        seen.add(no);
+    const tabIdx = block.search(/Tab\s+Form\s+Name\s+WT\s+BP/i);
+    if (tabIdx !== -1) {
+      const tableText = block.slice(tabIdx);
+      const rowRe = /(?:^|\s)(\d{1,2})\s+([A-Z][A-Z'.\-]*(?:\s+[A-Z'.\-]+)*?)\s+(\d{2}(?:\.\d)?)\s+(\d{1,2})\s+/g;
+      let rm;
+      const seen = new Set();
+      while ((rm = rowRe.exec(tableText)) !== null) {
+        const no = parseInt(rm[1], 10);
+        const name = rm[2].replace(/\s+/g, " ").trim();
+        const wt = rm[3];
+        if (no >= 1 && no <= 24 && !seen.has(no) && name.length >= 2 &&
+            !/^(TAB|FORM|NAME|WT|BP|JOCKEY|TRAINER|AGE|SEX|BREED|RATING|STATS|PRIZE|MONEY|DISTANCE|CLASS|KRW|KOR|SAND|TURF)$/.test(name)) {
+          runners.push({ no, name, wt });
+          seen.add(no);
+        }
       }
     }
     runners.sort((a, b) => a.no - b.no);
@@ -144,10 +152,11 @@ module.exports = async (req, res) => {
       return;
     }
 
-   if (url.searchParams.get("dump")) {
+    if (url.searchParams.get("dump")) {
       res.status(200).json({ source, totalChars: fullText.length, dump: fullText.slice(0, 6000) });
       return;
     }
+
     let races = [];
     try {
       races = parseRaces(fullText);
@@ -166,11 +175,11 @@ module.exports = async (req, res) => {
     };
     if (wantRaw) {
       out.rawByRace = {};
-      const headerRe = /RACE\s*(\d+)\s*:[\s\S]*?(?=RACE\s*\d+\s*:|$)/gi;
+      const headerRe = /R(\d+)\s+\d{1,2}\s+\w+\s+\d{4}\s*\|[\s\S]*?(?=R\d+\s+\d{1,2}\s+\w+\s+\d{4}\s*\||$)/g;
       let mm;
       while ((mm = headerRe.exec(fullText)) !== null) {
-        const n = mm[0].match(/RACE\s*(\d+)/i)[1];
-        out.rawByRace[n] = mm[0].replace(/\s+/g, " ").trim().slice(0, 1500);
+        const n = mm[0].match(/R(\d+)/)[1];
+        out.rawByRace[n] = mm[0].replace(/\s+/g, " ").trim().slice(0, 1200);
       }
     }
     res.status(200).json(out);
