@@ -11,6 +11,11 @@
 // so the bet slip can be keyed to it with ZERO manual translation. This retires
 // the separate /api/cardmap endpoint and the unpdf PDF parsing entirely.
 //
+// Ranking philosophy unchanged (journal lesson 22/06): external analysis +
+// genuine class spread are the diveability signal; prize money / raw field are
+// hygiene. With the /All view we now also get WHOLE-CARD field depth + class
+// spread instead of just Race 1.
+//
 // Query params:
 //   ?list=1          return just the available dates
 //   ?date=DD/MM/YYYY pick a date (defaults to the first available)
@@ -47,6 +52,7 @@ function abs(href) {
 
 // Build the "/All" URL from a default ViewRaceCard URL or an id.
 function allUrl(cardUrl) {
+  // cardUrl may be .../ViewRaceCard/29263  or  .../ViewRaceCard.aspx?RaceEventCalendarID=29263
   const idM = cardUrl.match(/ViewRaceCard(?:\.aspx\?RaceEventCalendarID=|\/)(\d+)/i);
   if (!idM) return cardUrl;
   const id = idM[1];
@@ -69,12 +75,17 @@ function parseMeetingList(html) {
 }
 
 // Parse the /All page: every "RACE N:" header + its runner table.
+// Returns { races:[{raceNo,title,dist,coupon,fieldSize,runners:[{no,name}]}],
+//           coupon, hasGraded, hasHandicapSpread, maidenHeavy, raceCount,
+//           firstField }
 function parseAll(html) {
+  // strip scripts/styles so table regex stays clean & fast
   const clean = html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ");
 
   const races = [];
+  // A race starts at "RACE <n>:" and runs until the next "RACE <n>:" or end.
   const blockRe = /RACE\s+(\d+)\s*:\s*([\s\S]*?)(?=RACE\s+\d+\s*:|$)/gi;
   let m;
   let docCoupon = null;
@@ -82,6 +93,7 @@ function parseAll(html) {
     const raceNo = parseInt(m[1], 10);
     const block = m[2] || "";
 
+    // title = text up to the first tag or newline after the header
     const titleM = block.match(/^([^<\n]*)/);
     const title = (titleM ? titleM[1] : "").replace(/\s+/g, " ").trim().slice(0, 140);
 
@@ -89,10 +101,12 @@ function parseAll(html) {
     const dm = title.match(/(\d{3,5})\s*M\b/i);
     if (dm) dist = dm[1] + "m";
 
+    // coupon code for this meet (same across races; capture first seen)
     const cm = block.match(/Mark\s*["']?\s*(Code\s*\d+)/i);
     const coupon = cm ? cm[1].replace(/\s+/g, " ") : null;
     if (coupon && !docCoupon) docCoupon = coupon;
 
+    // runners: each <tr> whose first two cells are number + name
     const runners = [];
     const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
     let row;
@@ -107,12 +121,38 @@ function parseAll(html) {
     races.push({ raceNo, title, dist, coupon, fieldSize: runners.length, runners });
   }
 
+  // Per-race class detection so we can locate a feature ANYWHERE in the card,
+  // not just judge off Race 1. This is the fix for "major race buried deep".
+  const gradedRe = /\b(GROUP\s*[123]|GRADE\s*[123]|GR\.?\s*[123]|\bG[123]\b|LISTED|\bGR1\b|\bGR2\b|\bGR3\b|CLASSIC|DERBY|OAKS|GUINEAS|CUP\b|STAKES|PLATE\s+\(LR\)|FEATURE)/i;
+  const handicapRe = /\b(HANDICAP|HCP|BENCHMARK|BM\d|CLASS\s*\d|CL\d|RATING|RTG)\b/i;
+
+  races.forEach((r) => {
+    const t = r.title.toUpperCase();
+    r.graded = gradedRe.test(t);
+    r.handicap = handicapRe.test(t);
+    r.maiden = /\b(MDN|MAIDEN)\b/i.test(t);
+  });
+
+  const featureRaces = races
+    .filter((r) => r.graded)
+    .map((r) => ({ raceNo: r.raceNo, title: r.title, fieldSize: r.fieldSize }));
+
   const titlesJoined = races.map((r) => r.title).join(" ");
-  const hasGraded = /\b(GROUP\s*[123]|GRADE\s*[123]|GR\.?\s*[123]|LISTED|STAKES|G1|G2|G3)\b/i.test(titlesJoined);
-  const hasHandicapSpread = /\b(HANDICAP|HCP|BENCHMARK|BM\d|CLASS\s*\d|CL\d|MDN PLATE|PLATE)\b/i.test(titlesJoined);
-  const maidenCount = (titlesJoined.match(/MDN|MAIDEN/gi) || []).length;
-  const maidenHeavy = maidenCount >= Math.max(2, races.length * 0.4);
+  const hasGraded = featureRaces.length > 0;
+  const hasHandicapSpread = races.some((r) => r.handicap) ||
+    /\b(HANDICAP|HCP|BENCHMARK|BM\d|CLASS\s*\d|CL\d|MDN PLATE|PLATE)\b/i.test(titlesJoined);
+
+  const maidenCount = races.filter((r) => r.maiden).length;
+  const maidenHeavy = races.length > 0 && maidenCount >= Math.max(2, races.length * 0.5);
+
+  // Whole-card field depth, not just R1. avgField rewards a consistently
+  // competitive card; maxField catches a big-field feature deep in the meet.
+  const fields = races.map((r) => r.fieldSize).filter((n) => n > 0);
   const firstField = races.length ? races[0].fieldSize : 0;
+  const avgField = fields.length ? fields.reduce((a, b) => a + b, 0) / fields.length : 0;
+  const maxField = fields.length ? Math.max(...fields) : 0;
+  // how many races have a genuinely competitive field (8+)
+  const deepRaces = fields.filter((n) => n >= 8).length;
 
   return {
     races,
@@ -122,6 +162,10 @@ function parseAll(html) {
     hasHandicapSpread,
     maidenHeavy,
     firstField,
+    avgField: Math.round(avgField * 10) / 10,
+    maxField,
+    deepRaces,
+    featureRaces,
   };
 }
 
@@ -144,18 +188,43 @@ function findPdfs(html) {
 }
 
 function scoreMeet(s, pdfCount) {
-  const docScore = Math.min(pdfCount, 3) / 3 * 45;
-  const raceScore = Math.min(s.raceCount || 0, 12) / 12 * 25;
-  const f = typeof s.firstField === "number" ? s.firstField : 0;
-  const fieldScore = Math.min(f, 14) / 14 * 10;
-  let classScore = s.hasGraded ? 20 : s.hasHandicapSpread ? 12 : 4;
+  // External analysis availability stays the strongest single signal (journal
+  // 22/06: the mandatory external-opinion check is the core of the method).
+  const docScore = (Math.min(pdfCount, 3) / 3) * 40; // 0-40
+
+  // Class: a graded/feature race ANYWHERE in the card is the big prize. This is
+  // the fix for features buried deep (e.g. Irish Derby in R7) being missed.
+  let classScore;
+  if (s.hasGraded) classScore = 25;
+  else if (s.hasHandicapSpread) classScore = 14;
+  else classScore = 5;
   if (s.maidenHeavy) classScore = Math.max(4, classScore - 8);
-  const total = Math.round(docScore + raceScore + fieldScore + classScore);
+
+  // Field depth across the WHOLE card, not just R1.
+  // avgField (consistently competitive) + a nudge for many deep races.
+  const avg = typeof s.avgField === "number" ? s.avgField : 0;
+  const avgScore = (Math.min(avg, 12) / 12) * 20;             // 0-20
+  const deepScore = (Math.min(s.deepRaces || 0, 8) / 8) * 8;  // 0-8, depth bonus
+
+  // Race count = hygiene (more races, more chances), capped.
+  const raceScore = (Math.min(s.raceCount || 0, 12) / 12) * 7; // 0-7
+
+  const total = Math.round(docScore + classScore + avgScore + deepScore + raceScore);
+
   const bits = [];
   bits.push(pdfCount ? pdfCount + " analysis doc" + (pdfCount > 1 ? "s" : "") : "no analysis docs");
   bits.push(s.raceCount + " races");
-  bits.push("R1 field " + s.firstField);
-  bits.push(s.hasGraded ? "graded/listed present" : s.maidenHeavy ? "maiden-heavy" : s.hasHandicapSpread ? "handicap spread" : "low class signal");
+  bits.push("avg field " + (s.avgField || 0) + " (max " + (s.maxField || 0) + ")");
+  if (s.featureRaces && s.featureRaces.length) {
+    const fr = s.featureRaces.map((f) => "R" + f.raceNo).join(",");
+    bits.push("feature @ " + fr);
+  } else if (s.maidenHeavy) {
+    bits.push("maiden-heavy");
+  } else if (s.hasHandicapSpread) {
+    bits.push("handicap spread");
+  } else {
+    bits.push("low class signal");
+  }
   return { score: total, reason: bits.join(", ") };
 }
 
@@ -166,7 +235,7 @@ module.exports = async (req, res) => {
     const url = new URL(req.url, "http://localhost");
     const wantList = url.searchParams.get("list");
     const date = url.searchParams.get("date");
-    const wantMap = url.searchParams.get("map") !== "0";
+    const wantMap = url.searchParams.get("map") !== "0"; // default ON
 
     const listHtml = await getText(CARDS_URL, 8000);
     const meets = parseMeetingList(listHtml);
@@ -185,6 +254,7 @@ module.exports = async (req, res) => {
     const results = await Promise.all(
       todays.map(async (mt) => {
         try {
+          // Fetch the /All view: one fetch gives whole-card tables + PDFs.
           const html = await getText(allUrl(mt.url), 9000);
           const parsed = parseAll(html);
           const pdfs = findPdfs(html);
@@ -199,9 +269,14 @@ module.exports = async (req, res) => {
             coupon: parsed.coupon,
             races: parsed.raceCount,
             r1Field: parsed.firstField,
+            avgField: parsed.avgField,
+            maxField: parsed.maxField,
+            deepRaces: parsed.deepRaces,
+            featureRaces: parsed.featureRaces,
             pdfs,
             docCount: pdfCount,
           };
+          // Full race -> horse coupon map (the cardmap replacement).
           if (wantMap) {
             out.raceMap = parsed.races.map((r) => ({
               raceNo: r.raceNo,
