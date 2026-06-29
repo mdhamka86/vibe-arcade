@@ -2,6 +2,7 @@
   "name": "vibe-arcade",
   "private": true,
   "dependencies": {
-    "unpdf": "^0.12.1"
+    "unpdf": "^0.12.1",
+    "@vercel/blob": "^2.0.0"
   }
 }
