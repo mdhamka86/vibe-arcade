@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Touch Grass HKT</title>
+<meta name="description" content="A weekly head-to-head duel to get us off the sofa and into Phuket. Do the thing, snap the proof, bank the points, win the week." />
+<meta name="theme-color" content="#ff8a5c" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=Nunito:ital,wght@0,400;0,600;0,700;0,800;1,600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: #fff6ee; }
+  #root { min-height: 100vh; }
+  body { font-family: 'Nunito', system-ui, sans-serif; color: #4a3b33; }
+  .loading { color:#ff8a5c; font-family:'Quicksand',sans-serif; font-weight:700; text-align:center;
+    padding-top:44vh; font-size:15px; letter-spacing:.24em; text-transform:uppercase; }
+  .errbox { color:#c0492b; font-family:'Space Mono',monospace; font-size:12px; white-space:pre-wrap;
+    padding:20px; line-height:1.55; }
+  @keyframes tgFadeUp { from { opacity:0; transform:translateY(10px);} to {opacity:1; transform:none;} }
+  @keyframes tgPop { 0%{transform:scale(.6);opacity:0;} 60%{transform:scale(1.08);} 100%{transform:scale(1);opacity:1;} }
+  @keyframes tgFloat { 0%,100%{transform:translateY(0);} 50%{transform:translateY(-7px);} }
+  @keyframes tgShake { 0%,100%{transform:translateX(0);} 20%{transform:translateX(-7px);} 40%{transform:translateX(7px);} 60%{transform:translateX(-5px);} 80%{transform:translateX(5px);} }
+  ::selection { background: #ffd9c2; }
+</style>
+</head>
+<body>
+<div id="root"><div class="loading">Touching grass…</div></div>
+
+<script id="appsrc" type="text/plain">
+
+// ============================================================
+// TOUCH GRASS HKT — a weekly head-to-head scavenger duel for two.
+// Hammy (Spurs) vs Naddy (Arsenal), living in Ko Kaeo, Phuket.
+// Get off the sofa, do real island things, snap proof, bank points,
+// win the week. Rainy-season friendly: indoor-first challenges.
+//
+// Core loop: 25 shared tasks per week. First to claim a task locks it
+// and banks the points. Photo proof + Michael Oliver VAR appeals.
+// Midweek wildcard, daily double, throw-down dares. Scrapbook at week end.
+//
+// Scaffold pattern matches the established hammyLabs single-file React apps:
+// type="text/plain" source block, triple-CDN waterfall, in-browser Babel.
+// ============================================================
+
+// ---------- tiny helpers ----------
+const uid = () => Math.random().toString(36).slice(2, 9);
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+function pick(arr, seed) {
+  // deterministic pick when seed given, else random
+  if (seed == null) return arr[Math.floor(Math.random() * arr.length)];
+  let h = 0; const s = String(seed);
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return arr[h % arr.length];
+}
+
+// ---------- the two players ----------
+// Hammy is Spurs (a soft sky blue), Naddy is Arsenal (a warm red). Their club
+// allegiance drives their theme colour everywhere they appear.
+const PLAYERS = {
+  Hammy: { name: "Hammy", club: "Spurs",   colour: "#5b9bd5", chant: "COYS" },
+  Naddy: { name: "Naddy", club: "Arsenal", colour: "#e0577a", chant: "COYG" },
+};
+const PLAYER_IDS = ["Hammy", "Naddy"];
+function playerColour(id) { return (PLAYERS[id] && PLAYERS[id].colour) || "#9a8a72"; }
+
+// ---------- week maths ----------
+// The competition runs in Monday-to-Sunday weeks, seeded off the real date so
+// both phones see the identical week number and the identical dealt board.
+// Week 1 is anchored to the first Monday on/after the move-in (6 Jul 2026).
+const SEASON_ANCHOR = new Date("2026-07-06T00:00:00+07:00"); // a Monday
+function startOfWeek(d) {
+  const x = new Date(d);
+  const day = (x.getDay() + 6) % 7; // Mon=0 ... Sun=6
+  x.setHours(0, 0, 0, 0);
+  x.setDate(x.getDate() - day);
+  return x;
+}
+function weekNumber(now) {
+  const s = startOfWeek(now);
+  const diff = Math.floor((s - startOfWeek(SEASON_ANCHOR)) / (7 * 24 * 3600 * 1000));
+  return diff + 1; // 1-indexed
+}
+function dayOfWeek(now) { return (new Date(now).getDay() + 6) % 7; } // Mon=0
+
+
+// ============================================================
+// THEME TOKENS — coral & cream, warm tropical sunset.
+// ============================================================
+const T = {
+  cream:   "#fff6ee",   // page background, soft warm cream
+  card:    "#fffdfa",   // raised surfaces
+  coral:   "#ff8a5c",   // primary warm coral
+  coralDk: "#f06a3c",   // deeper coral for accents/pressed
+  peach:   "#ffd9c2",   // soft peach fill
+  sun:     "#ffc24d",   // sunny yellow pop
+  ink:     "#4a3b33",   // warm dark brown text
+  inkSoft: "#8a7568",   // muted brown text
+  line:    "#f0e0d4",   // hairline dividers
+  spurs:   "#5b9bd5",   // Hammy
+  arsenal: "#e0577a",   // Naddy
+  good:    "#3fae7a",   // success green
+};
+const FH = "'Quicksand', sans-serif";   // headings (rounded, friendly)
+const FB = "'Nunito', sans-serif";      // body (rounded workhorse)
+const FM = "'Space Mono', monospace";   // mono accents (countdowns, labels)
+
+// ============================================================
+// LAUNCH — the game goes live Monday 6 Jul 2026, 00:00 Phuket time.
+// Before then, everyone lands on the teaser. Hammy's password is the skeleton
+// key that jumps straight past it for testing.
+// ============================================================
+const LAUNCH = new Date("2026-07-06T00:00:00+07:00");
+function msUntilLaunch(now) { return LAUNCH.getTime() - new Date(now).getTime(); }
+function launched(now) { return msUntilLaunch(now) <= 0; }
+
+// ---------- passwords (polite lock, not Fort Knox) ----------
+// "hammy"    -> full access (test everything, even pre-launch)
+// "bablydoo" -> teaser access (Naddy: curiosity preserved until Monday)
+function checkPassword(raw) {
+  const p = String(raw || "").trim().toLowerCase();
+  if (p === "hammy") return "full";
+  if (p === "bablydoo") return "teaser";
+  return null;
+}
+
+// Cheeky rotating rejections for a wrong word. Warm, teasing, never cold.
+const WRONG_WORDS = [
+  "Nope. But you typed that with real confidence, respect.",
+  "Not it. The door remains smugly shut.",
+  "Wrong-o. The bouncer folds his arms.",
+  "That's a no from me, and I'm a very polite no.",
+  "Incorrect. Have you tried being married to the developer?",
+  "Nuh-uh. Close, in the way that Reading is close to the Premier League.",
+  "Denied. Michael Oliver has reviewed it. Still denied.",
+  "That's not the word, but I admire the audacity.",
+  "No dice. The secret word is feeling shy about you specifically.",
+  "Wrong. Somewhere, a cat judged you for that attempt.",
+];
+
+// Little persistence so nobody re-types the word every open (device-only,
+// won't persist inside the Claude preview, only on the live site).
+const GATE_KEY = "tg_gate_v1";
+function loadGate() { try { return localStorage.getItem(GATE_KEY); } catch (e) { return null; } }
+function saveGate(level) { try { localStorage.setItem(GATE_KEY, level); } catch (e) {} }
+function clearGate() { try { localStorage.removeItem(GATE_KEY); } catch (e) {} }
+
+
+// ============================================================
+// REACT — hooks + tiny shared UI atoms
+// ============================================================
+// (useState / useEffect / useRef are provided as globals by the boot loader)
+
+// A soft rounded button that presses in slightly. Reused everywhere.
+function Btn({ onClick, children, style, kind }) {
+  const [down, setDown] = useState(false);
+  const base = {
+    fontFamily: FH, fontWeight: 700, fontSize: 15, border: "none",
+    borderRadius: 16, padding: "13px 20px", cursor: "pointer",
+    transition: "transform .08s ease, filter .15s ease",
+    transform: down ? "scale(.96)" : "scale(1)",
+    background: kind === "ghost" ? "transparent" : T.coral,
+    color: kind === "ghost" ? T.inkSoft : "#fff",
+    boxShadow: kind === "ghost" ? "none" : "0 6px 18px rgba(240,106,60,.32)",
+  };
+  return (
+    <button onClick={onClick}
+      onPointerDown={() => setDown(true)}
+      onPointerUp={() => setDown(false)}
+      onPointerLeave={() => setDown(false)}
+      style={{ ...base, ...style }}>
+      {children}
+    </button>
+  );
+}
+
+// The little sun/leaf wordmark lockup, used on gate + teaser.
+function Wordmark({ size }) {
+  const s = size || 1;
+  return (
+    <div style={{ textAlign: "center", userSelect: "none" }}>
+      <div style={{ fontSize: 46 * s, lineHeight: 1, animation: "tgFloat 4s ease-in-out infinite" }}>🌴</div>
+      <div style={{
+        fontFamily: FH, fontWeight: 700, fontSize: 30 * s, color: T.ink,
+        letterSpacing: "-.01em", marginTop: 8 * s,
+      }}>
+        Touch Grass <span style={{ color: T.coral }}>HKT</span>
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// THE PASSWORD GATE — mysterious & minimal. Just the wordmark and a prompt.
+// ============================================================
+function Gate({ onPass }) {
+  const [val, setVal] = useState("");
+  const [msg, setMsg] = useState("");
+  const [shake, setShake] = useState(false);
+  const [wrongIdx, setWrongIdx] = useState(0);
+
+  function submit() {
+    const level = checkPassword(val);
+    if (level) {
+      saveGate(level);
+      onPass(level);
+      return;
+    }
+    // wrong: cheeky message + a little shake, cycle through the bank
+    setMsg(WRONG_WORDS[wrongIdx % WRONG_WORDS.length]);
+    setWrongIdx(wrongIdx + 1);
+    setShake(true);
+    setVal("");
+    setTimeout(() => setShake(false), 500);
+  }
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", padding: "0 28px",
+      background: "linear-gradient(165deg, #fff6ee 0%, #ffe9db 55%, #ffdcc8 100%)",
+    }}>
+      <div style={{ animation: "tgFadeUp .7s ease both", transform: shake ? undefined : "none" }}>
+        <div style={{ animation: shake ? "tgShake .5s" : "none" }}>
+          <Wordmark size={1} />
+        </div>
+      </div>
+
+      <div style={{
+        marginTop: 40, width: "100%", maxWidth: 320,
+        animation: "tgFadeUp .7s ease .15s both",
+      }}>
+        <div style={{
+          fontFamily: FM, fontSize: 10.5, letterSpacing: ".16em",
+          textTransform: "uppercase", color: T.inkSoft, textAlign: "center",
+          marginBottom: 14,
+        }}>
+          Say the secret word
+        </div>
+        <input
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+          placeholder="……………"
+          autoCapitalize="none" autoCorrect="off" spellCheck="false"
+          style={{
+            width: "100%", textAlign: "center", fontFamily: FB, fontWeight: 700,
+            fontSize: 18, color: T.ink, background: T.card,
+            border: "2px solid " + T.peach, borderRadius: 16,
+            padding: "14px 16px", outline: "none", letterSpacing: ".05em",
+          }}
+        />
+        <div style={{ marginTop: 14, display: "flex", justifyContent: "center" }}>
+          <Btn onClick={submit} style={{ minWidth: 150 }}>Enter</Btn>
+        </div>
+
+        {msg && (
+          <div style={{
+            marginTop: 18, fontFamily: FB, fontSize: 13.5, fontStyle: "italic",
+            color: T.coralDk, textAlign: "center", lineHeight: 1.5,
+            animation: "tgFadeUp .4s ease both",
+          }}>
+            {msg}
+          </div>
+        )}
+      </div>
+
+      <div style={{
+        position: "fixed", bottom: 22, fontFamily: FM, fontSize: 9,
+        letterSpacing: ".14em", color: "#d8b8a4", textTransform: "uppercase",
+      }}>
+        hammyLabs · HKT
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// THE TEASER — what Naddy sees until Monday. A live countdown + curious hints,
+// enough to intrigue, never enough to spoil.
+// ============================================================
+const TEASE_HINTS = [
+  "Something is coming to get us off this sofa.",
+  "It involves you, me, and the whole island.",
+  "There will be points. There will be a winner.",
+  "Arsenal vs Spurs, but the pitch is Phuket.",
+  "A very particular referee has been appointed.",
+  "Your favourite centre-half has a second job now.",
+  "Bring your appetite and your competitive streak.",
+];
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+function Teaser({ now, isFull, onReset }) {
+  const [tick, setTick] = useState(0);
+  const [hintIdx, setHintIdx] = useState(0);
+  const [taps, setTaps] = useState(0);
+
+  // live countdown, re-render every second
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  // rotate the hints every 3.2s
+  useEffect(() => {
+    const t = setInterval(() => setHintIdx((i) => (i + 1) % TEASE_HINTS.length), 3200);
+    return () => clearInterval(t);
+  }, []);
+
+  const ms = Math.max(0, msUntilLaunch(Date.now()));
+  const days = Math.floor(ms / 86400000);
+  const hrs = Math.floor((ms % 86400000) / 3600000);
+  const mins = Math.floor((ms % 3600000) / 60000);
+  const secs = Math.floor((ms % 60000) / 1000);
+
+  // easter egg: tap the palm 7 times for a cheeky cat cameo
+  const catEgg = taps >= 7;
+
+  const Unit = ({ v, label }) => (
+    <div style={{ textAlign: "center", minWidth: 58 }}>
+      <div style={{
+        fontFamily: FH, fontWeight: 700, fontSize: 38, color: T.ink,
+        lineHeight: 1, fontVariantNumeric: "tabular-nums",
+      }}>{pad2(v)}</div>
+      <div style={{
+        fontFamily: FM, fontSize: 9, letterSpacing: ".14em", color: T.inkSoft,
+        textTransform: "uppercase", marginTop: 6,
+      }}>{label}</div>
+    </div>
+  );
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", padding: "48px 28px",
+      background: "linear-gradient(165deg, #fff6ee 0%, #ffe9db 55%, #ffdcc8 100%)",
+      textAlign: "center",
+    }}>
+      <div onClick={() => setTaps((t) => t + 1)} style={{ cursor: "pointer" }}>
+        <Wordmark size={1.05} />
+      </div>
+
+      {catEgg && (
+        <div style={{ fontSize: 30, marginTop: 10, animation: "tgPop .5s ease both" }}>
+          🐱 🐱 🐱 🐱 🐱
+          <div style={{ fontFamily: FB, fontSize: 11, color: T.inkSoft, fontStyle: "italic", marginTop: 4 }}>
+            the five have approved this teaser
+          </div>
+        </div>
+      )}
+
+      <div style={{
+        marginTop: 34, fontFamily: FM, fontSize: 10.5, letterSpacing: ".18em",
+        textTransform: "uppercase", color: T.coralDk,
+      }}>
+        Kick-off · Monday 6 July
+      </div>
+
+      <div style={{
+        marginTop: 20, display: "flex", gap: 8, alignItems: "flex-start",
+        animation: "tgFadeUp .7s ease both",
+      }}>
+        <Unit v={days} label="days" />
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 30, color: T.peach }}>:</div>
+        <Unit v={hrs} label="hrs" />
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 30, color: T.peach }}>:</div>
+        <Unit v={mins} label="min" />
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 30, color: T.peach }}>:</div>
+        <Unit v={secs} label="sec" />
+      </div>
+
+      <div style={{
+        marginTop: 40, maxWidth: 300, minHeight: 44,
+        fontFamily: FB, fontSize: 16, fontWeight: 600, color: T.ink,
+        lineHeight: 1.5,
+      }}>
+        <span key={hintIdx} style={{ display: "inline-block", animation: "tgFadeUp .6s ease both" }}>
+          {TEASE_HINTS[hintIdx]}
+        </span>
+      </div>
+
+      {isFull && (
+        <div style={{ marginTop: 44, animation: "tgFadeUp .7s ease .3s both" }}>
+          <div style={{ fontFamily: FM, fontSize: 9.5, color: T.inkSoft, letterSpacing: ".1em", marginBottom: 10 }}>
+            [ DEV: you're logged in as Hammy ]
+          </div>
+          <Btn onClick={onReset} kind="ghost" style={{ fontSize: 13 }}>
+            ← lock again (test the gate)
+          </Btn>
+        </div>
+      )}
+
+      <div style={{
+        position: "fixed", bottom: 22, fontFamily: FM, fontSize: 9,
+        letterSpacing: ".14em", color: "#d8b8a4", textTransform: "uppercase",
+      }}>
+        made with love · for lil naddy
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// APP ROOT — routes between gate, teaser, and (soon) the game.
+// ============================================================
+function App() {
+  const [gate, setGate] = useState(loadGate());   // null | 'teaser' | 'full'
+  const now = Date.now();
+
+  if (!gate) return <Gate onPass={setGate} />;
+
+  // Before Monday: everyone sees the teaser. Hammy ('full') sees it too, with
+  // dev controls, until we wire the game in the next phase.
+  // After Monday: 'full' and 'teaser' will both flow into the game (next phase).
+  const isFull = gate === "full";
+
+  function relock() { clearGate(); setGate(null); }
+
+  // For now, both levels land on the teaser (the game is the next build phase).
+  // Hammy gets the dev affordances via isFull.
+  return <Teaser now={now} isFull={isFull} onReset={relock} />;
+}
+// (the boot loader below appends the ReactDOM mount for <App />)
+</script>
+
+<script>
+(function () {
+  var ROOT = document.getElementById("root");
+  function showError(msg) {
+    ROOT.innerHTML = '<div class="errbox"><b>Something went wrong loading Touch Grass HKT.</b>\n\n' +
+      String(msg).replace(/</g, "&lt;") +
+      '\n\nIf you are viewing this inside an app preview, open the real website link in your browser instead.</div>';
+  }
+  function loadScript(urls, done, fail) {
+    var i = 0;
+    function tryNext() {
+      if (i >= urls.length) { fail(); return; }
+      var s = document.createElement("script");
+      s.src = urls[i++]; s.crossOrigin = "anonymous";
+      s.onload = function () { done(); };
+      s.onerror = function () { tryNext(); };
+      document.head.appendChild(s);
+    }
+    tryNext();
+  }
+  var REACT = ["https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js","https://unpkg.com/react@18.3.1/umd/react.production.min.js","https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"];
+  var REACTDOM = ["https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js","https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js","https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"];
+  var BABEL = ["https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js","https://unpkg.com/@babel/standalone@7.25.6/babel.min.js","https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"];
+  function boot() {
+    try {
+      if (!window.React || !window.ReactDOM) { showError("React did not load from any CDN."); return; }
+      if (!window.Babel) { showError("Babel did not load."); return; }
+      var hooks = "var useState=React.useState,useMemo=React.useMemo,useEffect=React.useEffect,useRef=React.useRef;\n";
+      var mount = "\nReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));";
+      var src = document.getElementById("appsrc").textContent;
+      var compiled = Babel.transform(hooks + src + mount, { presets: ["react"] }).code;
+      (0, eval)(compiled);
+    } catch (err) { showError((err && err.stack) || err); }
+  }
+  loadScript(REACT, function () {
+    loadScript(REACTDOM, function () {
+      loadScript(BABEL, boot, function () { showError("Could not load Babel."); });
+    }, function () { showError("Could not load ReactDOM."); });
+  }, function () { showError("Could not load React."); });
+})();
+</script>
+</body>
+</html>
