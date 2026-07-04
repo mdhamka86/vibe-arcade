@@ -1,0 +1,1414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Touch Grass HKT</title>
+<meta name="description" content="A weekly head-to-head duel to get us off the sofa and into Phuket. Do the thing, snap the proof, bank the points, win the week." />
+<meta name="theme-color" content="#ff8a5c" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=Nunito:ital,wght@0,400;0,600;0,700;0,800;1,600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: #fff6ee; }
+  #root { min-height: 100vh; }
+  body { font-family: 'Nunito', system-ui, sans-serif; color: #4a3b33; }
+  .loading { color:#ff8a5c; font-family:'Quicksand',sans-serif; font-weight:700; text-align:center;
+    padding-top:44vh; font-size:15px; letter-spacing:.24em; text-transform:uppercase; }
+  .errbox { color:#c0492b; font-family:'Space Mono',monospace; font-size:12px; white-space:pre-wrap;
+    padding:20px; line-height:1.55; }
+  @keyframes tgFadeUp { from { opacity:0; transform:translateY(10px);} to {opacity:1; transform:none;} }
+  @keyframes tgPop { 0%{transform:scale(.6);opacity:0;} 60%{transform:scale(1.08);} 100%{transform:scale(1);opacity:1;} }
+  @keyframes tgFloat { 0%,100%{transform:translateY(0);} 50%{transform:translateY(-7px);} }
+  @keyframes tgShake { 0%,100%{transform:translateX(0);} 20%{transform:translateX(-7px);} 40%{transform:translateX(7px);} 60%{transform:translateX(-5px);} 80%{transform:translateX(5px);} }
+  ::selection { background: #ffd9c2; }
+</style>
+</head>
+<body>
+<div id="root"><div class="loading">Touching grass…</div></div>
+
+<script id="appsrc" type="text/plain">
+
+// ============================================================
+// TOUCH GRASS HKT — a weekly head-to-head scavenger duel for two.
+// Hammy (Spurs) vs Naddy (Arsenal), living in Ko Kaeo, Phuket.
+// Get off the sofa, do real island things, snap proof, bank points,
+// win the week. Rainy-season friendly: indoor-first challenges.
+//
+// Core loop: 25 shared tasks per week. First to claim a task locks it
+// and banks the points. Photo proof + Michael Oliver VAR appeals.
+// Midweek wildcard, daily double, throw-down dares. Scrapbook at week end.
+//
+// Scaffold pattern matches the established hammyLabs single-file React apps:
+// type="text/plain" source block, triple-CDN waterfall, in-browser Babel.
+// ============================================================
+
+// ---------- tiny helpers ----------
+const uid = () => Math.random().toString(36).slice(2, 9);
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+function pick(arr, seed) {
+  // deterministic pick when seed given, else random
+  if (seed == null) return arr[Math.floor(Math.random() * arr.length)];
+  let h = 0; const s = String(seed);
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return arr[h % arr.length];
+}
+
+// ---------- the two players ----------
+// Hammy is Spurs (a soft sky blue), Naddy is Arsenal (a warm red). Their club
+// allegiance drives their theme colour everywhere they appear.
+const PLAYERS = {
+  Hammy: { name: "Hammy", club: "Spurs",   colour: "#5b9bd5", chant: "COYS" },
+  Naddy: { name: "Naddy", club: "Arsenal", colour: "#e0577a", chant: "COYG" },
+};
+const PLAYER_IDS = ["Hammy", "Naddy"];
+function playerColour(id) { return (PLAYERS[id] && PLAYERS[id].colour) || "#9a8a72"; }
+
+// ---------- week maths ----------
+// The competition runs in Monday-to-Sunday weeks, seeded off the real date so
+// both phones see the identical week number and the identical dealt board.
+// Week 1 is anchored to the first Monday on/after the move-in (6 Jul 2026).
+const SEASON_ANCHOR = new Date("2026-07-06T00:00:00+07:00"); // a Monday
+function startOfWeek(d) {
+  const x = new Date(d);
+  const day = (x.getDay() + 6) % 7; // Mon=0 ... Sun=6
+  x.setHours(0, 0, 0, 0);
+  x.setDate(x.getDate() - day);
+  return x;
+}
+function weekNumber(now) {
+  const s = startOfWeek(now);
+  const diff = Math.floor((s - startOfWeek(SEASON_ANCHOR)) / (7 * 24 * 3600 * 1000));
+  return diff + 1; // 1-indexed
+}
+function dayOfWeek(now) { return (new Date(now).getDay() + 6) % 7; } // Mon=0
+
+
+// ============================================================
+// WEEKLY DEALER + SCORING ENGINE
+// The dealer deterministically shuffles the bank by week number so both phones
+// see the identical 25-task board. The scoring engine reads the claims log and
+// produces per-player totals, honouring daily-double multipliers and the VAR
+// penalty transfers from failed appeals.
+// ============================================================
+
+const TASKS_PER_WEEK = 25;
+const APPEALS_PER_WEEK = 2;
+
+// A tiny seeded shuffle (Fisher-Yates driven by a seeded PRNG) so the deal is
+// deterministic for a given week but still feels well mixed.
+function seededRng(seed) {
+  let h = 2166136261 >>> 0;
+  const s = String(seed);
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return function () {
+    h += 0x6D2B79F5; let t = h;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function seededShuffle(arr, seed) {
+  const a = arr.slice();
+  const rng = seededRng(seed);
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a;
+}
+
+// Deal this week's board: a deterministic 25 from the bank, seeded by week.
+function dealWeek(wk) {
+  const dealt = seededShuffle(CHALLENGE_BANK, "wk" + wk).slice(0, TASKS_PER_WEEK);
+  // Which day (Mon=0..Sun=6) each task's daily-double is hot is seeded too, so
+  // one task per day carries a secret x2 when claimed on its day.
+  return dealt;
+}
+
+// The daily-double: for a given week, exactly one dealt task per day is secretly
+// worth double IF claimed on that day. Deterministic, revealed only on claim.
+function doubleTaskForDay(wk, day, dealt) {
+  const rng = seededRng("dd" + wk + "-" + day);
+  return dealt[Math.floor(rng() * dealt.length)].id;
+}
+function isDoubleClaim(wk, dealt, task) {
+  if (!task || !task.claimedAt) return false;
+  const day = dayOfWeek(task.claimedAt);
+  return doubleTaskForDay(wk, day, dealt) === task.id;
+}
+
+// The midweek wildcard: a big-bonus bank task that only appears from Thursday
+// (day index 3) onward, seeded so both phones agree, worth a juicy 40.
+const WILDCARD_PTS = 40;
+function wildcardForWeek(wk) {
+  const rng = seededRng("wc" + wk);
+  const c = CHALLENGE_BANK[Math.floor(rng() * CHALLENGE_BANK.length)];
+  return { ...c, id: "wildcard_" + c.id, pts: WILDCARD_PTS, cat: "Wildcard", wildcard: true,
+    title: "WILDCARD: " + c.title };
+}
+function wildcardLive(now) { return dayOfWeek(now) >= 3; } // Thursday onward
+
+// Compute per-player scores from the claims map for a given week's board.
+// claims: { [taskId]: { by, claimedAt, photo, caption, taunt, appeal } }
+// appeal: { by, result: 'overturned'|'upheld'|'pending', judged }
+function scoreWeek(wk, dealt, claims) {
+  const totals = { Hammy: 0, Naddy: 0 };
+  const byCat = {};
+  const allTasks = dealt.concat([wildcardForWeek(wk)]);
+  allTasks.forEach(task => {
+    const c = claims[task.id];
+    if (!c || !c.by) return;
+    // A successfully overturned claim scores nobody the base points; the
+    // penalty transfer is handled below.
+    if (c.appeal && c.appeal.result === "overturned") return;
+    let pts = task.pts;
+    if (isDoubleClaim(wk, dealt, c)) pts *= 2;
+    totals[c.by] += pts;
+    byCat[task.cat] = byCat[task.cat] || { Hammy: 0, Naddy: 0 };
+    byCat[task.cat][c.by] += pts;
+  });
+  // VAR penalty transfers: a FAILED appeal (upheld = claim stood) costs the
+  // appealer the task's value and hands it to the wrongly-accused claimant.
+  allTasks.forEach(task => {
+    const c = claims[task.id];
+    if (!c || !c.appeal) return;
+    const ap = c.appeal;
+    if (ap.result === "upheld" && ap.by) {
+      const accused = c.by;
+      const appealer = ap.by;
+      totals[appealer] -= task.pts;
+      if (accused) totals[accused] += task.pts;
+    }
+  });
+  return { totals, byCat };
+}
+
+
+// ============================================================
+// THE CHALLENGE LIBRARY (v3) — quick-win, Ko Kaeo edition.
+// Built spot-by-spot: each named place is verified on the map, its hours
+// checked, and a local tip (from reviews) woven into the blurb. Blurbs kept
+// short and clean. Home base: Habitown, Ko Kaeo (hot; floods fast; stay close).
+//
+// tier:  "quick" (tiny, near-home) | "spot" (first-to-snap race) | "big" (weekly centrepiece)
+// pillar: body | mind | soul   (light spread, never exertion)
+// lean:  "driver" | "social"   (optional, balanced)  team: true (rare, both score)
+// Some tasks are pattern-based (any 7-Eleven, any massage shopfront) and need
+// no single venue. Named ones carry `place`, `hours`, and often `maps`.
+// ============================================================
+
+const CHALLENGE_BANK = [
+  // ---------------- NAMED near-home spots (verified) ----------------
+  { id: "v_damoreno", tier: "quick", pillar: "soul", cat: "Local eats", pts: 10,
+    place: "Pizzeria Da Moreno", area: "Ko Kaeo (by the BIS / Rich Villas)",
+    hours: "Tue-Sun 3-10pm, closed Mon",
+    title: "Da Moreno wood-fired pizza",
+    blurb: "The proper Italian pizzeria right by yours. Get a wood-fired pizza, and save room for the tiramisu (the reviews won't shut up about it). Closed Mondays." },
+
+  { id: "v_boardwalk", tier: "quick", pillar: "soul", cat: "Local eats", pts: 10,
+    place: "Boardwalk Bistro and Bar", area: "Boat Lagoon boardwalk",
+    title: "Boardwalk marina dinner",
+    blurb: "A cracking little bistro right on the Boat Lagoon boardwalk, minutes away. Order the seabass or the prawn gambas, the reviews swear by both. Ice-cold beers, kind owner." },
+
+  { id: "v_lighthouse", tier: "quick", pillar: "soul", cat: "Local life", pts: 15,
+    place: "Lighthouse Market", area: "Boat Lagoon boardwalk",
+    hours: "Last weekend of the month, 4.30-8pm",
+    title: "Lighthouse Market mooch",
+    blurb: "A stylish little fair on the marina boardwalk: stones, wines, street snacks, souvenirs. Last weekend of the month only, in the cool of the evening. Grab a bite, snap the stalls." },
+
+  // ---------------- PATTERN-BASED local dish quests (any good local stall) ----------------
+  // Phuket signatures the locals themselves flag as must-tries. No single venue,
+  // so always safe; the blurb carries the local tip.
+  { id: "q_meehokkien", tier: "quick", pillar: "mind", cat: "Local eats", pts: 10,
+    title: "Mee Hokkien hunt",
+    blurb: "Track down Phuket-style Hokkien noodles, the island's own dish. Not the Singapore one. Any busy local noodle shop. Snap the bowl, then demolish it." },
+  { id: "q_moohong", tier: "quick", pillar: "mind", cat: "Local eats", pts: 10,
+    title: "Moo Hong, the local hero",
+    blurb: "Phuket's braised pork belly, soft and sweet-savoury. A proper southern comfort dish. Find it, order it, photograph it before it vanishes." },
+  { id: "q_otao", tier: "quick", pillar: "mind", cat: "Local eats", pts: 10,
+    title: "O-Tao oyster omelet",
+    blurb: "A Phuket street classic: crispy oyster-and-taro omelet. Messy, moreish, very local. Snap it sizzling at the stall." },
+  { id: "q_somtam", tier: "quick", pillar: "body", cat: "Local eats", pts: 10,
+    title: "Som Tam, mai pet edition",
+    blurb: "Papaya salad from a cart with a mortar and pestle (that's the fresh sign). Say 'mai pet' unless you fancy weeping. Snap the pound-up in action." },
+  { id: "q_roti", tier: "quick", pillar: "body", cat: "Snack quest", pts: 10,
+    title: "Street roti, twirled fresh",
+    blurb: "Hot roti with banana and condensed milk from a cart. Watch them slap and twirl the dough. Napkin count in the photo is a flex." },
+
+  // ---------------- PATTERN-BASED convenience & treat quests ----------------
+  { id: "q_7eleven", tier: "quick", pillar: "body", cat: "Snack quest", pts: 10,
+    title: "New 7-Eleven mystery",
+    blurb: "Grab something off the 7-Eleven shelf you've never tried. Toastie, weird jelly, an unreadable drink. Snap it before the first bite. It's ten steps away." },
+  { id: "q_dqflip", tier: "quick", pillar: "body", cat: "Snack quest", pts: 10,
+    place: "Dairy Queen, Central Phuket", area: "Floresta / Festival (by the food court)",
+    title: "DQ Blizzard flip",
+    blurb: "Grab a Blizzard at the Central DQ and catch the staff's upside-down flip (they turn it over to prove it won't drop). Film the flip, that's the shot." },
+  { id: "q_russianstore", tier: "quick", pillar: "mind", cat: "Snack quest", pts: 10,
+    title: "Russian store roulette",
+    blurb: "Into the Russian store behind yours. Buy one baffling item you can't identify. Snap it, try it, report back. Adventure for 40 baht." },
+  { id: "q_chayen", tier: "quick", pillar: "body", cat: "Snack quest", pts: 10,
+    title: "Cha yen on the go",
+    blurb: "A proper Thai iced tea, that violently orange sweet one, from a cart or 7-Eleven. Snap the colour against the grey monsoon sky." },
+  { id: "q_scaryfruit", tier: "quick", pillar: "body", cat: "Snack quest", pts: 10,
+    title: "Scary fruit challenge",
+    blurb: "Buy a market fruit that looks slightly alarming. Rambutan, mangosteen, salak, custard apple. Crack it open, eat it. Bonus if you've no idea how." },
+  { id: "q_snackswap", tier: "quick", pillar: "soul", cat: "Snack quest", pts: 10, team: true,
+    title: "Blind snack swap",
+    blurb: "Each secretly buys the other a random snack. Swap unseen, both try. Snap the moment of truth on their face. Both score." },
+
+  // ---------------- PATTERN-BASED tiny local-life snaps ----------------
+  { id: "q_wai", tier: "quick", pillar: "soul", cat: "Local life", pts: 10, lean: "social",
+    title: "Ronald's wai",
+    blurb: "Thai McDonald's has Ronald doing the traditional wai instead of a wave. Find one, snap the greeting. A lovely only-here photo." },
+  { id: "q_songthaew", tier: "quick", pillar: "mind", cat: "Local life", pts: 10,
+    title: "Rainbow songthaew",
+    blurb: "Snap one of Phuket's old wooden songthaew buses in its clashing colours. Bonus for an especially battered, beloved-looking one." },
+  { id: "q_spirithouse", tier: "quick", pillar: "soul", cat: "Local life", pts: 10,
+    title: "Spirit house spotting",
+    blurb: "Snap a pretty spirit house with fresh offerings. A quiet, lovely detail of daily Thai life that most people walk right past." },
+  { id: "q_motorbike", tier: "quick", pillar: "mind", cat: "Local life", pts: 10,
+    title: "Impossible motorbike cargo",
+    blurb: "Photograph a gloriously overloaded Thai motorbike. A family of five, a fridge, forty egg trays, a dog in a basket. The national sport." },
+  { id: "q_streetcat", tier: "quick", pillar: "soul", cat: "Local life", pts: 10,
+    title: "New street cat, who dis",
+    blurb: "Snap a Phuket street cat that isn't one of your five. Do NOT bring it home. The five would stage a coup." },
+
+  // ---------------- BIG: verified weekly centrepieces ----------------
+  { id: "big_kruvit", tier: "big", pillar: "soul", cat: "Big one", pts: 30,
+    place: "Kruvit Raft (Ban Laem Hin)", area: "Ko Maphrao, off Laem Hin Pier (east coast, Ko Kaeo)",
+    hours: "10am-10pm daily. Free 5-min longtail from Laem Hin Pier. Book direct: 086 687 0892",
+    link: "https://kruvitraft.com",
+    title: "Dinner on the floating raft",
+    blurb: "The week's big one. A Michelin-listed floating seafood raft on your own east coast, reached by a free longtail hop. Go for sunset. Order the grouper soup and the salt-and-chilli tiger prawns. Fish comes straight from the nets under your feet." },
+
+  { id: "big_laemhin", tier: "big", pillar: "soul", cat: "Big one", pts: 25,
+    place: "Laem Hin Seafood", area: "Laem Hin jetty, Ko Kaeo (facing Coconut Island)",
+    hours: "10am-10pm daily. Ample parking. Book: 076 239 357",
+    title: "Seafood on the wooden terrace",
+    blurb: "A huge, rustic local seafood terrace out over the water, minutes from you on the east coast. Arrive around 6pm for the breezy, quiet, red-sky hour and grab a table on the pier. Fish is kept live in tanks, priced by weight." },
+
+  // ---------------- SPOT: first-to-snap sign scrambles (Central Phuket, verified) ----------------
+  // You're both at the mall together. First to whip out the app and snap the sign
+  // banks it. The other scrambles for the next one. Pure reaction speed. All these
+  // shops are confirmed at Central Phuket (Festival or Floresta wing).
+  { id: "sp_uniqlo", tier: "spot", pillar: "mind", cat: "Sign scramble", pts: 15,
+    place: "Uniqlo", area: "Central Festival, 1st floor",
+    title: "First to the Uniqlo sign",
+    blurb: "Both at Central. First to snap the Uniqlo shopfront banks it. Fastest thumb wins, the slow one scrambles for the next clue." },
+  { id: "sp_aquaria", tier: "spot", pillar: "mind", cat: "Sign scramble", pts: 15,
+    place: "Aquaria Phuket", area: "Central Floresta, basement",
+    title: "First to the Aquaria entrance",
+    blurb: "Race to snap the Aquaria aquarium entrance sign in Floresta. Big, blue, unmissable, which makes the quick-draw all the more cutthroat." },
+  { id: "sp_krispy", tier: "spot", pillar: "mind", cat: "Sign scramble", pts: 15,
+    place: "Krispy Kreme", area: "Central Phuket",
+    title: "First to the Krispy Kreme sign",
+    blurb: "First to snap the glowing Krispy Kreme sign claims it. Winner is honour-bound to buy the doughnuts. Those are the rules now." },
+  { id: "sp_starbucks", tier: "spot", pillar: "mind", cat: "Sign scramble", pts: 15,
+    place: "Starbucks", area: "Central Phuket",
+    title: "First to the Starbucks siren",
+    blurb: "The green siren is everywhere, so this is pure speed. First to snap it wins. No, the app on your home screen doesn't count." },
+  { id: "sp_trickeye", tier: "spot", pillar: "mind", cat: "Sign scramble", pts: 15,
+    place: "AR Trick Eye Museum", area: "Central Floresta",
+    title: "First to the Trick Eye sign",
+    blurb: "Snap the AR Trick Eye Museum entrance in Floresta before the other one does. Bank it, then maybe actually go in and be daft for the photos." },
+  { id: "sp_luxury", tier: "spot", pillar: "mind", cat: "Sign scramble", pts: 15,
+    place: "Any luxury flagship (LV, Gucci, etc.)", area: "Central Floresta, ground floor",
+    title: "First to a posh-brand flagship",
+    blurb: "Floresta's ground floor is all Gucci, Louis Vuitton, Prada. First to snap any luxury flagship sign wins. Window-gawping is free, thankfully." },
+
+];
+
+
+// ============================================================
+// THE WEEKLY BOARD — the heart of the game.
+// 25 challenges dealt per week, shown in closed groups by pillar (tap to open).
+// First to claim a task locks it: banks the points, captures photo + caption +
+// optional taunt. Team-up tasks score for both. Mobile-first: closed lists,
+// compact, emoji only for genuine wow.
+//
+// This phase builds the deal, the closed groups, and the claim-with-photo flow
+// (with optional Bluesky share). VAR appeals, wildcard, daily-double, dares
+// follow in their own phases.
+// ============================================================
+
+// ---------- per-week claim persistence (device-local) ----------
+// Stored under a per-week key so each week keeps its own board of claims.
+// Shape: { [taskId]: { by, at, photo, caption, taunt } }
+function claimsKey(wk) { return "tg_claims_wk" + wk; }
+function loadClaims(wk) {
+  try { return JSON.parse(localStorage.getItem(claimsKey(wk)) || "{}"); }
+  catch (e) { return {}; }
+}
+function saveClaims(wk, claims) {
+  try { localStorage.setItem(claimsKey(wk), JSON.stringify(claims)); } catch (e) {}
+}
+
+// ---------- deal this week's board, grouped by TIER ----------
+// The quick-win model: a pile of tiny near-home wins, a few sign-scramble races,
+// and one big weekly centrepiece. Grouped by tier for the closed-list display.
+const TIER_META = {
+  quick: { label: "Quick wins", sub: "little local things, knock 'em off", accent: "#ff8a5c" },
+  spot:  { label: "Sign scrambles", sub: "first to snap it wins", accent: "#5b9bd5" },
+  big:   { label: "The big one", sub: "this week's centrepiece", accent: "#e0577a" },
+};
+const TIER_ORDER = ["quick", "spot", "big"];
+
+// How many of each tier to deal per week.
+const DEAL_COUNTS = { quick: 10, spot: 3, big: 1 };
+
+// Deterministic weekly deal, drawn per-tier so the mix is always right.
+// Seeded by week number, so both phones agree on the identical board.
+function dealtBoard(wk) {
+  const byTier = { quick: [], spot: [], big: [] };
+  CHALLENGE_BANK.forEach((t) => { (byTier[t.tier] || byTier.quick).push(t); });
+
+  const groups = { quick: [], spot: [], big: [] };
+  TIER_ORDER.forEach((tier) => {
+    const pool = seededShuffle(byTier[tier], "board-" + tier + "-wk" + wk);
+    const want = DEAL_COUNTS[tier] || 0;
+    groups[tier] = pool.slice(0, Math.min(want, pool.length));
+  });
+  const dealt = TIER_ORDER.reduce((acc, tier) => acc.concat(groups[tier]), []);
+  return { dealt, groups };
+}
+
+// ---------- live score from claims (this phase: base points + team-ups) ----------
+function tallyScores(dealt, claims) {
+  const totals = { Hammy: 0, Naddy: 0 };
+  dealt.forEach((t) => {
+    const c = claims[t.id];
+    if (!c || !c.by) return;
+    if (t.team) { totals.Hammy += t.pts; totals.Naddy += t.pts; }
+    else { totals[c.by] = (totals[c.by] || 0) + t.pts; }
+  });
+  return totals;
+}
+
+
+// ---------- auto caption + taunt banks (choose auto, or write your own) ----------
+function autoCaption(task, who) {
+  const opts = [
+    `Just claimed "${task.title}" for the ${PLAYERS[who].club} cause. ${task.pts} points, thank you very much.`,
+    `${task.title}: done. That's ${task.pts} on the board for ${who}.`,
+    `Touched some grass. "${task.title}" is mine. ${PLAYERS[who].chant}.`,
+    `Banked "${task.title}" (+${task.pts}). Phuket is our playground now.`,
+  ];
+  return pick(opts);
+}
+function autoTaunt(task, who) {
+  const other = who === "Hammy" ? "Naddy" : "Hammy";
+  const opts = [
+    `Better luck next time, ${other}.`,
+    `That one's off the board, ${other}. Slow hands.`,
+    `${other} was still deciding. I decided.`,
+    `Imagine not claiming this one, ${other}.`,
+    `One for me, none for you, ${other}.`,
+  ];
+  return pick(opts);
+}
+
+// ---------- the claim sheet: photo + caption + optional taunt + share ----------
+function ClaimSheet({ task, who, onDone, onClose }) {
+  const [photo, setPhoto] = useState(null);   // data URL preview (device-local)
+  const [capMode, setCapMode] = useState("auto"); // 'auto' | 'own'
+  const [ownCap, setOwnCap] = useState("");
+  const [taunt, setTaunt] = useState("");
+  const fileRef = useRef(null);
+
+  const auto = autoCaption(task, who);
+  const caption = capMode === "auto" ? auto : ownCap;
+
+  function onFile(e) {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => setPhoto(String(r.result));
+    r.readAsDataURL(f);
+  }
+
+  function confirm(share) {
+    onDone({
+      photo: photo || null,
+      caption: caption || auto,
+      taunt: taunt.trim() || autoTaunt(task, who),
+      share: !!share,
+    });
+  }
+
+  const p = PLAYERS[who];
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 60, display: "flex", flexDirection: "column",
+      justifyContent: "flex-end", background: "rgba(74,59,51,.4)",
+      backdropFilter: "blur(3px)", WebkitBackdropFilter: "blur(3px)",
+    }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: T.cream, borderTopLeftRadius: 26, borderTopRightRadius: 26,
+        padding: "20px 20px 26px", maxHeight: "92vh", overflowY: "auto",
+        animation: "tgFadeUp .3s ease both", boxShadow: "0 -12px 40px rgba(74,59,51,.22)",
+      }}>
+        <div style={{ width: 40, height: 4, borderRadius: 2, background: T.peach, margin: "0 auto 16px" }} />
+
+        <div style={{ fontFamily: FM, fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase", color: p.colour }}>
+          {p.name} claims · +{task.pts}{task.team ? " (both score)" : ""}
+        </div>
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 20, color: T.ink, lineHeight: 1.25, marginTop: 6 }}>
+          {task.title}
+        </div>
+
+        {/* photo proof */}
+        <div style={{ marginTop: 16 }}>
+          <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onFile} style={{ display: "none" }} />
+          {photo ? (
+            <div onClick={() => fileRef.current && fileRef.current.click()} style={{
+              borderRadius: 16, overflow: "hidden", border: "2px solid " + T.line, cursor: "pointer",
+            }}>
+              <img src={photo} alt="proof" style={{ width: "100%", display: "block", maxHeight: 260, objectFit: "cover" }} />
+            </div>
+          ) : (
+            <button onClick={() => fileRef.current && fileRef.current.click()} style={{
+              width: "100%", border: "2px dashed " + T.peach, background: T.card, borderRadius: 16,
+              padding: "26px 16px", cursor: "pointer", fontFamily: FH, fontWeight: 700, fontSize: 15, color: T.inkSoft,
+            }}>
+              Snap the proof
+              <span style={{ display: "block", fontFamily: FB, fontWeight: 600, fontSize: 12, color: T.inkSoft, marginTop: 4 }}>
+                Photo evidence, or the VAR booth may come calling.
+              </span>
+            </button>
+          )}
+        </div>
+
+        {/* caption: auto vs own */}
+        <div style={{ marginTop: 18 }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            {["auto", "own"].map((m) => (
+              <button key={m} onClick={() => setCapMode(m)} style={{
+                flex: 1, cursor: "pointer", borderRadius: 12, padding: "9px 0",
+                fontFamily: FH, fontWeight: 700, fontSize: 13,
+                border: "1px solid " + (capMode === m ? p.colour : T.line),
+                background: capMode === m ? p.colour : T.card,
+                color: capMode === m ? "#fff" : T.inkSoft,
+              }}>{m === "auto" ? "Auto caption" : "Write my own"}</button>
+            ))}
+          </div>
+          {capMode === "auto" ? (
+            <div style={{ fontFamily: FB, fontSize: 14, color: T.ink, lineHeight: 1.5, background: T.card, border: "1px solid " + T.line, borderRadius: 12, padding: "12px 14px" }}>
+              {auto}
+            </div>
+          ) : (
+            <textarea value={ownCap} onChange={(e) => setOwnCap(e.target.value)} rows={3}
+              placeholder="Your own words. Make them count."
+              style={{ width: "100%", fontFamily: FB, fontSize: 14, color: T.ink, background: T.card, border: "1px solid " + T.line, borderRadius: 12, padding: "12px 14px", resize: "vertical", outline: "none" }} />
+          )}
+        </div>
+
+        {/* optional taunt */}
+        <div style={{ marginTop: 14 }}>
+          <input value={taunt} onChange={(e) => setTaunt(e.target.value)}
+            placeholder="Optional taunt (or we'll auto-generate one)"
+            style={{ width: "100%", fontFamily: FB, fontSize: 13, color: T.ink, background: T.card, border: "1px solid " + T.line, borderRadius: 12, padding: "11px 14px", outline: "none" }} />
+        </div>
+
+        {/* actions */}
+        <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 10 }}>
+          <Btn onClick={() => confirm(false)} style={{ width: "100%" }}>
+            Claim it{task.team ? " (both score)" : " · +" + task.pts}
+          </Btn>
+          <button onClick={() => confirm(true)} style={{
+            width: "100%", cursor: "pointer", background: "#0a7aff", border: "none", borderRadius: 16,
+            padding: "13px 0", fontFamily: FH, fontWeight: 700, fontSize: 14, color: "#fff",
+          }}>Claim & share to Bluesky</button>
+          <button onClick={onClose} style={{
+            width: "100%", cursor: "pointer", background: "transparent", border: "none",
+            padding: "6px 0", fontFamily: FH, fontWeight: 700, fontSize: 13, color: T.inkSoft,
+          }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ---------- a single task row within an open group ----------
+function TaskRow({ task, claim, onClaim }) {
+  const claimed = claim && claim.by;
+  const claimer = claimed ? PLAYERS[claim.by] : null;
+  return (
+    <div style={{
+      padding: "12px 14px", borderTop: "1px solid " + T.line,
+      opacity: claimed && !task.team ? 0.66 : 1,
+    }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 14.5, color: T.ink, lineHeight: 1.25 }}>
+            {task.title}
+            {task.dry ? <span style={{ fontFamily: FM, fontSize: 8.5, color: T.sun, marginLeft: 6, letterSpacing: ".05em" }}>DRY DAY</span> : null}
+          </div>
+          <div style={{ fontFamily: FB, fontSize: 12, color: T.inkSoft, lineHeight: 1.5, marginTop: 3 }}>
+            {task.blurb}
+          </div>
+          {task.place ? (
+            <div style={{ marginTop: 6, fontFamily: FM, fontSize: 10, color: T.coralDk, lineHeight: 1.5 }}>
+              📍 {task.place}{task.area ? " · " + task.area : ""}
+              {task.hours ? <span style={{ display: "block", color: T.inkSoft, marginTop: 1 }}>{task.hours}</span> : null}
+            </div>
+          ) : null}
+        </div>
+        <div style={{ flexShrink: 0, textAlign: "right" }}>
+          <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 15, color: T.coral }}>+{task.pts}</div>
+          {task.team ? <div style={{ fontFamily: FM, fontSize: 8, color: T.inkSoft, letterSpacing: ".08em" }}>TEAM</div> : null}
+        </div>
+      </div>
+
+      {claimed ? (
+        <div style={{
+          marginTop: 10, fontFamily: FB, fontSize: 12, fontWeight: 700,
+          color: claimer.colour, display: "flex", alignItems: "center", gap: 6,
+        }}>
+          <span style={{ width: 8, height: 8, borderRadius: 4, background: claimer.colour, display: "inline-block" }} />
+          {task.team ? "Done together" : claimer.name + " claimed this"}
+        </div>
+      ) : (
+        <div style={{ marginTop: 10 }}>
+          <button onClick={() => onClaim(task)} style={{
+            cursor: "pointer", background: T.peach, border: "none", borderRadius: 11,
+            padding: "8px 16px", fontFamily: FH, fontWeight: 700, fontSize: 13, color: T.coralDk,
+          }}>Claim ›</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- a closed-by-default tier group ----------
+function TierGroup({ tier, tasks, claims, onClaim, open, onToggle }) {
+  const meta = TIER_META[tier];
+  const claimedCount = tasks.filter((t) => claims[t.id] && claims[t.id].by).length;
+  return (
+    <div style={{ background: T.card, border: "1px solid " + T.line, borderRadius: 16, overflow: "hidden" }}>
+      <button onClick={onToggle} style={{
+        width: "100%", cursor: "pointer", background: "transparent", border: "none",
+        borderLeft: "4px solid " + meta.accent, padding: "14px 15px",
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, textAlign: "left",
+      }}>
+        <span>
+          <span style={{ display: "block", fontFamily: FH, fontWeight: 700, fontSize: 16, color: T.ink }}>{meta.label}</span>
+          <span style={{ display: "block", fontFamily: FB, fontSize: 11.5, color: T.inkSoft, marginTop: 1 }}>{meta.sub}</span>
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <span style={{ fontFamily: FM, fontSize: 10, color: T.inkSoft }}>{claimedCount}/{tasks.length}</span>
+          <span style={{ fontFamily: FH, fontSize: 18, color: T.peach, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
+        </span>
+      </button>
+      {open && (
+        <div>
+          {tasks.map((t) => (
+            <TaskRow key={t.id} task={t} claim={claims[t.id]} onClaim={onClaim} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- THE BOARD SCREEN ----------
+function Board({ now, who, claims, setClaims }) {
+  const wk = weekNumber(now);
+  const { groups } = dealtBoard(wk);
+  const [openTier, setOpenTier] = useState("quick"); // quick open by default; it's the everyday one
+  const [claiming, setClaiming] = useState(null);     // task being claimed
+
+  function doClaim(task, detail) {
+    const next = { ...claims, [task.id]: {
+      by: who, at: Date.now(),
+      photo: detail.photo, caption: detail.caption, taunt: detail.taunt,
+      shared: detail.share || false,
+    } };
+    setClaims(wk, next);
+    setClaiming(null);
+    // Bluesky posting fires on the live site via the backend; in preview it's a
+    // no-op. We record the intent (shared:true) either way.
+  }
+
+  return (
+    <div>
+      {TIER_ORDER.map((tier) => (
+        <div key={tier} style={{ marginBottom: 12 }}>
+          <TierGroup
+            tier={tier}
+            tasks={groups[tier]}
+            claims={claims}
+            open={openTier === tier}
+            onToggle={() => setOpenTier(openTier === tier ? null : tier)}
+            onClaim={(t) => setClaiming(t)}
+          />
+        </div>
+      ))}
+
+      {claiming && (
+        <ClaimSheet
+          task={claiming}
+          who={who}
+          onClose={() => setClaiming(null)}
+          onDone={(detail) => doClaim(claiming, detail)}
+        />
+      )}
+    </div>
+  );
+}
+
+
+// ============================================================
+// THE GAME — begins Monday. A small internal view-router keeps each screen
+// focused and mobile-tidy: hub (home) -> board / school / scrapbook.
+// Mobile-first law: hub fits one phoneful, no scroll; lists live deeper and
+// default closed; emoji reserved for genuine wow moments only.
+// ============================================================
+
+// Format the time left in the current week (to Sunday midnight Phuket).
+function weekEndsIn(now) {
+  const s = startOfWeek(now);
+  const end = new Date(s); end.setDate(end.getDate() + 7);
+  const ms = end.getTime() - new Date(now).getTime();
+  const d = Math.floor(ms / 86400000);
+  const h = Math.floor((ms % 86400000) / 3600000);
+  if (d >= 1) return d + (d === 1 ? " day" : " days") + " left";
+  if (h >= 1) return h + (h === 1 ? " hour" : " hours") + " left";
+  const m = Math.floor((ms % 3600000) / 60000);
+  return m + " min left";
+}
+
+const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+// ---------- the scoreboard hero: the two of you, side by side ----------
+function ScoreHero({ scores, leader }) {
+  return (
+    <div style={{ display: "flex", gap: 10 }}>
+      {PLAYER_IDS.map((id) => {
+        const p = PLAYERS[id];
+        const isLead = leader === id;
+        return (
+          <div key={id} style={{
+            flex: 1, background: T.card, borderRadius: 18,
+            border: "2px solid " + (isLead ? p.colour : T.line),
+            padding: "14px 12px", textAlign: "center", position: "relative",
+            boxShadow: isLead ? "0 6px 20px " + p.colour + "22" : "none",
+          }}>
+            <div style={{
+              fontFamily: FH, fontWeight: 700, fontSize: 14, color: p.colour,
+            }}>{p.name}</div>
+            <div style={{
+              fontFamily: FH, fontWeight: 700, fontSize: 34, color: T.ink,
+              lineHeight: 1.1, marginTop: 2, fontVariantNumeric: "tabular-nums",
+            }}>{scores[id] || 0}</div>
+            <div style={{
+              fontFamily: FM, fontSize: 8.5, letterSpacing: ".12em",
+              color: T.inkSoft, textTransform: "uppercase", marginTop: 2,
+            }}>points</div>
+            {isLead && (scores.Hammy !== scores.Naddy) && (
+              <div style={{
+                position: "absolute", top: -9, left: "50%", transform: "translateX(-50%)",
+                background: p.colour, color: "#fff", fontFamily: FH, fontWeight: 700,
+                fontSize: 9, letterSpacing: ".1em", textTransform: "uppercase",
+                padding: "2px 10px", borderRadius: 10, whiteSpace: "nowrap",
+              }}>leading</div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------- a compact tap-through tile ----------
+function HubTile({ label, sub, onClick, accent }) {
+  const [down, setDown] = useState(false);
+  return (
+    <button onClick={onClick}
+      onPointerDown={() => setDown(true)}
+      onPointerUp={() => setDown(false)}
+      onPointerLeave={() => setDown(false)}
+      style={{
+        width: "100%", textAlign: "left", cursor: "pointer",
+        background: T.card, border: "1px solid " + T.line, borderLeft: "3px solid " + accent,
+        borderRadius: 14, padding: "13px 15px",
+        transition: "transform .08s ease", transform: down ? "scale(.98)" : "scale(1)",
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+      }}>
+      <span>
+        <span style={{ display: "block", fontFamily: FH, fontWeight: 700, fontSize: 15, color: T.ink }}>{label}</span>
+        <span style={{ display: "block", fontFamily: FB, fontSize: 12, color: T.inkSoft, marginTop: 1 }}>{sub}</span>
+      </span>
+      <span style={{ fontFamily: FH, fontSize: 20, color: T.peach, flexShrink: 0 }}>›</span>
+    </button>
+  );
+}
+
+
+// ---------- THE HUB: single-screen home, no scroll ----------
+function Hub({ now, scores, onGo, onSwitch }) {
+  const wk = weekNumber(now);
+  const dayIdx = dayOfWeek(now);
+  const leader = (scores.Hammy || 0) === (scores.Naddy || 0) ? null
+    : (scores.Hammy || 0) > (scores.Naddy || 0) ? "Hammy" : "Naddy";
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column",
+      padding: "18px 18px 20px",
+      background: "linear-gradient(180deg, #fff6ee 0%, #ffefe4 100%)",
+    }}>
+      {/* top bar: week + switch user */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 22, color: T.ink, lineHeight: 1 }}>
+            Week <span style={{ color: T.coral }}>{wk}</span>
+          </div>
+          <div style={{ fontFamily: FM, fontSize: 9.5, letterSpacing: ".1em", color: T.inkSoft, textTransform: "uppercase", marginTop: 4 }}>
+            {DAY_NAMES[dayIdx]} · {weekEndsIn(now)}
+          </div>
+        </div>
+        <button onClick={onSwitch} style={{
+          background: "rgba(255,255,255,.7)", border: "1px solid " + T.line, borderRadius: 18,
+          padding: "7px 12px", cursor: "pointer", fontFamily: FH, fontWeight: 600, fontSize: 12, color: T.inkSoft,
+        }}>switch ›</button>
+      </div>
+
+      {/* scoreboard hero */}
+      <div style={{ marginTop: 18 }}>
+        <ScoreHero scores={scores} leader={leader} />
+      </div>
+
+      {/* the tap-throughs */}
+      <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 10 }}>
+        <HubTile label="This week's board" sub="25 challenges. Do the thing, claim the points." accent={T.coral} onClick={() => onGo("board")} />
+        <HubTile label="Coach Saliba's Thai school" sub="Today's word. Keep the streak alive." accent={T.arsenal} onClick={() => onGo("school")} />
+        <HubTile label="The scrapbook" sub="Your week so far, in photos and taunts." accent={T.sun} onClick={() => onGo("scrapbook")} />
+      </div>
+
+      {/* footer whisper, pushed to bottom */}
+      <div style={{ marginTop: "auto", paddingTop: 16, textAlign: "center", fontFamily: FM, fontSize: 8.5, letterSpacing: ".12em", color: "#d8b8a4", textTransform: "uppercase" }}>
+        Spurs vs Arsenal · the pitch is Phuket
+      </div>
+    </div>
+  );
+}
+
+
+// ---------- a simple inner screen shell (back to hub + title) ----------
+function Screen({ title, onBack, children }) {
+  return (
+    <div style={{ minHeight: "100vh", padding: "16px 18px 24px", background: "linear-gradient(180deg, #fff6ee 0%, #ffefe4 100%)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+        <button onClick={onBack} style={{
+          background: T.card, border: "1px solid " + T.line, borderRadius: 16,
+          padding: "8px 13px 8px 10px", cursor: "pointer", fontFamily: FH, fontWeight: 700,
+          fontSize: 13, color: T.inkSoft, display: "inline-flex", alignItems: "center", gap: 5,
+        }}><span style={{ fontSize: 15 }}>‹</span> hub</button>
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 19, color: T.ink }}>{title}</div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// A gentle "still cooking" placeholder for screens we build in later phases.
+function ComingNext({ line }) {
+  return (
+    <div style={{
+      marginTop: 40, textAlign: "center", fontFamily: FB, fontSize: 15,
+      color: T.inkSoft, lineHeight: 1.6, padding: "0 20px",
+    }}>
+      <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 16, color: T.ink, marginBottom: 8 }}>
+        Being built next
+      </div>
+      {line}
+    </div>
+  );
+}
+
+// ---------- THE GAME ROUTER ----------
+function Game({ now, who, isFull, onSwitch }) {
+  const [view, setView] = useState("hub");
+  const wk = weekNumber(now);
+  const [claims, setClaimsState] = useState(() => loadClaims(wk));
+
+  // persist claims whenever they change (device-local)
+  function setClaims(weekNo, next) {
+    saveClaims(weekNo, next);
+    setClaimsState(next);
+  }
+
+  // live scores from the real board deal + claims
+  const { dealt } = dealtBoard(wk);
+  const scores = tallyScores(dealt, claims);
+
+  // "you" on this device: the picked side, or Hammy when he's testing pre-launch
+  const me = who || "Hammy";
+
+  if (view === "hub") {
+    return <Hub now={now} scores={scores} onGo={setView} onSwitch={onSwitch} />;
+  }
+  if (view === "board") {
+    return <Screen title={"Week " + wk + " board"} onBack={() => setView("hub")}>
+      <Board now={now} who={me} claims={claims} setClaims={setClaims} />
+    </Screen>;
+  }
+  if (view === "school") {
+    return <Screen title="Coach Saliba's Thai school" onBack={() => setView("hub")}>
+      <ComingNext line="A new useful Thai word each day. Hear it, say it back, keep the daily streak alive. A certain Arsenal centre-half is your coach." />
+    </Screen>;
+  }
+  return <Screen title="The scrapbook" onBack={() => setView("hub")}>
+    <ComingNext line="Your week gathered up: best photos, best captions, the taunts that landed, and who led on what. Revealed in full when the week closes." />
+  </Screen>;
+}
+
+
+// ============================================================
+// IDENTITY (post-launch) — no password, just "pick your side". Remembered per
+// phone. Switchable anytime via a cheeky jersey-confirmation popup.
+// ============================================================
+const WHO_KEY = "tg_who_v1";
+function loadWho() { try { return localStorage.getItem(WHO_KEY); } catch (e) { return null; } }
+function saveWho(id) { try { localStorage.setItem(WHO_KEY, id); } catch (e) {} }
+
+// The cheeky confirm lines, per side. Picked at random for a bit of variety.
+const JERSEY_LINES = {
+  Hammy: [
+    "Ready to pull on the Spurs jersey?",
+    "Lace up. You're playing for the lilywhites.",
+    "To Dare Is To Do. You in?",
+    "Confirm: you bleed navy and white?",
+  ],
+  Naddy: [
+    "Ready to pull on the Arsenal jersey?",
+    "Time to go Gunners. You sure?",
+    "Victoria Concordia Crescit. Suit up?",
+    "Confirm: you're marching on together?",
+  ],
+};
+
+// The jersey-confirmation popup.
+function JerseyConfirm({ who, onYes, onNo }) {
+  const p = PLAYERS[who];
+  const line = pick(JERSEY_LINES[who]);
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 50, display: "flex",
+      alignItems: "center", justifyContent: "center", padding: 26,
+      background: "rgba(74,59,51,.34)", backdropFilter: "blur(3px)", WebkitBackdropFilter: "blur(3px)",
+    }}>
+      <div style={{
+        width: "100%", maxWidth: 320, background: T.card, borderRadius: 22,
+        border: "2px solid " + p.colour, padding: "24px 22px 20px", textAlign: "center",
+        animation: "tgPop .4s ease both", boxShadow: "0 18px 50px rgba(74,59,51,.28)",
+      }}>
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 13, color: p.colour, letterSpacing: ".04em" }}>
+          {p.club.toUpperCase()}
+        </div>
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 20, color: T.ink, lineHeight: 1.3, marginTop: 8 }}>
+          {line}
+        </div>
+        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+          <button onClick={onNo} style={{
+            flex: 1, background: "transparent", border: "1px solid " + T.line, borderRadius: 14,
+            padding: "11px 0", cursor: "pointer", fontFamily: FH, fontWeight: 700, fontSize: 14, color: T.inkSoft,
+          }}>Not yet</button>
+          <button onClick={onYes} style={{
+            flex: 1, background: p.colour, border: "none", borderRadius: 14,
+            padding: "11px 0", cursor: "pointer", fontFamily: FH, fontWeight: 700, fontSize: 14, color: "#fff",
+          }}>Let's go</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The "pick your side" screen (post-launch, first open on a phone).
+function PickSide({ onPick }) {
+  const [pending, setPending] = useState(null); // which side is mid-confirm
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", padding: "40px 24px",
+      background: "linear-gradient(165deg, #fff6ee 0%, #ffe9db 55%, #ffdcc8 100%)",
+    }}>
+      <Wordmark size={.92} />
+      <div style={{
+        marginTop: 30, fontFamily: FM, fontSize: 10.5, letterSpacing: ".16em",
+        textTransform: "uppercase", color: T.inkSoft,
+      }}>Pick your side</div>
+
+      <div style={{ marginTop: 18, width: "100%", maxWidth: 340, display: "flex", flexDirection: "column", gap: 12 }}>
+        {PLAYER_IDS.map((id) => {
+          const p = PLAYERS[id];
+          return (
+            <button key={id} onClick={() => setPending(id)} style={{
+              width: "100%", cursor: "pointer", background: T.card,
+              border: "2px solid " + T.line, borderLeft: "6px solid " + p.colour,
+              borderRadius: 18, padding: "18px 20px", textAlign: "left",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+            }}>
+              <span>
+                <span style={{ display: "block", fontFamily: FH, fontWeight: 700, fontSize: 20, color: T.ink }}>{p.name}</span>
+                <span style={{ display: "block", fontFamily: FB, fontSize: 13, color: p.colour, fontWeight: 700, marginTop: 1 }}>{p.club}</span>
+              </span>
+              <span style={{ fontFamily: FH, fontSize: 22, color: T.peach }}>›</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {pending && (
+        <JerseyConfirm who={pending} onNo={() => setPending(null)} onYes={() => { saveWho(pending); onPick(pending); }} />
+      )}
+    </div>
+  );
+}
+
+
+// ============================================================
+// THEME TOKENS — coral & cream, warm tropical sunset.
+// ============================================================
+const T = {
+  cream:   "#fff6ee",   // page background, soft warm cream
+  card:    "#fffdfa",   // raised surfaces
+  coral:   "#ff8a5c",   // primary warm coral
+  coralDk: "#f06a3c",   // deeper coral for accents/pressed
+  peach:   "#ffd9c2",   // soft peach fill
+  sun:     "#ffc24d",   // sunny yellow pop
+  ink:     "#4a3b33",   // warm dark brown text
+  inkSoft: "#8a7568",   // muted brown text
+  line:    "#f0e0d4",   // hairline dividers
+  spurs:   "#5b9bd5",   // Hammy
+  arsenal: "#e0577a",   // Naddy
+  good:    "#3fae7a",   // success green
+};
+const FH = "'Quicksand', sans-serif";   // headings (rounded, friendly)
+const FB = "'Nunito', sans-serif";      // body (rounded workhorse)
+const FM = "'Space Mono', monospace";   // mono accents (countdowns, labels)
+
+// ============================================================
+// LAUNCH — the game goes live Monday 6 Jul 2026, 00:00 Phuket time.
+// Before then, everyone lands on the teaser. Hammy's password is the skeleton
+// key that jumps straight past it for testing.
+// ============================================================
+const LAUNCH = new Date("2026-07-06T00:00:00+07:00");
+function msUntilLaunch(now) { return LAUNCH.getTime() - new Date(now).getTime(); }
+function launched(now) { return msUntilLaunch(now) <= 0; }
+
+// ---------- passwords (polite lock, not Fort Knox) ----------
+// "hammy"    -> full access (test everything, even pre-launch)
+// "bablydoo" -> teaser access (Naddy: curiosity preserved until Monday)
+function checkPassword(raw) {
+  const p = String(raw || "").trim().toLowerCase();
+  if (p === "hammy") return "full";
+  if (p === "bablydoo") return "teaser";
+  return null;
+}
+
+// Cheeky rotating rejections for a wrong word. Warm, teasing, never cold.
+const WRONG_WORDS = [
+  "Nope. But you typed that with real confidence, respect.",
+  "Not it. The door remains smugly shut.",
+  "Wrong-o. The bouncer folds his arms.",
+  "That's a no from me, and I'm a very polite no.",
+  "Incorrect. Have you tried being married to the developer?",
+  "Nuh-uh. Close, in the way that Reading is close to the Premier League.",
+  "Denied. Michael Oliver has reviewed it. Still denied.",
+  "That's not the word, but I admire the audacity.",
+  "No dice. The secret word is feeling shy about you specifically.",
+  "Wrong. Somewhere, a cat judged you for that attempt.",
+];
+
+// Little persistence so nobody re-types the word every open (device-only,
+// won't persist inside the Claude preview, only on the live site).
+const GATE_KEY = "tg_gate_v1";
+function loadGate() { try { return localStorage.getItem(GATE_KEY); } catch (e) { return null; } }
+function saveGate(level) { try { localStorage.setItem(GATE_KEY, level); } catch (e) {} }
+function clearGate() { try { localStorage.removeItem(GATE_KEY); } catch (e) {} }
+
+
+// ============================================================
+// REACT — hooks + tiny shared UI atoms
+// ============================================================
+// (useState / useEffect / useRef are provided as globals by the boot loader)
+
+// A soft rounded button that presses in slightly. Reused everywhere.
+function Btn({ onClick, children, style, kind }) {
+  const [down, setDown] = useState(false);
+  const base = {
+    fontFamily: FH, fontWeight: 700, fontSize: 15, border: "none",
+    borderRadius: 16, padding: "13px 20px", cursor: "pointer",
+    transition: "transform .08s ease, filter .15s ease",
+    transform: down ? "scale(.96)" : "scale(1)",
+    background: kind === "ghost" ? "transparent" : T.coral,
+    color: kind === "ghost" ? T.inkSoft : "#fff",
+    boxShadow: kind === "ghost" ? "none" : "0 6px 18px rgba(240,106,60,.32)",
+  };
+  return (
+    <button onClick={onClick}
+      onPointerDown={() => setDown(true)}
+      onPointerUp={() => setDown(false)}
+      onPointerLeave={() => setDown(false)}
+      style={{ ...base, ...style }}>
+      {children}
+    </button>
+  );
+}
+
+// The little sun/leaf wordmark lockup, used on gate + teaser.
+function Wordmark({ size }) {
+  const s = size || 1;
+  return (
+    <div style={{ textAlign: "center", userSelect: "none" }}>
+      <div style={{ fontSize: 46 * s, lineHeight: 1, animation: "tgFloat 4s ease-in-out infinite" }}>🌴</div>
+      <div style={{
+        fontFamily: FH, fontWeight: 700, fontSize: 30 * s, color: T.ink,
+        letterSpacing: "-.01em", marginTop: 8 * s,
+      }}>
+        Touch Grass <span style={{ color: T.coral }}>HKT</span>
+      </div>
+    </div>
+  );
+}
+
+// A small, tasteful "back to hammyLabs" link, fixed top-left. Returns to the
+// index page (works on the live site where index.html is a neighbour; in the
+// Claude preview there's no sibling page so it may simply do nothing).
+function BackLink() {
+  return (
+    <a href="index.html" style={{
+      position: "fixed", top: 16, left: 16, zIndex: 20,
+      display: "inline-flex", alignItems: "center", gap: 6,
+      textDecoration: "none", fontFamily: FH, fontWeight: 600, fontSize: 13,
+      color: T.inkSoft, background: "rgba(255,255,255,.72)",
+      border: "1px solid " + T.line, borderRadius: 20, padding: "7px 13px 7px 10px",
+      backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+    }}>
+      <span style={{ fontSize: 15, lineHeight: 1 }}>‹</span> hammyLabs
+    </a>
+  );
+}
+
+
+// ============================================================
+// THE PASSWORD GATE — mysterious & minimal. Just the wordmark and a prompt.
+// ============================================================
+function Gate({ onPass }) {
+  const [val, setVal] = useState("");
+  const [msg, setMsg] = useState("");
+  const [shake, setShake] = useState(false);
+  const [wrongIdx, setWrongIdx] = useState(0);
+
+  function submit() {
+    const level = checkPassword(val);
+    if (level) {
+      saveGate(level);
+      onPass(level);
+      return;
+    }
+    // wrong: cheeky message + a little shake, cycle through the bank
+    setMsg(WRONG_WORDS[wrongIdx % WRONG_WORDS.length]);
+    setWrongIdx(wrongIdx + 1);
+    setShake(true);
+    setVal("");
+    setTimeout(() => setShake(false), 500);
+  }
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", padding: "0 28px",
+      background: "linear-gradient(165deg, #fff6ee 0%, #ffe9db 55%, #ffdcc8 100%)",
+    }}>
+      <BackLink />
+      <div style={{ animation: "tgFadeUp .7s ease both", transform: shake ? undefined : "none" }}>
+        <div style={{ animation: shake ? "tgShake .5s" : "none" }}>
+          <Wordmark size={1} />
+        </div>
+      </div>
+
+      <div style={{
+        marginTop: 40, width: "100%", maxWidth: 320,
+        animation: "tgFadeUp .7s ease .15s both",
+      }}>
+        <div style={{
+          fontFamily: FM, fontSize: 10.5, letterSpacing: ".16em",
+          textTransform: "uppercase", color: T.inkSoft, textAlign: "center",
+          marginBottom: 14,
+        }}>
+          Say the secret word
+        </div>
+        <input
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+          placeholder="……………"
+          autoCapitalize="none" autoCorrect="off" spellCheck="false"
+          style={{
+            width: "100%", textAlign: "center", fontFamily: FB, fontWeight: 700,
+            fontSize: 18, color: T.ink, background: T.card,
+            border: "2px solid " + T.peach, borderRadius: 16,
+            padding: "14px 16px", outline: "none", letterSpacing: ".05em",
+          }}
+        />
+        <div style={{ marginTop: 14, display: "flex", justifyContent: "center" }}>
+          <Btn onClick={submit} style={{ minWidth: 150 }}>Enter</Btn>
+        </div>
+
+        {msg && (
+          <div style={{
+            marginTop: 18, fontFamily: FB, fontSize: 13.5, fontStyle: "italic",
+            color: T.coralDk, textAlign: "center", lineHeight: 1.5,
+            animation: "tgFadeUp .4s ease both",
+          }}>
+            {msg}
+          </div>
+        )}
+      </div>
+
+      <div style={{
+        position: "fixed", bottom: 22, fontFamily: FM, fontSize: 9,
+        letterSpacing: ".14em", color: "#d8b8a4", textTransform: "uppercase",
+      }}>
+        hammyLabs · HKT
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// THE TEASER — what Naddy sees until Monday. A live countdown + curious hints,
+// enough to intrigue, never enough to spoil.
+// ============================================================
+const TEASE_HINTS = [
+  "Something is coming to get us off this sofa.",
+  "It involves you, me, and the whole island.",
+  "There will be points. There will be a winner.",
+  "Arsenal vs Spurs, but the pitch is Phuket.",
+  "A very particular referee has been appointed.",
+  "Your favourite centre-half has a second job now.",
+  "Bring your appetite and your competitive streak.",
+];
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+function Teaser({ now, isFull, onReset, onEnterGame }) {
+  const [tick, setTick] = useState(0);
+  const [hintIdx, setHintIdx] = useState(0);
+  const [taps, setTaps] = useState(0);
+
+  // live countdown, re-render every second
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  // rotate the hints every 3.2s
+  useEffect(() => {
+    const t = setInterval(() => setHintIdx((i) => (i + 1) % TEASE_HINTS.length), 3200);
+    return () => clearInterval(t);
+  }, []);
+
+  const ms = Math.max(0, msUntilLaunch(Date.now()));
+  const days = Math.floor(ms / 86400000);
+  const hrs = Math.floor((ms % 86400000) / 3600000);
+  const mins = Math.floor((ms % 3600000) / 60000);
+  const secs = Math.floor((ms % 60000) / 1000);
+
+  // easter egg: tap the palm 7 times for a cheeky cat cameo
+  const catEgg = taps >= 7;
+
+  const Unit = ({ v, label }) => (
+    <div style={{ textAlign: "center", minWidth: 58 }}>
+      <div style={{
+        fontFamily: FH, fontWeight: 700, fontSize: 38, color: T.ink,
+        lineHeight: 1, fontVariantNumeric: "tabular-nums",
+      }}>{pad2(v)}</div>
+      <div style={{
+        fontFamily: FM, fontSize: 9, letterSpacing: ".14em", color: T.inkSoft,
+        textTransform: "uppercase", marginTop: 6,
+      }}>{label}</div>
+    </div>
+  );
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", padding: "48px 28px",
+      background: "linear-gradient(165deg, #fff6ee 0%, #ffe9db 55%, #ffdcc8 100%)",
+      textAlign: "center",
+    }}>
+      <BackLink />
+      <div onClick={() => setTaps((t) => t + 1)} style={{ cursor: "pointer" }}>
+        <Wordmark size={1.05} />
+      </div>
+
+      {catEgg && (
+        <div style={{ fontSize: 30, marginTop: 10, animation: "tgPop .5s ease both" }}>
+          🐱 🐱 🐱 🐱 🐱
+          <div style={{ fontFamily: FB, fontSize: 11, color: T.inkSoft, fontStyle: "italic", marginTop: 4 }}>
+            the five have approved this teaser
+          </div>
+        </div>
+      )}
+
+      <div style={{
+        marginTop: 34, fontFamily: FM, fontSize: 10.5, letterSpacing: ".18em",
+        textTransform: "uppercase", color: T.coralDk,
+      }}>
+        Kick-off · Monday 6 July
+      </div>
+
+      <div style={{
+        marginTop: 20, display: "flex", gap: 8, alignItems: "flex-start",
+        animation: "tgFadeUp .7s ease both",
+      }}>
+        <Unit v={days} label="days" />
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 30, color: T.peach }}>:</div>
+        <Unit v={hrs} label="hrs" />
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 30, color: T.peach }}>:</div>
+        <Unit v={mins} label="min" />
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 30, color: T.peach }}>:</div>
+        <Unit v={secs} label="sec" />
+      </div>
+
+      <div style={{
+        marginTop: 40, maxWidth: 300, minHeight: 44,
+        fontFamily: FB, fontSize: 16, fontWeight: 600, color: T.ink,
+        lineHeight: 1.5,
+      }}>
+        <span key={hintIdx} style={{ display: "inline-block", animation: "tgFadeUp .6s ease both" }}>
+          {TEASE_HINTS[hintIdx]}
+        </span>
+      </div>
+
+      {isFull && (
+        <div style={{
+          marginTop: 40, fontFamily: FM, fontSize: 9.5, color: T.inkSoft,
+          letterSpacing: ".1em", animation: "tgFadeUp .7s ease .3s both",
+        }}>
+          [ DEV: logged in as Hammy ]
+        </div>
+      )}
+
+      {isFull && onEnterGame && (
+        <div style={{ marginTop: 12, animation: "tgFadeUp .7s ease .3s both" }}>
+          <Btn onClick={onEnterGame} style={{ fontSize: 13 }}>
+            enter the game (test) ›
+          </Btn>
+        </div>
+      )}
+
+      <div style={{ marginTop: isFull ? 12 : 44, animation: "tgFadeUp .7s ease .3s both" }}>
+        <Btn onClick={onReset} kind="ghost" style={{ fontSize: 13 }}>
+          switch user ›
+        </Btn>
+      </div>
+
+      <div style={{
+        position: "fixed", bottom: 22, fontFamily: FM, fontSize: 9,
+        letterSpacing: ".14em", color: "#d8b8a4", textTransform: "uppercase",
+      }}>
+        made with love · for lil naddy
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// APP ROOT — the whole flow.
+//   BEFORE Monday: password gate guards the surprise.
+//     - Naddy's key -> teaser (curiosity preserved)
+//     - Hammy's key -> may test the game
+//   ON/AFTER Monday: password retires. Open door.
+//     - first open on a phone -> "pick your side" (with jersey confirm)
+//     - thereafter -> straight into the game, side remembered
+//     - can switch side anytime
+// ============================================================
+function App() {
+  const [gate, setGate] = useState(loadGate());     // null | 'teaser' | 'full'
+  const [who, setWho] = useState(loadWho());        // null | 'Hammy' | 'Naddy'
+  const [previewGame, setPreviewGame] = useState(false); // Hammy testing pre-launch
+  const now = Date.now();
+  const isLaunched = launched(now);
+
+  // ---------- POST-LAUNCH: open door, identity not password ----------
+  if (isLaunched) {
+    if (!who) return <PickSide onPick={setWho} />;
+    return <Game now={now} who={who} isFull={true} onSwitch={() => { setWho(null); }} />;
+  }
+
+  // ---------- PRE-LAUNCH: password guards the reveal ----------
+  if (!gate) return <Gate onPass={setGate} />;
+  const isFull = gate === "full";
+
+  function relock() { clearGate(); setGate(null); setPreviewGame(false); }
+
+  // Hammy (full) can flip into the game to test it before Monday.
+  if (isFull && previewGame) {
+    return <Game now={now} who="Hammy" isFull={true} onSwitch={relock} />;
+  }
+
+  // Otherwise show the teaser. Hammy gets a dev button to enter the game.
+  return (
+    <Teaser
+      now={now}
+      isFull={isFull}
+      onReset={relock}
+      onEnterGame={isFull ? () => setPreviewGame(true) : null}
+    />
+  );
+}
+// (the boot loader below appends the ReactDOM mount for <App />)
+</script>
+
+<script>
+(function () {
+  var ROOT = document.getElementById("root");
+  function showError(msg) {
+    ROOT.innerHTML = '<div class="errbox"><b>Something went wrong loading Touch Grass HKT.</b>\n\n' +
+      String(msg).replace(/</g, "&lt;") +
+      '\n\nIf you are viewing this inside an app preview, open the real website link in your browser instead.</div>';
+  }
+  function loadScript(urls, done, fail) {
+    var i = 0;
+    function tryNext() {
+      if (i >= urls.length) { fail(); return; }
+      var s = document.createElement("script");
+      s.src = urls[i++]; s.crossOrigin = "anonymous";
+      s.onload = function () { done(); };
+      s.onerror = function () { tryNext(); };
+      document.head.appendChild(s);
+    }
+    tryNext();
+  }
+  var REACT = ["https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js","https://unpkg.com/react@18.3.1/umd/react.production.min.js","https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"];
+  var REACTDOM = ["https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js","https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js","https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"];
+  var BABEL = ["https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js","https://unpkg.com/@babel/standalone@7.25.6/babel.min.js","https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"];
+  function boot() {
+    try {
+      if (!window.React || !window.ReactDOM) { showError("React did not load from any CDN."); return; }
+      if (!window.Babel) { showError("Babel did not load."); return; }
+      var hooks = "var useState=React.useState,useMemo=React.useMemo,useEffect=React.useEffect,useRef=React.useRef;\n";
+      var mount = "\nReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));";
+      var src = document.getElementById("appsrc").textContent;
+      var compiled = Babel.transform(hooks + src + mount, { presets: ["react"] }).code;
+      (0, eval)(compiled);
+    } catch (err) { showError((err && err.stack) || err); }
+  }
+  loadScript(REACT, function () {
+    loadScript(REACTDOM, function () {
+      loadScript(BABEL, boot, function () { showError("Could not load Babel."); });
+    }, function () { showError("Could not load ReactDOM."); });
+  }, function () { showError("Could not load React."); });
+})();
+</script>
+</body>
+</html>
