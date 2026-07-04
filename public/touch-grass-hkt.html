@@ -191,6 +191,24 @@ function Wordmark({ size }) {
   );
 }
 
+// A small, tasteful "back to hammyLabs" link, fixed top-left. Returns to the
+// index page (works on the live site where index.html is a neighbour; in the
+// Claude preview there's no sibling page so it may simply do nothing).
+function BackLink() {
+  return (
+    <a href="index.html" style={{
+      position: "fixed", top: 16, left: 16, zIndex: 20,
+      display: "inline-flex", alignItems: "center", gap: 6,
+      textDecoration: "none", fontFamily: FH, fontWeight: 600, fontSize: 13,
+      color: T.inkSoft, background: "rgba(255,255,255,.72)",
+      border: "1px solid " + T.line, borderRadius: 20, padding: "7px 13px 7px 10px",
+      backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+    }}>
+      <span style={{ fontSize: 15, lineHeight: 1 }}>‹</span> hammyLabs
+    </a>
+  );
+}
+
 
 // ============================================================
 // THE PASSWORD GATE — mysterious & minimal. Just the wordmark and a prompt.
@@ -222,6 +240,7 @@ function Gate({ onPass }) {
       alignItems: "center", justifyContent: "center", padding: "0 28px",
       background: "linear-gradient(165deg, #fff6ee 0%, #ffe9db 55%, #ffdcc8 100%)",
     }}>
+      <BackLink />
       <div style={{ animation: "tgFadeUp .7s ease both", transform: shake ? undefined : "none" }}>
         <div style={{ animation: shake ? "tgShake .5s" : "none" }}>
           <Wordmark size={1} />
@@ -339,6 +358,7 @@ function Teaser({ now, isFull, onReset }) {
       background: "linear-gradient(165deg, #fff6ee 0%, #ffe9db 55%, #ffdcc8 100%)",
       textAlign: "center",
     }}>
+      <BackLink />
       <div onClick={() => setTaps((t) => t + 1)} style={{ cursor: "pointer" }}>
         <Wordmark size={1.05} />
       </div>
@@ -383,15 +403,19 @@ function Teaser({ now, isFull, onReset }) {
       </div>
 
       {isFull && (
-        <div style={{ marginTop: 44, animation: "tgFadeUp .7s ease .3s both" }}>
-          <div style={{ fontFamily: FM, fontSize: 9.5, color: T.inkSoft, letterSpacing: ".1em", marginBottom: 10 }}>
-            [ DEV: you're logged in as Hammy ]
-          </div>
-          <Btn onClick={onReset} kind="ghost" style={{ fontSize: 13 }}>
-            ← lock again (test the gate)
-          </Btn>
+        <div style={{
+          marginTop: 40, fontFamily: FM, fontSize: 9.5, color: T.inkSoft,
+          letterSpacing: ".1em", animation: "tgFadeUp .7s ease .3s both",
+        }}>
+          [ DEV: logged in as Hammy ]
         </div>
       )}
+
+      <div style={{ marginTop: isFull ? 12 : 44, animation: "tgFadeUp .7s ease .3s both" }}>
+        <Btn onClick={onReset} kind="ghost" style={{ fontSize: 13 }}>
+          switch user ›
+        </Btn>
+      </div>
 
       <div style={{
         position: "fixed", bottom: 22, fontFamily: FM, fontSize: 9,
