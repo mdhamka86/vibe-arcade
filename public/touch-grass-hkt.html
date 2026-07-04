@@ -1,0 +1,2822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Touch Grass HKT</title>
+<meta name="description" content="A weekly head-to-head duel to get us off the sofa and into Phuket. Do the thing, snap the proof, bank the points, win the week." />
+<meta name="theme-color" content="#ff8a5c" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@500;600;700&family=Nunito:ital,wght@0,400;0,600;0,700;0,800;1,600&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: #fff6ee; }
+  #root { min-height: 100vh; }
+  body { font-family: 'Nunito', system-ui, sans-serif; color: #4a3b33; }
+  .loading { color:#ff8a5c; font-family:'Quicksand',sans-serif; font-weight:700; text-align:center;
+    padding-top:44vh; font-size:15px; letter-spacing:.24em; text-transform:uppercase; }
+  .errbox { color:#c0492b; font-family:'Space Mono',monospace; font-size:12px; white-space:pre-wrap;
+    padding:20px; line-height:1.55; }
+  @keyframes tgFadeUp { from { opacity:0; transform:translateY(10px);} to {opacity:1; transform:none;} }
+  @keyframes tgPop { 0%{transform:scale(.6);opacity:0;} 60%{transform:scale(1.08);} 100%{transform:scale(1);opacity:1;} }
+  @keyframes tgFloat { 0%,100%{transform:translateY(0);} 50%{transform:translateY(-7px);} }
+  @keyframes tgShake { 0%,100%{transform:translateX(0);} 20%{transform:translateX(-7px);} 40%{transform:translateX(7px);} 60%{transform:translateX(-5px);} 80%{transform:translateX(5px);} }
+  ::selection { background: #ffd9c2; }
+</style>
+</head>
+<body>
+<div id="root"><div class="loading">Touching grass…</div></div>
+
+<script id="appsrc" type="text/plain">
+
+// ============================================================
+// TOUCH GRASS HKT — a weekly head-to-head scavenger duel for two.
+// Hammy (Spurs) vs Naddy (Arsenal), living in Ko Kaeo, Phuket.
+// Get off the sofa, do real island things, snap proof, bank points,
+// win the week. Rainy-season friendly: indoor-first challenges.
+//
+// Core loop: 25 shared tasks per week. First to claim a task locks it
+// and banks the points. Photo proof + Michael Oliver VAR appeals.
+// Midweek wildcard, daily double, throw-down dares. Scrapbook at week end.
+//
+// Scaffold pattern matches the established hammyLabs single-file React apps:
+// type="text/plain" source block, triple-CDN waterfall, in-browser Babel.
+// ============================================================
+
+// ---------- tiny helpers ----------
+const uid = () => Math.random().toString(36).slice(2, 9);
+const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
+function pick(arr, seed) {
+  // deterministic pick when seed given, else random
+  if (seed == null) return arr[Math.floor(Math.random() * arr.length)];
+  let h = 0; const s = String(seed);
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return arr[h % arr.length];
+}
+
+// ---------- the two players ----------
+// Hammy is Spurs (a soft sky blue), Naddy is Arsenal (a warm red). Their club
+// allegiance drives their theme colour everywhere they appear.
+const PLAYERS = {
+  Hammy: { name: "Hammy", club: "Spurs",   colour: "#5b9bd5", chant: "COYS" },
+  Naddy: { name: "Naddy", club: "Arsenal", colour: "#e0577a", chant: "COYG" },
+};
+const PLAYER_IDS = ["Hammy", "Naddy"];
+function playerColour(id) { return (PLAYERS[id] && PLAYERS[id].colour) || "#9a8a72"; }
+
+// ---------- week maths ----------
+// The competition runs in Monday-to-Sunday weeks, seeded off the real date so
+// both phones see the identical week number and the identical dealt board.
+// Week 1 is anchored to the first Monday on/after the move-in (6 Jul 2026).
+const SEASON_ANCHOR = new Date("2026-07-06T00:00:00+07:00"); // a Monday
+function startOfWeek(d) {
+  const x = new Date(d);
+  const day = (x.getDay() + 6) % 7; // Mon=0 ... Sun=6
+  x.setHours(0, 0, 0, 0);
+  x.setDate(x.getDate() - day);
+  return x;
+}
+function weekNumber(now) {
+  const s = startOfWeek(now);
+  const diff = Math.floor((s - startOfWeek(SEASON_ANCHOR)) / (7 * 24 * 3600 * 1000));
+  return diff + 1; // 1-indexed
+}
+function dayOfWeek(now) { return (new Date(now).getDay() + 6) % 7; } // Mon=0
+
+
+// ============================================================
+// SEEDED SHUFFLE — the shared deal primitive.
+// The board's dealer (dealtBoard) and the victor-swings (wildcard, daily-double)
+// all lean on this deterministic shuffle so both phones see the identical board
+// for a given week. Kept here as the single source of truth for the primitive.
+// ============================================================
+
+// A tiny seeded shuffle (Fisher-Yates driven by a seeded PRNG) so the deal is
+// deterministic for a given week but still feels well mixed.
+function seededRng(seed) {
+  let h = 2166136261 >>> 0;
+  const s = String(seed);
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return function () {
+    h += 0x6D2B79F5; let t = h;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function seededShuffle(arr, seed) {
+  const a = arr.slice();
+  const rng = seededRng(seed);
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const t = a[i]; a[i] = a[j]; a[j] = t;
+  }
+  return a;
+}
+
+
+// ============================================================
+// SHARED STATE PLUMBING — the client side of the shared book.
+// Fetches the cross-phone state (memory wall, season score, archived scrapbooks,
+// the leader's spoils) from /api/tg-state, and posts changes back. Both phones
+// read and write the same blob; last write wins; frequent polling converges them.
+//
+// Graceful everywhere: in the Claude preview (no backend) it simply falls back
+// to a local mirror so nothing breaks and you can still see the shape of things.
+// The genuine cross-phone syncing comes alive only on the live Vercel site.
+// ============================================================
+
+// the shape we expect back, matching api/tg-state.js emptyState()
+function emptySharedState() {
+  return { memories: [], season: { Hammy: 0, Naddy: 0 }, scrapbooks: [], spoils: null, updatedAt: 0 };
+}
+
+// a local mirror so preview (and offline moments) still show something sensible
+const SHARED_MIRROR_KEY = "tg_shared_mirror";
+function loadMirror() {
+  try {
+    const raw = localStorage.getItem(SHARED_MIRROR_KEY);
+    return raw ? JSON.parse(raw) : emptySharedState();
+  } catch (e) { return emptySharedState(); }
+}
+function saveMirror(state) {
+  try { localStorage.setItem(SHARED_MIRROR_KEY, JSON.stringify(state)); } catch (e) {}
+}
+
+// Fetch the shared state from the backend. Resolves to the state, or the local
+// mirror if the backend isn't reachable (preview / offline). Never throws.
+function fetchSharedState() {
+  return fetch("/api/tg-state", { cache: "no-store" })
+    .then((r) => r.ok ? r.json() : Promise.reject())
+    .then((data) => {
+      const state = (data && data.state) ? data.state : emptySharedState();
+      saveMirror(state); // keep the mirror fresh for offline moments
+      return state;
+    })
+    .catch(() => loadMirror());
+}
+
+// Post the full state back to the backend (last write wins). Resolves to the
+// saved state (server-stamped) or, in preview, the mirror we just saved locally.
+function saveSharedState(state) {
+  saveMirror(state); // optimistic local mirror first, so the UI feels instant
+  return fetch("/api/tg-state", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ state: state }),
+  })
+    .then((r) => r.ok ? r.json() : Promise.reject())
+    .then((data) => {
+      const saved = (data && data.state) ? data.state : state;
+      saveMirror(saved);
+      return saved;
+    })
+    .catch(() => state); // preview / offline: the local mirror stands in
+}
+
+// A tiny hook: hold the shared state, load it on mount, poll briskly, and expose
+// a helper to mutate-and-save. Your own changes appear INSTANTLY (optimistic
+// local update); the other phone's changes land within a few seconds via brisk
+// polling. Upstash is built for exactly this rapid back-and-forth, so it stays
+// snappy. For a two-person book the extra chatter is a trivial cost.
+function useSharedState() {
+  const [shared, setShared] = useState(() => loadMirror());
+
+  useEffect(() => {
+    let alive = true;
+    fetchSharedState().then((s) => { if (alive) setShared(s); });
+    const t = setInterval(() => {
+      fetchSharedState().then((s) => { if (alive) setShared(s); });
+    }, 3500);
+    return () => { alive = false; clearInterval(t); };
+  }, []);
+
+  // apply a change: takes prev state, returns next; saves and updates immediately
+  function updateShared(mutator) {
+    setShared((prev) => {
+      const next = typeof mutator === "function" ? mutator(prev) : mutator;
+      saveSharedState(next); // fire-and-forget; server-stamp arrives via polling
+      return next;
+    });
+  }
+
+  return [shared, updateShared];
+}
+
+
+// ============================================================
+// THE CHALLENGE LIBRARY (v3) — quick-win, Ko Kaeo edition.
+// Built spot-by-spot: each named place is verified on the map, its hours
+// checked, and a local tip (from reviews) woven into the blurb. Blurbs kept
+// short and clean. Home base: Habitown, Ko Kaeo (hot; floods fast; stay close).
+//
+// tier:  "quick" (tiny, near-home) | "spot" (first-to-snap race) | "big" (weekly centrepiece)
+// pillar: body | mind | soul   (light spread, never exertion)
+// lean:  "driver" | "social"   (optional, balanced)  team: true (rare, both score)
+// Some tasks are pattern-based (any 7-Eleven, any massage shopfront) and need
+// no single venue. Named ones carry `place`, `hours`, and often `maps`.
+// ============================================================
+
+const CHALLENGE_BANK = [
+  // ---------------- NAMED near-home spots (verified) ----------------
+  { id: "v_damoreno", tier: "quick", pillar: "soul", cat: "Local eats", pts: 10,
+    place: "Pizzeria Da Moreno", area: "Ko Kaeo (by the BIS / Rich Villas)",
+    hours: "Tue-Sun 3-10pm, closed Mon",
+    title: "Da Moreno wood-fired pizza",
+    blurb: "The proper Italian pizzeria right by yours. Get a wood-fired pizza, and save room for the tiramisu (the reviews won't shut up about it). Closed Mondays." },
+
+  { id: "v_boardwalk", tier: "quick", pillar: "soul", cat: "Local eats", pts: 10,
+    place: "Boardwalk Bistro and Bar", area: "Boat Lagoon boardwalk",
+    title: "Boardwalk marina dinner",
+    blurb: "A cracking little bistro right on the Boat Lagoon boardwalk, minutes away. Order the seabass or the prawn gambas, the reviews swear by both. Ice-cold beers, kind owner." },
+
+  { id: "v_lighthouse", tier: "quick", pillar: "soul", cat: "Local life", pts: 15,
+    place: "Lighthouse Market", area: "Boat Lagoon boardwalk",
+    hours: "Last weekend of the month, 4.30-8pm",
+    title: "Lighthouse Market mooch",
+    blurb: "A stylish little fair on the marina boardwalk: stones, wines, street snacks, souvenirs. Last weekend of the month only, in the cool of the evening. Grab a bite, snap the stalls." },
+
+  // ---------------- PATTERN-BASED local dish quests (any good local stall) ----------------
+  // Phuket signatures the locals themselves flag as must-tries. No single venue,
+  // so always safe; the blurb carries the local tip.
+  { id: "q_meehokkien", tier: "quick", pillar: "mind", cat: "Local eats", pts: 10,
+    title: "Mee Hokkien hunt",
+    blurb: "Track down Phuket-style Hokkien noodles, the island's own dish. Not the Singapore one. Any busy local noodle shop. Snap the bowl, then demolish it." },
+  { id: "q_moohong", tier: "quick", pillar: "mind", cat: "Local eats", pts: 10,
+    title: "Moo Hong, the local hero",
+    blurb: "Phuket's braised pork belly, soft and sweet-savoury. A proper southern comfort dish. Find it, order it, photograph it before it vanishes." },
+  { id: "q_otao", tier: "quick", pillar: "mind", cat: "Local eats", pts: 10,
+    title: "O-Tao oyster omelet",
+    blurb: "A Phuket street classic: crispy oyster-and-taro omelet. Messy, moreish, very local. Snap it sizzling at the stall." },
+  { id: "q_somtam", tier: "quick", pillar: "body", cat: "Local eats", pts: 10,
+    title: "Som Tam, mai pet edition",
+    blurb: "Papaya salad from a cart with a mortar and pestle (that's the fresh sign). Say 'mai pet' unless you fancy weeping. Snap the pound-up in action." },
+  { id: "q_roti", tier: "quick", pillar: "body", cat: "Snack quest", pts: 10,
+    title: "Street roti, twirled fresh",
+    blurb: "Hot roti with banana and condensed milk from a cart. Watch them slap and twirl the dough. Napkin count in the photo is a flex." },
+
+  // ---------------- PATTERN-BASED convenience & treat quests ----------------
+  { id: "q_7eleven", tier: "quick", pillar: "body", cat: "Snack quest", pts: 10,
+    title: "New 7-Eleven mystery",
+    blurb: "Grab something off the 7-Eleven shelf you've never tried. Toastie, weird jelly, an unreadable drink. Snap it before the first bite. It's ten steps away." },
+  { id: "q_dqflip", tier: "quick", pillar: "body", cat: "Snack quest", pts: 10,
+    place: "Dairy Queen, Central Phuket", area: "Floresta / Festival (by the food court)",
+    title: "DQ Blizzard flip",
+    blurb: "Grab a Blizzard at the Central DQ and catch the staff's upside-down flip (they turn it over to prove it won't drop). Film the flip, that's the shot." },
+  { id: "q_russianstore", tier: "quick", pillar: "mind", cat: "Snack quest", pts: 10,
+    title: "Russian store roulette",
+    blurb: "Into the Russian store behind yours. Buy one baffling item you can't identify. Snap it, try it, report back. Adventure for 40 baht." },
+  { id: "q_chayen", tier: "quick", pillar: "body", cat: "Snack quest", pts: 10,
+    title: "Cha yen on the go",
+    blurb: "A proper Thai iced tea, that violently orange sweet one, from a cart or 7-Eleven. Snap the colour against the grey monsoon sky." },
+  { id: "q_scaryfruit", tier: "quick", pillar: "body", cat: "Snack quest", pts: 10,
+    title: "Scary fruit challenge",
+    blurb: "Buy a market fruit that looks slightly alarming. Rambutan, mangosteen, salak, custard apple. Crack it open, eat it. Bonus if you've no idea how." },
+  { id: "q_snackswap", tier: "quick", pillar: "soul", cat: "Snack quest", pts: 10, team: true,
+    title: "Blind snack swap",
+    blurb: "Each secretly buys the other a random snack. Swap unseen, both try. Snap the moment of truth on their face. Both score." },
+
+  // ---------------- PATTERN-BASED tiny local-life snaps ----------------
+  { id: "q_wai", tier: "quick", pillar: "soul", cat: "Local life", pts: 10, lean: "social",
+    title: "Ronald's wai",
+    blurb: "Thai McDonald's has Ronald doing the traditional wai instead of a wave. Find one, snap the greeting. A lovely only-here photo." },
+  { id: "q_songthaew", tier: "quick", pillar: "mind", cat: "Local life", pts: 10,
+    title: "Rainbow songthaew",
+    blurb: "Snap one of Phuket's old wooden songthaew buses in its clashing colours. Bonus for an especially battered, beloved-looking one." },
+  { id: "q_spirithouse", tier: "quick", pillar: "soul", cat: "Local life", pts: 10,
+    title: "Spirit house spotting",
+    blurb: "Snap a pretty spirit house with fresh offerings. A quiet, lovely detail of daily Thai life that most people walk right past." },
+  { id: "q_motorbike", tier: "quick", pillar: "mind", cat: "Local life", pts: 10,
+    title: "Impossible motorbike cargo",
+    blurb: "Photograph a gloriously overloaded Thai motorbike. A family of five, a fridge, forty egg trays, a dog in a basket. The national sport." },
+  { id: "q_streetcat", tier: "quick", pillar: "soul", cat: "Local life", pts: 10,
+    title: "New street cat, who dis",
+    blurb: "Snap a Phuket street cat that isn't one of your five. Do NOT bring it home. The five would stage a coup." },
+
+  // ---------------- BIG: verified weekly centrepieces ----------------
+  { id: "big_kruvit", tier: "big", pillar: "soul", cat: "Big one", pts: 30,
+    place: "Kruvit Raft (Ban Laem Hin)", area: "Ko Maphrao, off Laem Hin Pier (east coast, Ko Kaeo)",
+    hours: "10am-10pm daily. Free 5-min longtail from Laem Hin Pier. Book direct: 086 687 0892",
+    link: "https://kruvitraft.com",
+    title: "Dinner on the floating raft",
+    blurb: "The week's big one. A Michelin-listed floating seafood raft on your own east coast, reached by a free longtail hop. Go for sunset. Order the grouper soup and the salt-and-chilli tiger prawns. Fish comes straight from the nets under your feet." },
+
+  { id: "big_laemhin", tier: "big", pillar: "soul", cat: "Big one", pts: 25,
+    place: "Laem Hin Seafood", area: "Laem Hin jetty, Ko Kaeo (facing Coconut Island)",
+    hours: "10am-10pm daily. Ample parking. Book: 076 239 357",
+    title: "Seafood on the wooden terrace",
+    blurb: "A huge, rustic local seafood terrace out over the water, minutes from you on the east coast. Arrive around 6pm for the breezy, quiet, red-sky hour and grab a table on the pier. Fish is kept live in tanks, priced by weight." },
+
+  // ---------------- SPOT: first-to-snap sign scrambles (Central Phuket, verified) ----------------
+  // You're both at the mall together. First to whip out the app and snap the sign
+  // banks it. The other scrambles for the next one. Pure reaction speed. All these
+  // shops are confirmed at Central Phuket (Festival or Floresta wing).
+  { id: "sp_uniqlo", tier: "spot", pillar: "mind", cat: "Sign scramble", pts: 15,
+    place: "Uniqlo", area: "Central Festival, 1st floor",
+    title: "First to the Uniqlo sign",
+    blurb: "Both at Central. First to snap the Uniqlo shopfront banks it. Fastest thumb wins, the slow one scrambles for the next clue." },
+  { id: "sp_aquaria", tier: "spot", pillar: "mind", cat: "Sign scramble", pts: 15,
+    place: "Aquaria Phuket", area: "Central Floresta, basement",
+    title: "First to the Aquaria entrance",
+    blurb: "Race to snap the Aquaria aquarium entrance sign in Floresta. Big, blue, unmissable, which makes the quick-draw all the more cutthroat." },
+  { id: "sp_krispy", tier: "spot", pillar: "mind", cat: "Sign scramble", pts: 15,
+    place: "Krispy Kreme", area: "Central Phuket",
+    title: "First to the Krispy Kreme sign",
+    blurb: "First to snap the glowing Krispy Kreme sign claims it. Winner is honour-bound to buy the doughnuts. Those are the rules now." },
+  { id: "sp_starbucks", tier: "spot", pillar: "mind", cat: "Sign scramble", pts: 15,
+    place: "Starbucks", area: "Central Phuket",
+    title: "First to the Starbucks siren",
+    blurb: "The green siren is everywhere, so this is pure speed. First to snap it wins. No, the app on your home screen doesn't count." },
+  { id: "sp_trickeye", tier: "spot", pillar: "mind", cat: "Sign scramble", pts: 15,
+    place: "AR Trick Eye Museum", area: "Central Floresta",
+    title: "First to the Trick Eye sign",
+    blurb: "Snap the AR Trick Eye Museum entrance in Floresta before the other one does. Bank it, then maybe actually go in and be daft for the photos." },
+  { id: "sp_luxury", tier: "spot", pillar: "mind", cat: "Sign scramble", pts: 15,
+    place: "Any luxury flagship (LV, Gucci, etc.)", area: "Central Floresta, ground floor",
+    title: "First to a posh-brand flagship",
+    blurb: "Floresta's ground floor is all Gucci, Louis Vuitton, Prada. First to snap any luxury flagship sign wins. Window-gawping is free, thankfully." },
+
+];
+
+
+// ============================================================
+// VICTOR-SWINGS — the mechanics that keep a week alive to the final whistle.
+// Three thrills: the midweek WILDCARD (a big bonus from Thursday on, a lifeline
+// for whoever's trailing), the DAILY DOUBLE (one secret task a day scores x2,
+// revealed only on claim), and THROW-DOWN DARES (lob a personal challenge at
+// your other half). All seeded by week so both phones agree.
+// ============================================================
+
+// ---------- DAILY DOUBLE ----------
+// One dealt task per day is secretly worth double IF claimed on that day.
+// Deterministic (seeded by week+day), revealed only at the moment of claiming.
+function doubleTaskForDay(wk, day, dealt) {
+  if (!dealt || !dealt.length) return null;
+  const rng = seededRng("dd" + wk + "-" + day);
+  return dealt[Math.floor(rng() * dealt.length)].id;
+}
+// Was this specific claim a daily-double hit? Reads the real claim shape:
+// a claim carries { by, at, ... }, where `at` is the ms timestamp.
+function isDoubleClaim(wk, dealt, taskId, claim) {
+  if (!claim || !claim.at) return false;
+  const day = dayOfWeek(claim.at);
+  return doubleTaskForDay(wk, day, dealt) === taskId;
+}
+
+// ---------- MIDWEEK WILDCARD ----------
+// A big-bonus task, drawn from the everyday tiers (quick/spot) so it feels like
+// a bonus round, not a second big night out. Seeded by week; live Thursday on.
+const WILDCARD_PTS = 40;
+function wildcardForWeek(wk) {
+  const pool = CHALLENGE_BANK.filter((c) => c.tier === "quick" || c.tier === "spot");
+  if (!pool.length) return null;
+  const rng = seededRng("wc" + wk);
+  const c = pool[Math.floor(rng() * pool.length)];
+  return {
+    ...c,
+    id: "wildcard_" + c.id,
+    pts: WILDCARD_PTS,
+    tier: "wildcard",
+    wildcard: true,
+    title: "WILDCARD: " + c.title,
+  };
+}
+function wildcardLive(now) { return dayOfWeek(now) >= 3; } // Thursday (idx 3) onward
+function daysUntilWildcard(now) { return Math.max(0, 3 - dayOfWeek(now)); }
+
+// ---------- THROW-DOWN DARES ----------
+// One player lobs a personal challenge at the other. The dared player either
+// does it (both feel the stakes) or ducks it. Stored per-week like claims.
+// A landed dare is worth a cheeky bonus; a ducked dare quietly hands a point
+// to the darer, so ducking has a small cost. Kept light and playful.
+const DARE_PTS = 15;
+const DARE_IDEAS = [
+  "Order your next coffee entirely in Thai, no English rescue.",
+  "Eat the spiciest thing on the menu without reaching for water.",
+  "Say hello to the next three cats we pass, out loud, by made-up names.",
+  "Do a lap of the shop before you're allowed to buy the thing you came for.",
+  "Compliment a total stranger's outfit and mean it.",
+  "Let me pick your dinner order tonight, no vetoes.",
+  "Take the stairs, not the lift, and look pleased about it.",
+  "Wai the next songthaew driver like they're royalty.",
+];
+
+function dareKey(wk) { return "tg_dares_wk" + wk; }
+function loadDares(wk) {
+  try { return JSON.parse(localStorage.getItem(dareKey(wk)) || "[]"); }
+  catch (e) { return []; }
+}
+function saveDares(wk, dares) {
+  try { localStorage.setItem(dareKey(wk), JSON.stringify(dares)); } catch (e) {}
+}
+
+// Tally the dare economy into per-player totals (added on top of task scores).
+// A landed dare: the dared player banks DARE_PTS. A ducked dare: the darer
+// banks a consolation point (small sting for ducking).
+function tallyDares(dares) {
+  const totals = { Hammy: 0, Naddy: 0 };
+  (dares || []).forEach((d) => {
+    if (d.result === "landed" && d.to) totals[d.to] = (totals[d.to] || 0) + DARE_PTS;
+    else if (d.result === "ducked" && d.from) totals[d.from] = (totals[d.from] || 0) + 5;
+  });
+  return totals;
+}
+
+// ---------- THE DARES SCREEN ----------
+// Lob a throw-down dare at your other half, or answer one they've lobbed at you.
+// A landed dare banks DARE_PTS for the darer's victim (they were brave); a ducked
+// dare hands a small consolation to the darer. Kept light, warm, and cheeky.
+function DaresScreen({ me, dares, setDares }) {
+  const them = me === "Hammy" ? "Naddy" : "Hammy";
+  const [text, setText] = useState("");
+  const [picked, setPicked] = useState("");
+
+  const suggestion = picked || "";
+
+  function throwDare() {
+    const body = (text.trim() || suggestion).trim();
+    if (!body) return;
+    const d = { id: uid(), from: me, to: them, text: body, result: "pending", at: Date.now() };
+    setDares([...(dares || []), d]);
+    setText(""); setPicked("");
+  }
+  function answer(id, result) {
+    setDares((dares || []).map((d) => d.id === id ? { ...d, result: result } : d));
+  }
+
+  const incoming = (dares || []).filter((d) => d.to === me && d.result === "pending");
+  const outgoing = (dares || []).filter((d) => d.from === me);
+
+  return (
+    <div>
+      {/* incoming dares to answer */}
+      {incoming.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontFamily: FM, fontSize: 10, letterSpacing: ".12em", color: T.coralDk, marginBottom: 8 }}>
+            {them.toUpperCase()} DARES YOU
+          </div>
+          {incoming.map((d) => (
+            <div key={d.id} style={{ background: T.card, border: "1px solid " + T.peach, borderRadius: 14, padding: "13px 15px", marginBottom: 10 }}>
+              <div style={{ fontFamily: FB, fontSize: 14, color: T.ink, lineHeight: 1.5 }}>{d.text}</div>
+              <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+                <button onClick={() => answer(d.id, "landed")} style={{
+                  flex: 1, cursor: "pointer", background: T.good, border: "none", borderRadius: 11,
+                  padding: "9px 0", fontFamily: FH, fontWeight: 700, fontSize: 13, color: "#fff",
+                }}>Did it! +{DARE_PTS}</button>
+                <button onClick={() => answer(d.id, "ducked")} style={{
+                  flex: 1, cursor: "pointer", background: "transparent", border: "1px solid " + T.line, borderRadius: 11,
+                  padding: "9px 0", fontFamily: FH, fontWeight: 700, fontSize: 13, color: T.inkSoft,
+                }}>Ducked it</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* throw a new dare */}
+      <div style={{ background: T.card, border: "1px solid " + T.line, borderRadius: 16, padding: "15px 16px" }}>
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 15, color: T.ink }}>Throw down a dare</div>
+        <div style={{ fontFamily: FB, fontSize: 12, color: T.inkSoft, marginTop: 2, lineHeight: 1.5 }}>
+          Aim it at {them}. Write your own, or grab one of these.
+        </div>
+        <textarea value={text} onChange={(e) => { setText(e.target.value); setPicked(""); }} rows={2}
+          placeholder="Your dare..."
+          style={{ width: "100%", marginTop: 10, fontFamily: FB, fontSize: 14, color: T.ink, background: T.cream, border: "1px solid " + T.line, borderRadius: 12, padding: "11px 13px", resize: "vertical", outline: "none" }} />
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+          {DARE_IDEAS.slice(0, 4).map((idea, i) => (
+            <button key={i} onClick={() => { setPicked(idea); setText(idea); }} style={{
+              cursor: "pointer", background: text === idea ? T.peach : T.cream, border: "1px solid " + T.line,
+              borderRadius: 10, padding: "6px 10px", fontFamily: FB, fontSize: 11, color: T.ink, textAlign: "left",
+            }}>{idea.length > 34 ? idea.slice(0, 32) + "..." : idea}</button>
+          ))}
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <Btn onClick={throwDare} style={{ width: "100%" }}>Send the dare to {them}</Btn>
+        </div>
+      </div>
+
+      {/* your outgoing dares */}
+      {outgoing.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontFamily: FM, fontSize: 10, letterSpacing: ".12em", color: T.inkSoft, marginBottom: 8 }}>
+            YOUR DARES TO {them.toUpperCase()}
+          </div>
+          {outgoing.map((d) => (
+            <div key={d.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, padding: "10px 14px", background: T.card, border: "1px solid " + T.line, borderRadius: 12, marginBottom: 8 }}>
+              <span style={{ fontFamily: FB, fontSize: 12.5, color: T.ink, lineHeight: 1.4 }}>{d.text}</span>
+              <span style={{ flexShrink: 0, fontFamily: FM, fontSize: 9, letterSpacing: ".06em",
+                color: d.result === "landed" ? T.good : d.result === "ducked" ? T.coralDk : T.inkSoft }}>
+                {d.result === "landed" ? "LANDED" : d.result === "ducked" ? "DUCKED" : "PENDING"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ============================================================
+// THE VAR BOOTH — Michael Oliver reviews the replay.
+// When your opponent smells something dodgy about a claim, they can APPEAL.
+// The claim's photo goes upstairs to Michael Oliver (a real AI judge on the
+// live site; a graceful demo in preview). He is written with warmth as
+// wonderfully neurodivergent: hyper-focused, tangent-prone, needs the details
+// lined up just so, deeply fair. It's an affectionate wink, never a mock.
+//
+// The economy (from our design): 2 appeals per person per week. A FAILED appeal
+// (VAR upholds the claim) costs the appealer the task's full value AND hands
+// those points to the wrongly-accused. So appealing costs real money and can
+// genuinely backfire. Warned clearly before they commit.
+// ============================================================
+
+// How many appeals each player gets per week.
+const APPEALS_PER_WEEK = 2;
+
+// Count how many appeals a player has spent this week (from the claims map).
+function appealsSpent(claims, who) {
+  let n = 0;
+  Object.keys(claims || {}).forEach((k) => {
+    const c = claims[k];
+    if (c && c.appeal && c.appeal.by === who) n++;
+  });
+  return n;
+}
+function appealsLeft(claims, who) {
+  return Math.max(0, APPEALS_PER_WEEK - appealsSpent(claims, who));
+}
+
+// Michael Oliver's little lines, for flavour while he "reviews". Warm, precise,
+// prone to a tangent, quietly obsessive about getting it exactly right. He
+// cycles through these while the real AI deliberates, so the wait feels like
+// character rather than lag. Plenty of them, so he rarely repeats himself.
+const MO_THINKING = [
+  "Right. Give me a moment. I'm going to look at this properly.",
+  "Okay. Drawing my little lines on the screen. I do love the little lines.",
+  "Hold on. I need the whole picture before I say a word. That's only fair.",
+  "Let me just... yes. Zooming in. Details matter. Details are everything, really.",
+  "One second. I've paused it on exactly the right frame. It has to be the right frame.",
+  "Now, I'm not going to be rushed on this. A good decision is never a fast one.",
+  "Interesting. There's a lot going on in the corner here. Bear with me.",
+  "I'm going to watch it once more. And possibly once more after that.",
+  "Mm. The lighting's tricky, but I've seen trickier. Stay with me.",
+  "Just lining up the grid. Everything's better with a grid, I find.",
+  "I want to be fair to both of you. So I'm being thorough. Very thorough.",
+  "Hang on, let me check the angle. Angles have undone better claims than this.",
+  "Nearly there. I never call it until I'm sure. That wouldn't be right.",
+  "You'd be amazed what people miss when they hurry. I never hurry.",
+];
+const MO_UPHOLD = [
+  "No. That's a good claim. I've checked it three times and I'm satisfied. Play on.",
+  "The evidence is clear and it's clean. Claim stands. And can I just say, tidy work.",
+  "I see no offence here. None. The claim is good. I'm confident, and I'm rarely confident.",
+];
+const MO_OVERTURN = [
+  "No. I'm sorry, but no. The evidence doesn't support it. Claim overturned.",
+  "That doesn't show what it needs to show. I've looked closely. Overturned, I'm afraid.",
+  "I can't allow this one. It's not there in the picture. It has to be in the picture. Overturned.",
+];
+
+// Build the prompt we'd send to the real backend judge on the live site.
+function buildVarPrompt(task, claim, accuserNote) {
+  return [
+    "You are Michael Oliver, working the VAR booth for a playful two-person",
+    "challenge game in Phuket. You are warm, fair, and wonderfully particular",
+    "(hyper-focused, prone to a gentle tangent, you like details lined up just so).",
+    "Judge ONLY whether the photo genuinely shows the task completed.",
+    "",
+    "TASK: " + task.title,
+    "WHAT COUNTS: " + task.blurb,
+    accuserNote ? ("THE APPEAL (opponent's doubt): " + accuserNote) : "",
+    "",
+    "Reply as JSON only: {\"verdict\":\"uphold\"|\"overturn\",\"line\":\"one warm, in-character sentence\"}.",
+    "Uphold = the claim is good and stands. Overturn = the photo doesn't support it.",
+    "Be fair and a little generous; only overturn if the photo clearly fails.",
+  ].filter(Boolean).join("\n");
+}
+
+
+// ---------- the appeal flow: warn -> review -> verdict ----------
+// Phases: "warn" (are you sure? it costs money and can backfire)
+//         "review" (Michael Oliver is looking...)
+//         "verdict" (upheld or overturned + consequences)
+function VarSheet({ task, claim, me, onResolve, onClose }) {
+  const [phase, setPhase] = useState("warn");
+  const [moLine, setMoLine] = useState("");
+  const [result, setResult] = useState(null); // 'upheld' | 'overturned'
+
+  const accused = claim.by;                    // who made the claim
+  const value = task.pts;
+
+  // Run the review. On the live site this calls the backend judge; in preview
+  // (no backend) it falls back to a graceful, slightly-generous demo verdict.
+  function startReview() {
+    setPhase("review");
+    setMoLine(pick(MO_THINKING));
+
+    // Keep Michael Oliver muttering his particular thoughts THROUGHOUT the wait,
+    // so the few seconds of genuine AI deliberation feel like character, not lag.
+    // The longer he takes, the more of his charm you get. Cleared the instant he rules.
+    let thinkTimer = setInterval(() => { setMoLine(pick(MO_THINKING)); }, 2100);
+    const stopThinking = () => { if (thinkTimer) { clearInterval(thinkTimer); thinkTimer = null; } };
+
+    const finish = (verdict, spokenLine) => {
+      stopThinking();
+      const upheld = verdict === "uphold";
+      setResult(upheld ? "upheld" : "overturned");
+      // Prefer Michael Oliver's own words from the backend; else a character line.
+      setMoLine(spokenLine || pick(upheld ? MO_UPHOLD : MO_OVERTURN));
+      setPhase("verdict");
+    };
+
+    // The real judge needs a public photo URL (uploaded on claim). If we have
+    // one, ask Michael Oliver for real (live Vercel). Otherwise, and as a
+    // fallback in preview, use the graceful demo verdict.
+    let settled = false;
+    const demoTimer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      const hasPhoto = !!(claim.photo || claim.photoUrl);
+      // generous: uphold ~75% if there's a photo, ~35% if there isn't
+      const upheld = Math.random() < (hasPhoto ? 0.75 : 0.35);
+      finish(upheld ? "uphold" : "overturn", null);
+    }, 2600);
+
+    if (claim.photoUrl) {
+      try {
+        fetch("/api/oliver", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: claim.photoUrl,
+            taskTitle: task.title,
+            taskBlurb: task.blurb || "",
+            accuserNote: "",
+          }),
+        })
+          .then((r) => r.ok ? r.json() : Promise.reject())
+          .then((data) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(demoTimer);
+            const verdict = (data && data.verdict === "overturn") ? "overturn" : "uphold";
+            const spokenLine = data && typeof data.line === "string" ? data.line : null;
+            finish(verdict, spokenLine);
+          })
+          .catch(() => { /* demo timer handles it */ });
+      } catch (e) { /* demo timer handles it */ }
+    }
+  }
+
+  function applyVerdict() {
+    // 'overturned' -> claim falls (points removed from accused).
+    // 'upheld'     -> failed appeal: appealer loses task value, accused gains it.
+    onResolve({ result: result === "upheld" ? "upheld" : "overturned", by: me });
+  }
+
+  const p = PLAYERS[me];
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 70, display: "flex", flexDirection: "column",
+      justifyContent: "center", alignItems: "center", padding: 24,
+      background: "rgba(30,22,18,.55)", backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)",
+    }}>
+      <div style={{
+        width: "100%", maxWidth: 340, background: T.card, borderRadius: 22,
+        padding: "22px 20px 20px", animation: "tgPop .35s ease both",
+        boxShadow: "0 18px 50px rgba(30,22,18,.4)",
+      }}>
+        {/* header */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <div style={{
+            width: 34, height: 34, borderRadius: 10, background: "#1e2a38",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontFamily: FM, fontWeight: 700, fontSize: 13, color: "#fff",
+          }}>VAR</div>
+          <div>
+            <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 15, color: T.ink, lineHeight: 1 }}>Michael Oliver</div>
+            <div style={{ fontFamily: FM, fontSize: 9, color: T.inkSoft, letterSpacing: ".1em", marginTop: 3 }}>PITCHSIDE MONITOR</div>
+          </div>
+        </div>
+
+        {phase === "warn" && (
+          <div>
+            <div style={{ marginTop: 14, fontFamily: FB, fontSize: 13.5, color: T.ink, lineHeight: 1.55 }}>
+              You're challenging <b style={{ color: PLAYERS[accused].colour }}>{accused}</b>'s claim on
+              <b> "{task.title}"</b>.
+            </div>
+            <div style={{
+              marginTop: 12, background: "#fff3ee", border: "1px solid " + T.peach, borderRadius: 12,
+              padding: "12px 14px", fontFamily: FB, fontSize: 12.5, color: T.coralDk, lineHeight: 1.55,
+            }}>
+              Waking the VAR booth costs real money. And it can backfire: if Michael Oliver
+              rules the claim <b>good</b>, you lose <b>{value} points</b> and {accused} is handed them.
+              Choose wisely, you only get {APPEALS_PER_WEEK} appeals a week.
+            </div>
+            <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
+              <button onClick={onClose} style={{
+                flex: 1, background: "transparent", border: "1px solid " + T.line, borderRadius: 14,
+                padding: "11px 0", cursor: "pointer", fontFamily: FH, fontWeight: 700, fontSize: 14, color: T.inkSoft,
+              }}>Let it go</button>
+              <button onClick={startReview} style={{
+                flex: 1, background: "#1e2a38", border: "none", borderRadius: 14,
+                padding: "11px 0", cursor: "pointer", fontFamily: FH, fontWeight: 700, fontSize: 14, color: "#fff",
+              }}>Send to VAR</button>
+            </div>
+          </div>
+        )}
+
+        {phase === "review" && (
+          <div style={{ marginTop: 18, textAlign: "center", padding: "10px 0 6px" }}>
+            <div style={{ fontFamily: FB, fontSize: 14, color: T.ink, lineHeight: 1.6, fontStyle: "italic" }}>
+              {moLine}
+            </div>
+            <div style={{ marginTop: 16, fontFamily: FM, fontSize: 10, color: T.inkSoft, letterSpacing: ".14em" }}>
+              REVIEWING…
+            </div>
+          </div>
+        )}
+
+        {phase === "verdict" && (
+          <div style={{ marginTop: 16 }}>
+            <div style={{
+              textAlign: "center", fontFamily: FH, fontWeight: 700, fontSize: 20,
+              color: result === "overturned" ? T.good : T.coralDk,
+            }}>
+              {result === "overturned" ? "OVERTURNED" : "CLAIM STANDS"}
+            </div>
+            <div style={{ marginTop: 10, fontFamily: FB, fontSize: 13.5, color: T.ink, lineHeight: 1.6, fontStyle: "italic", textAlign: "center" }}>
+              "{moLine}"
+            </div>
+            <div style={{
+              marginTop: 14, fontFamily: FB, fontSize: 12.5, lineHeight: 1.55, textAlign: "center",
+              color: result === "overturned" ? T.good : T.coralDk,
+            }}>
+              {result === "overturned"
+                ? accused + " loses the " + value + " points. Justice done."
+                : "Failed appeal. You lose " + value + " points and " + accused + " is handed them. Ouch."}
+            </div>
+            <div style={{ marginTop: 16 }}>
+              <Btn onClick={applyVerdict} style={{ width: "100%" }}>Accept the ruling</Btn>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// THE WEEKLY BOARD — the heart of the game.
+// 25 challenges dealt per week, shown in closed groups by pillar (tap to open).
+// First to claim a task locks it: banks the points, captures photo + caption +
+// optional taunt. Team-up tasks score for both. Mobile-first: closed lists,
+// compact, emoji only for genuine wow.
+//
+// This phase builds the deal, the closed groups, and the claim-with-photo flow
+// (with optional Bluesky share). VAR appeals, wildcard, daily-double, dares
+// follow in their own phases.
+// ============================================================
+
+// ---------- per-week claim persistence (device-local) ----------
+// Stored under a per-week key so each week keeps its own board of claims.
+// Shape: { [taskId]: { by, at, photo, caption, taunt } }
+function claimsKey(wk) { return "tg_claims_wk" + wk; }
+function loadClaims(wk) {
+  try { return JSON.parse(localStorage.getItem(claimsKey(wk)) || "{}"); }
+  catch (e) { return {}; }
+}
+function saveClaims(wk, claims) {
+  try { localStorage.setItem(claimsKey(wk), JSON.stringify(claims)); } catch (e) {}
+}
+
+// ---------- deal this week's board, grouped by TIER ----------
+// The quick-win model: a pile of tiny near-home wins, a few sign-scramble races,
+// and one big weekly centrepiece. Grouped by tier for the closed-list display.
+const TIER_META = {
+  quick: { label: "Quick wins", sub: "little local things, knock 'em off", accent: "#ff8a5c" },
+  spot:  { label: "Sign scrambles", sub: "first to snap it wins", accent: "#5b9bd5" },
+  big:   { label: "The big one", sub: "this week's centrepiece", accent: "#e0577a" },
+};
+const TIER_ORDER = ["quick", "spot", "big"];
+
+// How many of each tier to deal per week.
+const DEAL_COUNTS = { quick: 10, spot: 3, big: 1 };
+
+// Deterministic weekly deal, drawn per-tier so the mix is always right.
+// Seeded by week number, so both phones agree on the identical board.
+function dealtBoard(wk) {
+  const byTier = { quick: [], spot: [], big: [] };
+  CHALLENGE_BANK.forEach((t) => { (byTier[t.tier] || byTier.quick).push(t); });
+
+  const groups = { quick: [], spot: [], big: [] };
+  TIER_ORDER.forEach((tier) => {
+    const pool = seededShuffle(byTier[tier], "board-" + tier + "-wk" + wk);
+    const want = DEAL_COUNTS[tier] || 0;
+    groups[tier] = pool.slice(0, Math.min(want, pool.length));
+  });
+  const dealt = TIER_ORDER.reduce((acc, tier) => acc.concat(groups[tier]), []);
+  return { dealt, groups };
+}
+
+// ---------- live score from claims: base points, team-ups, doubles, VAR ----------
+function tallyScores(dealt, claims, wk) {
+  const totals = { Hammy: 0, Naddy: 0 };
+  dealt.forEach((t) => {
+    const c = claims[t.id];
+    if (!c || !c.by) return;
+
+    const ap = c.appeal;
+    // Overturned claim: it falls. Nobody banks the base points.
+    if (ap && ap.result === "overturned") return;
+
+    // Daily-double: if this claim landed on its secret double-day, points x2.
+    let pts = t.pts;
+    if (wk != null && isDoubleClaim(wk, dealt, t.id, c)) pts = pts * 2;
+
+    // Award the points (team tasks score for both).
+    if (t.team) { totals.Hammy += pts; totals.Naddy += pts; }
+    else { totals[c.by] = (totals[c.by] || 0) + pts; }
+
+    // Failed appeal (claim upheld): the appealer forfeits the task's value and
+    // it's handed to the wrongly-accused claimant.
+    if (ap && ap.result === "upheld" && ap.by) {
+      totals[ap.by] = (totals[ap.by] || 0) - pts;
+      totals[c.by] = (totals[c.by] || 0) + pts;
+    }
+  });
+  return totals;
+}
+
+
+// ---------- auto caption + taunt banks (choose auto, or write your own) ----------
+function autoCaption(task, who) {
+  const opts = [
+    `Just claimed "${task.title}" for the ${PLAYERS[who].club} cause. ${task.pts} points, thank you very much.`,
+    `${task.title}: done. That's ${task.pts} on the board for ${who}.`,
+    `Touched some grass. "${task.title}" is mine. ${PLAYERS[who].chant}.`,
+    `Banked "${task.title}" (+${task.pts}). Phuket is our playground now.`,
+  ];
+  return pick(opts);
+}
+function autoTaunt(task, who) {
+  const other = who === "Hammy" ? "Naddy" : "Hammy";
+  const opts = [
+    `Better luck next time, ${other}.`,
+    `That one's off the board, ${other}. Slow hands.`,
+    `${other} was still deciding. I decided.`,
+    `Imagine not claiming this one, ${other}.`,
+    `One for me, none for you, ${other}.`,
+  ];
+  return pick(opts);
+}
+
+// ---------- the claim sheet: photo + caption + optional taunt + share ----------
+function ClaimSheet({ task, who, onDone, onClose }) {
+  const [photo, setPhoto] = useState(null);   // data URL preview (device-local)
+  const [capMode, setCapMode] = useState("auto"); // 'auto' | 'own'
+  const [ownCap, setOwnCap] = useState("");
+  const [taunt, setTaunt] = useState("");
+  const fileRef = useRef(null);
+
+  const auto = autoCaption(task, who);
+  const caption = capMode === "auto" ? auto : ownCap;
+
+  function onFile(e) {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => setPhoto(String(r.result));
+    r.readAsDataURL(f);
+  }
+
+  function confirm(share) {
+    onDone({
+      photo: photo || null,
+      caption: caption || auto,
+      taunt: taunt.trim() || autoTaunt(task, who),
+      share: !!share,
+    });
+  }
+
+  const p = PLAYERS[who];
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 60, display: "flex", flexDirection: "column",
+      justifyContent: "flex-end", background: "rgba(74,59,51,.4)",
+      backdropFilter: "blur(3px)", WebkitBackdropFilter: "blur(3px)",
+    }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: T.cream, borderTopLeftRadius: 26, borderTopRightRadius: 26,
+        padding: "20px 20px 26px", maxHeight: "92vh", overflowY: "auto",
+        animation: "tgFadeUp .3s ease both", boxShadow: "0 -12px 40px rgba(74,59,51,.22)",
+      }}>
+        <div style={{ width: 40, height: 4, borderRadius: 2, background: T.peach, margin: "0 auto 16px" }} />
+
+        <div style={{ fontFamily: FM, fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase", color: p.colour }}>
+          {p.name} claims · +{task.pts}{task.team ? " (both score)" : ""}
+        </div>
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 20, color: T.ink, lineHeight: 1.25, marginTop: 6 }}>
+          {task.title}
+        </div>
+
+        {/* photo proof */}
+        <div style={{ marginTop: 16 }}>
+          <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={onFile} style={{ display: "none" }} />
+          {photo ? (
+            <div onClick={() => fileRef.current && fileRef.current.click()} style={{
+              borderRadius: 16, overflow: "hidden", border: "2px solid " + T.line, cursor: "pointer",
+            }}>
+              <img src={photo} alt="proof" style={{ width: "100%", display: "block", maxHeight: 260, objectFit: "cover" }} />
+            </div>
+          ) : (
+            <button onClick={() => fileRef.current && fileRef.current.click()} style={{
+              width: "100%", border: "2px dashed " + T.peach, background: T.card, borderRadius: 16,
+              padding: "26px 16px", cursor: "pointer", fontFamily: FH, fontWeight: 700, fontSize: 15, color: T.inkSoft,
+            }}>
+              Snap the proof
+              <span style={{ display: "block", fontFamily: FB, fontWeight: 600, fontSize: 12, color: T.inkSoft, marginTop: 4 }}>
+                Photo evidence, or the VAR booth may come calling.
+              </span>
+            </button>
+          )}
+        </div>
+
+        {/* caption: auto vs own */}
+        <div style={{ marginTop: 18 }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            {["auto", "own"].map((m) => (
+              <button key={m} onClick={() => setCapMode(m)} style={{
+                flex: 1, cursor: "pointer", borderRadius: 12, padding: "9px 0",
+                fontFamily: FH, fontWeight: 700, fontSize: 13,
+                border: "1px solid " + (capMode === m ? p.colour : T.line),
+                background: capMode === m ? p.colour : T.card,
+                color: capMode === m ? "#fff" : T.inkSoft,
+              }}>{m === "auto" ? "Auto caption" : "Write my own"}</button>
+            ))}
+          </div>
+          {capMode === "auto" ? (
+            <div style={{ fontFamily: FB, fontSize: 14, color: T.ink, lineHeight: 1.5, background: T.card, border: "1px solid " + T.line, borderRadius: 12, padding: "12px 14px" }}>
+              {auto}
+            </div>
+          ) : (
+            <textarea value={ownCap} onChange={(e) => setOwnCap(e.target.value)} rows={3}
+              placeholder="Your own words. Make them count."
+              style={{ width: "100%", fontFamily: FB, fontSize: 14, color: T.ink, background: T.card, border: "1px solid " + T.line, borderRadius: 12, padding: "12px 14px", resize: "vertical", outline: "none" }} />
+          )}
+        </div>
+
+        {/* optional taunt */}
+        <div style={{ marginTop: 14 }}>
+          <input value={taunt} onChange={(e) => setTaunt(e.target.value)}
+            placeholder="Optional taunt (or we'll auto-generate one)"
+            style={{ width: "100%", fontFamily: FB, fontSize: 13, color: T.ink, background: T.card, border: "1px solid " + T.line, borderRadius: 12, padding: "11px 14px", outline: "none" }} />
+        </div>
+
+        {/* actions */}
+        <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 10 }}>
+          <Btn onClick={() => confirm(false)} style={{ width: "100%" }}>
+            Claim it{task.team ? " (both score)" : " · +" + task.pts}
+          </Btn>
+          <button onClick={() => confirm(true)} style={{
+            width: "100%", cursor: "pointer", background: "#0a7aff", border: "none", borderRadius: 16,
+            padding: "13px 0", fontFamily: FH, fontWeight: 700, fontSize: 14, color: "#fff",
+          }}>Claim & share to Bluesky</button>
+          <button onClick={onClose} style={{
+            width: "100%", cursor: "pointer", background: "transparent", border: "none",
+            padding: "6px 0", fontFamily: FH, fontWeight: 700, fontSize: 13, color: T.inkSoft,
+          }}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ---------- the claim detail sheet: tap a thumbnail to see the whole story ----------
+// Enlarged photo, the caption + taunt in full, the VAR appeal story if there was
+// one, and a Bluesky share button. Pure presentation of what the claim already
+// holds; nothing new is captured here.
+function ClaimDetail({ task, claim, onClose, onShare }) {
+  const claimer = claim && claim.by ? PLAYERS[claim.by] : null;
+  const ap = claim && claim.appeal;
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, zIndex: 65, display: "flex", flexDirection: "column",
+      justifyContent: "flex-end", background: "rgba(74,59,51,.45)",
+      backdropFilter: "blur(3px)", WebkitBackdropFilter: "blur(3px)",
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: T.cream, borderTopLeftRadius: 26, borderTopRightRadius: 26,
+        padding: "20px 20px 26px", maxHeight: "92vh", overflowY: "auto",
+        animation: "tgFadeUp .3s ease both", boxShadow: "0 -12px 40px rgba(74,59,51,.22)",
+      }}>
+        <div style={{ width: 40, height: 4, borderRadius: 2, background: T.peach, margin: "0 auto 16px" }} />
+
+        <div style={{ fontFamily: FM, fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase", color: claimer ? claimer.colour : T.inkSoft }}>
+          {task.team ? "Done together" : (claimer ? claimer.name + " claimed this" : "Claimed")} · +{task.pts}
+        </div>
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 20, color: T.ink, lineHeight: 1.25, marginTop: 6 }}>
+          {task.title}
+        </div>
+
+        {/* the enlarged photo */}
+        {claim && claim.photo ? (
+          <div style={{ marginTop: 16, borderRadius: 16, overflow: "hidden", border: "1px solid " + T.line }}>
+            <img src={claim.photo} alt="proof" style={{ width: "100%", display: "block" }} />
+          </div>
+        ) : (
+          <div style={{
+            marginTop: 16, borderRadius: 16, border: "1px dashed " + T.peach, padding: "26px 16px",
+            textAlign: "center", fontFamily: FB, fontSize: 12.5, color: T.inkSoft,
+          }}>
+            No photo on this one. The evidence lives only in memory now.
+          </div>
+        )}
+
+        {/* the caption */}
+        {claim && claim.caption ? (
+          <div style={{ marginTop: 14, fontFamily: FB, fontSize: 14, color: T.ink, lineHeight: 1.55 }}>
+            {claim.caption}
+          </div>
+        ) : null}
+
+        {/* the taunt */}
+        {claim && claim.taunt && !task.team ? (
+          <div style={{ marginTop: 10, fontFamily: FB, fontSize: 13, fontStyle: "italic", color: T.inkSoft, lineHeight: 1.5 }}>
+            "{claim.taunt}"
+          </div>
+        ) : null}
+
+        {/* the VAR story, if there was an appeal */}
+        {ap ? (
+          <div style={{
+            marginTop: 16, borderRadius: 14, padding: "13px 15px",
+            background: ap.result === "overturned" ? "rgba(63,174,122,.1)" : "rgba(240,106,60,.09)",
+            border: "1px solid " + (ap.result === "overturned" ? "rgba(63,174,122,.35)" : "rgba(240,106,60,.3)"),
+          }}>
+            <div style={{ fontFamily: FM, fontSize: 9, letterSpacing: ".14em", color: "#1e2a38" }}>
+              MICHAEL OLIVER · VAR
+            </div>
+            <div style={{
+              marginTop: 6, fontFamily: FH, fontWeight: 700, fontSize: 16,
+              color: ap.result === "overturned" ? T.good : T.coralDk,
+            }}>
+              {ap.result === "overturned" ? "Overturned" : "Claim stood"}
+            </div>
+            <div style={{ marginTop: 5, fontFamily: FB, fontSize: 12.5, color: T.ink, lineHeight: 1.55 }}>
+              {ap.by ? (PLAYERS[ap.by] ? PLAYERS[ap.by].name : ap.by) + " sent it upstairs. " : ""}
+              {ap.result === "overturned"
+                ? "The evidence didn't hold up, so the claim fell."
+                : "The claim was good, so the appeal backfired."}
+            </div>
+          </div>
+        ) : null}
+
+        {/* actions */}
+        <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 10 }}>
+          <button onClick={() => onShare && onShare(task, claim)} style={{
+            width: "100%", cursor: "pointer", background: "#0a7aff", border: "none", borderRadius: 16,
+            padding: "13px 0", fontFamily: FH, fontWeight: 700, fontSize: 14, color: "#fff",
+          }}>Share to Bluesky</button>
+          <button onClick={onClose} style={{
+            width: "100%", cursor: "pointer", background: "transparent", border: "none",
+            padding: "6px 0", fontFamily: FH, fontWeight: 700, fontSize: 13, color: T.inkSoft,
+          }}>Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- a single task row within an open group ----------
+function TaskRow({ task, claim, onClaim, me, onAppeal, canAppeal, onOpenDetail }) {
+  const claimed = claim && claim.by;
+  const claimer = claimed ? PLAYERS[claim.by] : null;
+  return (
+    <div style={{
+      padding: "12px 14px", borderTop: "1px solid " + T.line,
+      opacity: claimed && !task.team ? 0.66 : 1,
+    }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 14.5, color: T.ink, lineHeight: 1.25 }}>
+            {task.title}
+            {task.dry ? <span style={{ fontFamily: FM, fontSize: 8.5, color: T.sun, marginLeft: 6, letterSpacing: ".05em" }}>DRY DAY</span> : null}
+          </div>
+          <div style={{ fontFamily: FB, fontSize: 12, color: T.inkSoft, lineHeight: 1.5, marginTop: 3 }}>
+            {task.blurb}
+          </div>
+          {task.place ? (
+            <div style={{ marginTop: 6, fontFamily: FM, fontSize: 10, color: T.coralDk, lineHeight: 1.5 }}>
+              📍 {task.place}{task.area ? " · " + task.area : ""}
+              {task.hours ? <span style={{ display: "block", color: T.inkSoft, marginTop: 1 }}>{task.hours}</span> : null}
+            </div>
+          ) : null}
+        </div>
+        <div style={{ flexShrink: 0, textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+          <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 15, color: T.coral }}>+{task.pts}</div>
+          {task.team ? <div style={{ fontFamily: FM, fontSize: 8, color: T.inkSoft, letterSpacing: ".08em" }}>TEAM</div> : null}
+          {/* tappable proof thumbnail on a claimed card */}
+          {claimed && claim.photo ? (
+            <div onClick={() => onOpenDetail && onOpenDetail(task)} style={{
+              width: 46, height: 46, borderRadius: 10, overflow: "hidden",
+              border: "1px solid " + T.line, cursor: "pointer", position: "relative",
+            }}>
+              <img src={claim.photo} alt="proof" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {claimed ? (
+        <div style={{ marginTop: 10 }}>
+          <div style={{
+            fontFamily: FB, fontSize: 12, fontWeight: 700,
+            color: claimer.colour, display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <span style={{ width: 8, height: 8, borderRadius: 4, background: claimer.colour, display: "inline-block" }} />
+            {task.team ? "Done together" : claimer.name + " claimed this"}
+          </div>
+          {claim.taunt && !task.team ? (
+            <div style={{ marginTop: 5, fontFamily: FB, fontSize: 11.5, fontStyle: "italic", color: T.inkSoft }}>
+              "{claim.taunt}"
+            </div>
+          ) : null}
+          {/* tap to see the whole story (photo, words, VAR) */}
+          <button onClick={() => onOpenDetail && onOpenDetail(task)} style={{
+            marginTop: 8, marginRight: 8, cursor: "pointer", background: "transparent",
+            border: "1px solid " + T.line, borderRadius: 10, padding: "6px 12px",
+            fontFamily: FH, fontWeight: 700, fontSize: 11.5, color: T.inkSoft,
+          }}>See details ›</button>
+          {/* the non-claimer can send it to VAR (if not a team task, not already appealed, appeals left) */}
+          {!task.team && claim.by !== me && !claim.appeal && canAppeal ? (
+            <button onClick={() => onAppeal(task)} style={{
+              marginTop: 8, cursor: "pointer", background: "transparent",
+              border: "1px solid #1e2a38", borderRadius: 10, padding: "6px 12px",
+              fontFamily: FH, fontWeight: 700, fontSize: 11.5, color: "#1e2a38",
+            }}>Send to VAR ›</button>
+          ) : null}
+          {claim.appeal ? (
+            <div style={{
+              marginTop: 8, fontFamily: FM, fontSize: 10, letterSpacing: ".06em",
+              color: claim.appeal.result === "overturned" ? T.good : T.coralDk,
+            }}>
+              {claim.appeal.result === "overturned" ? "VAR: OVERTURNED" : "VAR: CLAIM STOOD"}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div style={{ marginTop: 10 }}>
+          <button onClick={() => onClaim(task)} style={{
+            cursor: "pointer", background: T.peach, border: "none", borderRadius: 11,
+            padding: "8px 16px", fontFamily: FH, fontWeight: 700, fontSize: 13, color: T.coralDk,
+          }}>Claim ›</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- a closed-by-default tier group ----------
+function TierGroup({ tier, tasks, claims, onClaim, open, onToggle, me, onAppeal, canAppeal, onOpenDetail }) {
+  const meta = TIER_META[tier];
+  const claimedCount = tasks.filter((t) => claims[t.id] && claims[t.id].by).length;
+  return (
+    <div style={{ background: T.card, border: "1px solid " + T.line, borderRadius: 16, overflow: "hidden" }}>
+      <button onClick={onToggle} style={{
+        width: "100%", cursor: "pointer", background: "transparent", border: "none",
+        borderLeft: "4px solid " + meta.accent, padding: "14px 15px",
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, textAlign: "left",
+      }}>
+        <span>
+          <span style={{ display: "block", fontFamily: FH, fontWeight: 700, fontSize: 16, color: T.ink }}>{meta.label}</span>
+          <span style={{ display: "block", fontFamily: FB, fontSize: 11.5, color: T.inkSoft, marginTop: 1 }}>{meta.sub}</span>
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+          <span style={{ fontFamily: FM, fontSize: 10, color: T.inkSoft }}>{claimedCount}/{tasks.length}</span>
+          <span style={{ fontFamily: FH, fontSize: 18, color: T.peach, transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }}>›</span>
+        </span>
+      </button>
+      {open && (
+        <div>
+          {tasks.map((t) => (
+            <TaskRow key={t.id} task={t} claim={claims[t.id]} onClaim={onClaim}
+              me={me} onAppeal={onAppeal} canAppeal={canAppeal} onOpenDetail={onOpenDetail} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- THE BOARD SCREEN ----------
+function Board({ now, who, claims, setClaims, wildcard, wk: wkProp, onShare }) {
+  const wk = wkProp != null ? wkProp : weekNumber(now);
+  const { groups, dealt } = dealtBoard(wk);
+  const [openTier, setOpenTier] = useState("quick"); // quick open by default; it's the everyday one
+  const [claiming, setClaiming] = useState(null);     // task being claimed
+  const [appealing, setAppealing] = useState(null);   // task being appealed
+  const [doubleHit, setDoubleHit] = useState(null);   // {title, pts} when a double lands
+  const [detailTask, setDetailTask] = useState(null); // claimed task whose detail is open
+
+  const myAppealsLeft = appealsLeft(claims, who);
+
+  // the pool the daily-double checks against (board + live wildcard)
+  const doublePool = wildcard ? dealt.concat([wildcard]) : dealt;
+
+  // Upload a claim's photo to a public URL (for VAR + Bluesky). Data-URL only
+  // lives on the phone; the backend needs a fetchable URL. Fires in the
+  // background so the claim registers instantly; the URL fills in when ready.
+  // On the live site this hits /api/tg-photo; in preview it simply no-ops.
+  function uploadPhotoInBackground(taskId, dataUrl) {
+    if (!dataUrl || dataUrl.indexOf("data:") !== 0) return;
+    try {
+      const comma = dataUrl.indexOf(",");
+      const meta = dataUrl.slice(5, comma);         // e.g. image/jpeg;base64
+      const b64 = dataUrl.slice(comma + 1);
+      const ext = meta.indexOf("png") >= 0 ? "png" : meta.indexOf("webp") >= 0 ? "webp" : "jpg";
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      fetch("/api/tg-photo?ext=" + ext, {
+        method: "POST",
+        headers: { "Content-Type": "application/octet-stream" },
+        body: bytes,
+      })
+        .then((r) => r.ok ? r.json() : Promise.reject())
+        .then((data) => {
+          if (!data || !data.url) return;
+          // stamp the public URL onto the stored claim
+          setClaims(wk, (prev) => {
+            const cur = prev && prev[taskId];
+            if (!cur) return prev;
+            return { ...prev, [taskId]: { ...cur, photoUrl: data.url } };
+          });
+        })
+        .catch(() => { /* preview / offline: fine, VAR falls back to demo */ });
+    } catch (e) { /* preview or unsupported: no-op */ }
+  }
+
+  function doClaim(task, detail) {
+    const claim = {
+      by: who, at: Date.now(),
+      photo: detail.photo, caption: detail.caption, taunt: detail.taunt,
+      shared: detail.share || false,
+    };
+    const next = { ...claims, [task.id]: claim };
+    setClaims(wk, next);
+    setClaiming(null);
+    // upload the proof photo in the background (for VAR eyes + Bluesky embed)
+    uploadPhotoInBackground(task.id, detail.photo);
+    // Daily-double reveal: if this claim landed on its secret double-day, cheer.
+    if (isDoubleClaim(wk, doublePool, task.id, claim)) {
+      setDoubleHit({ title: task.title, pts: task.pts });
+    }
+    // Bluesky posting fires on the live site via the backend; in preview it's a
+    // no-op. We record the intent (shared:true) either way.
+  }
+
+  function resolveAppeal(task, verdict) {
+    const existing = claims[task.id];
+    if (!existing) { setAppealing(null); return; }
+    const next = { ...claims, [task.id]: {
+      ...existing,
+      appeal: { by: verdict.by, result: verdict.result, judged: Date.now() },
+    } };
+    setClaims(wk, next);
+    setAppealing(null);
+  }
+
+  return (
+    <div>
+      {/* the live wildcard, when it's out (Thursday on): a big highlighted card */}
+      {wildcard ? (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{
+            background: "linear-gradient(135deg,#ffd9c2,#ffc24d)",
+            border: "1px solid " + T.sun, borderRadius: 16, padding: "14px 16px",
+          }}>
+            <div style={{ fontFamily: FM, fontSize: 9.5, letterSpacing: ".14em", color: T.coralDk }}>
+              MIDWEEK WILDCARD · +{wildcard.pts}
+            </div>
+            <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 17, color: T.ink, marginTop: 5, lineHeight: 1.25 }}>
+              {wildcard.title.replace(/^WILDCARD:\s*/, "")}
+            </div>
+            <div style={{ fontFamily: FB, fontSize: 12, color: T.ink, opacity: .85, lineHeight: 1.5, marginTop: 4 }}>
+              {wildcard.blurb}
+            </div>
+            {claims[wildcard.id] && claims[wildcard.id].by ? (
+              <div onClick={() => setDetailTask(wildcard)} style={{ marginTop: 9, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
+                {claims[wildcard.id].photo ? (
+                  <div style={{ width: 34, height: 34, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,.5)" }}>
+                    <img src={claims[wildcard.id].photo} alt="proof" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  </div>
+                ) : null}
+                <span style={{ fontFamily: FB, fontSize: 12, fontWeight: 700, color: PLAYERS[claims[wildcard.id].by].colour }}>
+                  {claims[wildcard.id].by} grabbed the wildcard · details ›
+                </span>
+              </div>
+            ) : (
+              <button onClick={() => setClaiming(wildcard)} style={{
+                marginTop: 10, cursor: "pointer", background: T.coralDk, border: "none",
+                borderRadius: 11, padding: "9px 18px", fontFamily: FH, fontWeight: 700, fontSize: 13, color: "#fff",
+              }}>Grab it ›</button>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {TIER_ORDER.map((tier) => (
+        <div key={tier} style={{ marginBottom: 12 }}>
+          <TierGroup
+            tier={tier}
+            tasks={groups[tier]}
+            claims={claims}
+            open={openTier === tier}
+            onToggle={() => setOpenTier(openTier === tier ? null : tier)}
+            onClaim={(t) => setClaiming(t)}
+            me={who}
+            onAppeal={(t) => setAppealing(t)}
+            canAppeal={myAppealsLeft > 0}
+            onOpenDetail={(t) => setDetailTask(t)}
+          />
+        </div>
+      ))}
+
+      {claiming && (
+        <ClaimSheet
+          task={claiming}
+          who={who}
+          onClose={() => setClaiming(null)}
+          onDone={(detail) => doClaim(claiming, detail)}
+        />
+      )}
+
+      {detailTask && claims[detailTask.id] && (
+        <ClaimDetail
+          task={detailTask}
+          claim={claims[detailTask.id]}
+          onClose={() => setDetailTask(null)}
+          onShare={(t, c) => { if (onShare) onShare(t, c); }}
+        />
+      )}
+
+      {appealing && claims[appealing.id] && (
+        <VarSheet
+          task={appealing}
+          claim={claims[appealing.id]}
+          me={who}
+          onClose={() => setAppealing(null)}
+          onResolve={(verdict) => resolveAppeal(appealing, verdict)}
+        />
+      )}
+
+      {doubleHit && (
+        <div onClick={() => setDoubleHit(null)} style={{
+          position: "fixed", inset: 0, zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center",
+          padding: 28, background: "rgba(30,22,18,.5)", backdropFilter: "blur(4px)", WebkitBackdropFilter: "blur(4px)",
+        }}>
+          <div style={{
+            background: T.card, borderRadius: 22, padding: "26px 24px", textAlign: "center",
+            maxWidth: 320, animation: "tgPop .4s ease both", boxShadow: "0 18px 50px rgba(30,22,18,.4)",
+          }}>
+            <div style={{ fontFamily: FM, fontSize: 11, letterSpacing: ".18em", color: T.coral }}>DAILY DOUBLE</div>
+            <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 26, color: T.ink, marginTop: 8 }}>x2 points!</div>
+            <div style={{ fontFamily: FB, fontSize: 13.5, color: T.inkSoft, lineHeight: 1.55, marginTop: 8 }}>
+              "{doubleHit.title}" was today's secret double. {doubleHit.pts} becomes {doubleHit.pts * 2}. Lucky you.
+            </div>
+            <div style={{ marginTop: 18 }}>
+              <Btn onClick={() => setDoubleHit(null)} style={{ width: "100%" }}>Get in</Btn>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ============================================================
+// THE MEMORY WALL — the app's quiet, reflective heart.
+// A shared space, apart from the competitive board, where either of you can pen
+// an in-the-moment thought or snap a free (point-free) photo. Every entry flows
+// into the shared book (via updateShared), so whatever one of you adds, the
+// other sees within a heartbeat. Each can be shared to Bluesky, and each can be
+// starred so the best of them are curated into the week's scrapbook later.
+//
+// A memory entry:
+//   { id, by, at, text, photo?, photoUrl?, sharedToBluesky?, starred? }
+// ============================================================
+
+// gently turn a data-URL photo into a public URL in the background (reuses the
+// same tg-photo uploader the claims use). Stamps photoUrl onto the entry when
+// it lands, so Bluesky sharing and cross-phone viewing work on the live site.
+function uploadMemoryPhoto(dataUrl, onUrl) {
+  if (!dataUrl || dataUrl.indexOf("data:") !== 0) return;
+  try {
+    const comma = dataUrl.indexOf(",");
+    const meta = dataUrl.slice(5, comma);
+    const b64 = dataUrl.slice(comma + 1);
+    const ext = meta.indexOf("png") >= 0 ? "png" : meta.indexOf("webp") >= 0 ? "webp" : "jpg";
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    fetch("/api/tg-photo?ext=" + ext, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: bytes,
+    })
+      .then((r) => r.ok ? r.json() : Promise.reject())
+      .then((data) => { if (data && data.url && onUrl) onUrl(data.url); })
+      .catch(() => { /* preview / offline: fine, the local photo still shows */ });
+  } catch (e) { /* preview or unsupported: no-op */ }
+}
+
+// shrink a picked image to ~1200px and hand back a data-URL (keeps uploads light)
+function readMemoryPhoto(file, cb) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const max = 1200;
+      let w = img.width, h = img.height;
+      if (w > max || h > max) {
+        if (w >= h) { h = Math.round(h * max / w); w = max; }
+        else { w = Math.round(w * max / h); h = max; }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+      try { cb(canvas.toDataURL("image/jpeg", 0.82)); }
+      catch (e) { cb(reader.result); }
+    };
+    img.onerror = () => cb(reader.result);
+    img.src = reader.result;
+  };
+  reader.onerror = () => cb(null);
+  reader.readAsDataURL(file);
+}
+
+function timeAgo(then) {
+  const s = Math.floor((Date.now() - then) / 1000);
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "m ago";
+  const h = Math.floor(m / 60);
+  if (h < 24) return h + "h ago";
+  const d = Math.floor(h / 24);
+  if (d < 7) return d + "d ago";
+  return new Date(then).toLocaleDateString();
+}
+
+// ---------- a single memory on the wall ----------
+function MemoryCard({ mem, me, onStar, onShare, onDelete }) {
+  const who = PLAYERS[mem.by];
+  const colour = who ? who.colour : "#9a8a72";
+  const mine = mem.by === me;
+  return (
+    <div style={{ background: T.card, border: "1px solid " + T.line, borderRadius: 16, overflow: "hidden", marginBottom: 12 }}>
+      {mem.photo ? (
+        <img src={mem.photo} alt="moment" style={{ width: "100%", display: "block", maxHeight: 340, objectFit: "cover" }} />
+      ) : null}
+      <div style={{ padding: "13px 15px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <span style={{ width: 9, height: 9, borderRadius: 5, background: colour, display: "inline-block" }} />
+            <span style={{ fontFamily: FH, fontWeight: 700, fontSize: 12.5, color: colour }}>{who ? who.name : mem.by}</span>
+            <span style={{ fontFamily: FM, fontSize: 9.5, color: T.inkSoft }}>· {timeAgo(mem.at)}</span>
+          </div>
+          {mem.starred ? <span style={{ fontSize: 13 }}>⭐</span> : null}
+        </div>
+
+        {mem.text ? (
+          <div style={{ marginTop: 9, fontFamily: FB, fontSize: 14.5, color: T.ink, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+            {mem.text}
+          </div>
+        ) : null}
+
+        <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 7 }}>
+          <button onClick={() => onStar(mem)} style={{
+            cursor: "pointer", background: mem.starred ? T.peach : "transparent",
+            border: "1px solid " + (mem.starred ? T.peach : T.line), borderRadius: 10,
+            padding: "6px 11px", fontFamily: FH, fontWeight: 700, fontSize: 11, color: mem.starred ? T.coralDk : T.inkSoft,
+          }}>{mem.starred ? "Starred" : "Star it"}</button>
+
+          <button onClick={() => onShare(mem)} style={{
+            cursor: "pointer", background: "transparent", border: "1px solid " + T.line, borderRadius: 10,
+            padding: "6px 11px", fontFamily: FH, fontWeight: 700, fontSize: 11,
+            color: mem.sharedToBluesky ? "#0a7aff" : T.inkSoft,
+          }}>{mem.sharedToBluesky ? "Shared ✓" : "Bluesky"}</button>
+
+          {mine ? (
+            <button onClick={() => onDelete(mem)} style={{
+              cursor: "pointer", background: "transparent", border: "1px solid " + T.line, borderRadius: 10,
+              padding: "6px 11px", fontFamily: FH, fontWeight: 700, fontSize: 11, color: T.inkSoft,
+            }}>Remove</button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- the composer: pen a thought, snap a moment ----------
+function MemoryComposer({ me, onPost }) {
+  const [text, setText] = useState("");
+  const [photo, setPhoto] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  function pickPhoto(e) {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    setBusy(true);
+    readMemoryPhoto(file, (dataUrl) => { setPhoto(dataUrl); setBusy(false); });
+  }
+  function post() {
+    if (!text.trim() && !photo) return;
+    onPost({ text: text.trim(), photo: photo });
+    setText(""); setPhoto(null);
+  }
+
+  return (
+    <div style={{ background: T.card, border: "1px solid " + T.line, borderRadius: 18, padding: "15px 16px", marginBottom: 18 }}>
+      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2}
+        placeholder="Pen a thought, a quip, a moment..."
+        style={{ width: "100%", fontFamily: FB, fontSize: 14.5, color: T.ink, background: T.cream,
+          border: "1px solid " + T.line, borderRadius: 12, padding: "11px 13px", resize: "vertical", outline: "none" }} />
+
+      {photo ? (
+        <div style={{ marginTop: 10, position: "relative" }}>
+          <img src={photo} alt="moment" style={{ width: "100%", borderRadius: 12, display: "block", maxHeight: 260, objectFit: "cover" }} />
+          <button onClick={() => setPhoto(null)} style={{
+            position: "absolute", top: 8, right: 8, cursor: "pointer", background: "rgba(74,59,51,.72)",
+            border: "none", borderRadius: 9, padding: "5px 10px", fontFamily: FH, fontWeight: 700, fontSize: 11, color: "#fff",
+          }}>Remove</button>
+        </div>
+      ) : null}
+
+      <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 9 }}>
+        <label style={{
+          cursor: "pointer", background: T.cream, border: "1px solid " + T.line, borderRadius: 11,
+          padding: "9px 14px", fontFamily: FH, fontWeight: 700, fontSize: 12.5, color: T.inkSoft,
+        }}>
+          {busy ? "..." : (photo ? "Change photo" : "Snap a moment")}
+          <input type="file" accept="image/*" capture="environment" onChange={pickPhoto} style={{ display: "none" }} />
+        </label>
+        <div style={{ flex: 1 }} />
+        <Btn onClick={post} style={{ fontSize: 13 }}>Add to wall</Btn>
+      </div>
+    </div>
+  );
+}
+
+// ---------- THE MEMORY WALL SCREEN ----------
+function MemoryWall({ me, shared, updateShared, onShareToBluesky }) {
+  const memories = (shared && Array.isArray(shared.memories)) ? shared.memories : [];
+  const sorted = memories.slice().sort((a, b) => b.at - a.at);
+
+  function postMemory({ text, photo }) {
+    const mem = {
+      id: uid(), by: me, at: Date.now(),
+      text: text || "", photo: photo || null, photoUrl: null,
+      sharedToBluesky: false, starred: false,
+    };
+    updateShared((prev) => {
+      const list = (prev && Array.isArray(prev.memories)) ? prev.memories : [];
+      return { ...prev, memories: [mem, ...list] };
+    });
+    // upload the photo in the background, then stamp its public URL on the entry
+    if (photo) {
+      uploadMemoryPhoto(photo, (url) => {
+        updateShared((prev) => {
+          const list = (prev && Array.isArray(prev.memories)) ? prev.memories : [];
+          return { ...prev, memories: list.map((m) => m.id === mem.id ? { ...m, photoUrl: url } : m) };
+        });
+      });
+    }
+  }
+
+  function toggleStar(mem) {
+    updateShared((prev) => {
+      const list = (prev && Array.isArray(prev.memories)) ? prev.memories : [];
+      return { ...prev, memories: list.map((m) => m.id === mem.id ? { ...m, starred: !m.starred } : m) };
+    });
+  }
+
+  function removeMemory(mem) {
+    updateShared((prev) => {
+      const list = (prev && Array.isArray(prev.memories)) ? prev.memories : [];
+      return { ...prev, memories: list.filter((m) => m.id !== mem.id) };
+    });
+  }
+
+  function shareMemory(mem) {
+    if (onShareToBluesky) onShareToBluesky(mem);
+    updateShared((prev) => {
+      const list = (prev && Array.isArray(prev.memories)) ? prev.memories : [];
+      return { ...prev, memories: list.map((m) => m.id === mem.id ? { ...m, sharedToBluesky: true } : m) };
+    });
+  }
+
+  return (
+    <div>
+      <div style={{ fontFamily: FB, fontSize: 13, color: T.inkSoft, lineHeight: 1.6, marginBottom: 16 }}>
+        Your shared wall. Pen a thought or snap a moment, no points, just the two of you.
+        Star the good ones and they'll find their way into this week's scrapbook.
+      </div>
+
+      <MemoryComposer me={me} onPost={postMemory} />
+
+      {sorted.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "30px 20px", fontFamily: FB, fontSize: 13.5, color: T.inkSoft, lineHeight: 1.6 }}>
+          Nothing on the wall yet. Be the first to pen something, or snap the cats being ridiculous.
+        </div>
+      ) : (
+        sorted.map((mem) => (
+          <MemoryCard key={mem.id} mem={mem} me={me}
+            onStar={toggleStar} onShare={shareMemory} onDelete={removeMemory} />
+        ))
+      )}
+    </div>
+  );
+}
+
+
+// ============================================================
+// COACH SALIBA'S THAI SCHOOL — a daily Thai word, taught warmly by Naddy's
+// favourite Arsenal centre-half. Hear it, say it back, keep the daily streak
+// alive, and there's a little test on Fridays. Counts a fair bit toward the week.
+//
+// The curriculum is real, verified Thai (cross-checked across multiple learner
+// guides). Politeness particle is gender-correct: women say "kâ", men "kráp".
+// Pronunciation is encouraging, never a strict tone-examiner (browser speech
+// recognition can't truly grade Thai tones, so we reward having a genuine go).
+// ============================================================
+
+// The polite ending particle, by speaker. Saliba teaches each player their own.
+function politeParticle(who) { return who === "Naddy" ? "kâ" : "kráp"; }
+function politeThai(who) { return who === "Naddy" ? "ค่ะ" : "ครับ"; }
+
+// The verified word bank. One is served per day (seeded by day-of-season so both
+// phones agree). Each: thai script, romanised pronunciation, meaning, and a warm
+// coaching note from Saliba. Kept genuinely useful for daily life in Ko Kaeo.
+const THAI_WORDS = [
+  { thai: "สวัสดี", say: "sà-wàt-dee", mean: "Hello / Goodbye",
+    coach: "The one that opens every door. Works morning, noon, or night, coming or going. Add your polite ending and you'll get a smile every time." },
+  { thai: "ขอบคุณ", say: "khàawp-khun", mean: "Thank you",
+    coach: "Thailand runs on politeness, and this is the engine. Say it often, mean it, and pair it with a little wai for full marks." },
+  { thai: "อร่อย", say: "à-ròi", mean: "Delicious",
+    coach: "You'll wear this one out on our food challenges. Say it to a cook and watch them light up. The highest compliment a plate can earn." },
+  { thai: "ขอโทษ", say: "khǒr-thôht", mean: "Excuse me / Sorry",
+    coach: "For squeezing past someone, catching attention, or a gentle apology. A smile plus this phrase smooths almost anything over." },
+  { thai: "เท่าไร", say: "tâo-rài", mean: "How much?",
+    coach: "Your key to every market stall. Learn it, then learn your numbers, and the whole island opens up to you. Light bargaining is part of the fun." },
+  { thai: "ชอบ", say: "chôrp", mean: "I like it",
+    coach: "Short, cheerful, endlessly useful. Point at a thing, say chôrp, and you've made your feelings clear. The opposite is mâi chôrp, I don't like it." },
+  { thai: "ไม่เป็นไร", say: "mâi-bpen-rai", mean: "No worries / It's fine",
+    coach: "The unofficial motto of Thailand. It waves away trouble, accepts an apology, means you're welcome. If you learn one philosophy word, learn this." },
+  { thai: "น้ำ", say: "náam", mean: "Water",
+    coach: "In this heat, you'll say it hourly. Add nòi (a little) to soften any request: náam nòi, some water please. Simple and lifesaving." },
+  { thai: "ใช่", say: "châi", mean: "Yes / Correct",
+    coach: "And its partner mâi châi, no / not so. Thais lean away from a blunt no, so a soft mâi châi with a smile is the kind way to decline." },
+  { thai: "อันนี้", say: "an-née", mean: "This one",
+    coach: "Point and say an-née and you can order almost anything without knowing its name. Pair with ao (I'll take) : ao an-née, I'll have this one." },
+  { thai: "สวย", say: "sŭay", mean: "Beautiful",
+    coach: "A warning worth a chuckle: sŭay with a rising tone means beautiful, but flatten the tone and it means unfortunate. Thai smiles forgive the slip, but that's tones for you." },
+  { thai: "เผ็ด", say: "phèt", mean: "Spicy",
+    coach: "Vital survival vocabulary here. mâi phèt means not spicy, though 'not spicy' to a Phuket cook is still a lively ride. Brace accordingly." },
+  { thai: "ช่วยด้วย", say: "chûay-dûay", mean: "Help!",
+    coach: "The one you hope never to need, but should know cold. Said with urgency, it summons the famous Thai kindness fast. Tuck it away safe." },
+  { thai: "แมว", say: "maew", mean: "Cat",
+    coach: "For obvious reasons, this household needs this word. Five of them rule your home. Now you can gossip about Oscar in two languages." },
+];
+
+// ---------- which day are we on, and today's word ----------
+// A stable day index since the season anchor, so "today's word" is the same on
+// both phones and marches forward one per day.
+function dayIndex(now) {
+  const d = new Date(now); d.setHours(0, 0, 0, 0);
+  const a = new Date(SEASON_ANCHOR); a.setHours(0, 0, 0, 0);
+  return Math.floor((d - a) / 86400000);
+}
+function wordForToday(now) {
+  const i = dayIndex(now);
+  const n = THAI_WORDS.length;
+  return THAI_WORDS[((i % n) + n) % n];
+}
+function isFriday(now) { return dayOfWeek(now) === 4; } // Mon=0 ... Fri=4
+
+// ---------- streak + progress storage (device-local) ----------
+// Shape: { done: { "<dayIndex>": true }, lastDay: <idx>, streak: <n>, best: <n> }
+function schoolKey(who) { return "tg_school_" + (who || "Hammy"); }
+function loadSchool(who) {
+  try { return JSON.parse(localStorage.getItem(schoolKey(who)) || "{}"); }
+  catch (e) { return {}; }
+}
+function saveSchool(who, data) {
+  try { localStorage.setItem(schoolKey(who), JSON.stringify(data)); } catch (e) {}
+}
+
+// Mark today's word practised, updating the streak (consecutive days).
+function markPractised(who, now) {
+  const idx = dayIndex(now);
+  const data = loadSchool(who);
+  data.done = data.done || {};
+  if (data.done[idx]) return data; // already done today
+  data.done[idx] = true;
+  // streak: if yesterday was done, extend; else reset to 1
+  const yesterday = idx - 1;
+  const had = data.lastDay != null && data.lastDay === yesterday;
+  data.streak = had ? (data.streak || 0) + 1 : 1;
+  data.best = Math.max(data.best || 0, data.streak);
+  data.lastDay = idx;
+  saveSchool(who, data);
+  return data;
+}
+function doneToday(who, now) {
+  const data = loadSchool(who);
+  return !!(data.done && data.done[dayIndex(now)]);
+}
+// Streak is "live" only if the last practised day was today or yesterday.
+function liveStreak(who, now) {
+  const data = loadSchool(who);
+  if (data.lastDay == null) return 0;
+  const idx = dayIndex(now);
+  if (data.lastDay === idx || data.lastDay === idx - 1) return data.streak || 0;
+  return 0;
+}
+
+// The Friday test: five words drawn from the ones seen so far this week, seeded
+// by week so both phones get the same quiz.
+function fridayQuiz(now) {
+  const wk = weekNumber(now);
+  const pool = seededShuffle(THAI_WORDS, "quiz-wk" + wk);
+  return pool.slice(0, 5);
+}
+
+// ---------- speak a Thai word aloud (browser speech synthesis) ----------
+// Tries a Thai voice if the phone has one; falls back to default. Live-site and
+// most modern phones support this; a graceful no-op otherwise.
+function speakThai(text) {
+  try {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "th-TH";
+    u.rate = 0.85;
+    const voices = window.speechSynthesis.getVoices();
+    const thv = voices.find((v) => v.lang && v.lang.toLowerCase().indexOf("th") === 0);
+    if (thv) u.voice = thv;
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(u);
+  } catch (e) { /* no-op */ }
+}
+
+// ---------- THE THAI SCHOOL SCREEN ----------
+function ThaiSchool({ me, now }) {
+  const word = wordForToday(now);
+  const particle = politeParticle(me);
+  const particleThai = politeThai(me);
+  const [data, setData] = useState(() => loadSchool(me));
+  const [listening, setListening] = useState(false);
+  const [saidIt, setSaidIt] = useState(doneToday(me, now));
+  const [praise, setPraise] = useState("");
+
+  const streak = liveStreak(me, now);
+  const friday = isFriday(now);
+
+  function practise() {
+    const d = markPractised(me, now);
+    setData({ ...d });
+    setSaidIt(true);
+  }
+
+  // Say-it-back: uses browser speech recognition where available. It's
+  // encouraging, not a strict examiner (it can't truly grade Thai tones), so
+  // any genuine attempt is warmly rewarded.
+  function sayItBack() {
+    const SR = (typeof window !== "undefined") &&
+      (window.SpeechRecognition || window.webkitSpeechRecognition);
+    if (!SR) {
+      // no recognition on this phone: still reward the attempt generously
+      setPraise("Coach didn't quite catch that on this phone, but I trust you. Nice one.");
+      practise();
+      return;
+    }
+    try {
+      const rec = new SR();
+      rec.lang = "th-TH";
+      rec.maxAlternatives = 3;
+      rec.interimResults = false;
+      setListening(true);
+      setPraise("");
+      rec.onresult = () => {
+        setListening(false);
+        setPraise("Heard you loud and clear. That's the spirit, keep going.");
+        practise();
+      };
+      rec.onerror = () => {
+        setListening(false);
+        setPraise("Coach's ears glitched, but the effort counts. Well tried.");
+        practise();
+      };
+      rec.onend = () => setListening(false);
+      rec.start();
+    } catch (e) {
+      setPraise("Mic's being shy today. No matter, I'll mark you present. Good lad... lass... you.");
+      practise();
+    }
+  }
+
+  return (
+    <div>
+      {/* Coach Saliba intro + streak */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{
+            width: 38, height: 38, borderRadius: 12, background: T.arsenal,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontFamily: FH, fontWeight: 700, fontSize: 15, color: "#fff",
+          }}>WS</div>
+          <div>
+            <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 15, color: T.ink, lineHeight: 1 }}>Coach Saliba</div>
+            <div style={{ fontFamily: FM, fontSize: 9, color: T.inkSoft, letterSpacing: ".1em", marginTop: 3 }}>THAI, DAILY</div>
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 20, color: streak > 0 ? T.coral : T.inkSoft, lineHeight: 1 }}>
+            {streak}
+          </div>
+          <div style={{ fontFamily: FM, fontSize: 8.5, color: T.inkSoft, letterSpacing: ".1em", marginTop: 3 }}>DAY STREAK</div>
+        </div>
+      </div>
+
+      {/* today's word card */}
+      <div style={{ background: T.card, border: "1px solid " + T.line, borderRadius: 18, padding: "22px 20px", textAlign: "center" }}>
+        <div style={{ fontFamily: FM, fontSize: 9.5, letterSpacing: ".14em", color: T.arsenal, textTransform: "uppercase" }}>
+          {friday ? "Friday · test day" : "Today's word"}
+        </div>
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 44, color: T.ink, marginTop: 12, lineHeight: 1.1 }}>
+          {word.thai}
+        </div>
+        <div style={{ fontFamily: FM, fontSize: 15, color: T.coralDk, marginTop: 8 }}>
+          {word.say}
+        </div>
+        <div style={{ fontFamily: FB, fontSize: 15, color: T.ink, marginTop: 4 }}>
+          {word.mean}
+        </div>
+
+        {/* the polite, gender-correct full version */}
+        <div style={{ marginTop: 12, fontFamily: FB, fontSize: 12.5, color: T.inkSoft, lineHeight: 1.5 }}>
+          Polite, for you: <b style={{ color: T.ink }}>{word.say} {particle}</b> ({word.thai}{particleThai})
+        </div>
+
+        {/* hear it */}
+        <button onClick={() => speakThai(word.thai + particleThai)} style={{
+          marginTop: 16, cursor: "pointer", background: T.peach, border: "none", borderRadius: 12,
+          padding: "10px 20px", fontFamily: FH, fontWeight: 700, fontSize: 14, color: T.coralDk,
+        }}>Hear it</button>
+      </div>
+
+      {/* coach's note */}
+      <div style={{ marginTop: 14, background: "rgba(224,87,122,.07)", border: "1px solid rgba(224,87,122,.2)", borderRadius: 14, padding: "13px 15px" }}>
+        <div style={{ fontFamily: FB, fontSize: 13, color: T.ink, lineHeight: 1.6, fontStyle: "italic" }}>
+          "{word.coach}"
+        </div>
+        <div style={{ fontFamily: FM, fontSize: 9, color: T.arsenal, letterSpacing: ".1em", marginTop: 8 }}>— COACH SALIBA</div>
+      </div>
+
+      {/* say it back */}
+      <div style={{ marginTop: 16 }}>
+        {saidIt ? (
+          <div style={{ textAlign: "center", fontFamily: FB, fontSize: 14, color: T.good, fontWeight: 700 }}>
+            ✓ Practised today. {streak > 1 ? streak + " days on the bounce." : "Streak begun."}
+          </div>
+        ) : (
+          <Btn onClick={sayItBack} style={{ width: "100%" }}>
+            {listening ? "Listening..." : "Say it back to Coach"}
+          </Btn>
+        )}
+        {praise ? (
+          <div style={{ marginTop: 10, textAlign: "center", fontFamily: FB, fontSize: 12.5, color: T.inkSoft, fontStyle: "italic", lineHeight: 1.5 }}>
+            {praise}
+          </div>
+        ) : null}
+      </div>
+
+      {/* Friday test hint */}
+      {friday ? (
+        <div style={{ marginTop: 16, textAlign: "center", fontFamily: FB, fontSize: 12, color: T.coralDk, lineHeight: 1.5 }}>
+          It's Friday. Coach has lined up a little five-word test from this week. Points toward the week are on the line.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+
+// ============================================================
+// THE GAME — begins Monday. A small internal view-router keeps each screen
+// focused and mobile-tidy: hub (home) -> board / school / scrapbook.
+// Mobile-first law: hub fits one phoneful, no scroll; lists live deeper and
+// default closed; emoji reserved for genuine wow moments only.
+// ============================================================
+
+// Format the time left in the current week (to Sunday midnight Phuket).
+function weekEndsIn(now) {
+  const s = startOfWeek(now);
+  const end = new Date(s); end.setDate(end.getDate() + 7);
+  const ms = end.getTime() - new Date(now).getTime();
+  const d = Math.floor(ms / 86400000);
+  const h = Math.floor((ms % 86400000) / 3600000);
+  if (d >= 1) return d + (d === 1 ? " day" : " days") + " left";
+  if (h >= 1) return h + (h === 1 ? " hour" : " hours") + " left";
+  const m = Math.floor((ms % 3600000) / 60000);
+  return m + " min left";
+}
+
+const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+// ---------- the scoreboard hero: the two of you, side by side ----------
+function ScoreHero({ scores, leader }) {
+  return (
+    <div style={{ display: "flex", gap: 10 }}>
+      {PLAYER_IDS.map((id) => {
+        const p = PLAYERS[id];
+        const isLead = leader === id;
+        return (
+          <div key={id} style={{
+            flex: 1, background: T.card, borderRadius: 18,
+            border: "2px solid " + (isLead ? p.colour : T.line),
+            padding: "14px 12px", textAlign: "center", position: "relative",
+            boxShadow: isLead ? "0 6px 20px " + p.colour + "22" : "none",
+          }}>
+            <div style={{
+              fontFamily: FH, fontWeight: 700, fontSize: 14, color: p.colour,
+            }}>{p.name}</div>
+            <div style={{
+              fontFamily: FH, fontWeight: 700, fontSize: 34, color: T.ink,
+              lineHeight: 1.1, marginTop: 2, fontVariantNumeric: "tabular-nums",
+            }}>{scores[id] || 0}</div>
+            <div style={{
+              fontFamily: FM, fontSize: 8.5, letterSpacing: ".12em",
+              color: T.inkSoft, textTransform: "uppercase", marginTop: 2,
+            }}>points</div>
+            {isLead && (scores.Hammy !== scores.Naddy) && (
+              <div style={{
+                position: "absolute", top: -9, left: "50%", transform: "translateX(-50%)",
+                background: p.colour, color: "#fff", fontFamily: FH, fontWeight: 700,
+                fontSize: 9, letterSpacing: ".1em", textTransform: "uppercase",
+                padding: "2px 10px", borderRadius: 10, whiteSpace: "nowrap",
+              }}>leading</div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------- a compact tap-through tile ----------
+function HubTile({ label, sub, onClick, accent }) {
+  const [down, setDown] = useState(false);
+  return (
+    <button onClick={onClick}
+      onPointerDown={() => setDown(true)}
+      onPointerUp={() => setDown(false)}
+      onPointerLeave={() => setDown(false)}
+      style={{
+        width: "100%", textAlign: "left", cursor: "pointer",
+        background: T.card, border: "1px solid " + T.line, borderLeft: "3px solid " + accent,
+        borderRadius: 14, padding: "13px 15px",
+        transition: "transform .08s ease", transform: down ? "scale(.98)" : "scale(1)",
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+      }}>
+      <span>
+        <span style={{ display: "block", fontFamily: FH, fontWeight: 700, fontSize: 15, color: T.ink }}>{label}</span>
+        <span style={{ display: "block", fontFamily: FB, fontSize: 12, color: T.inkSoft, marginTop: 1 }}>{sub}</span>
+      </span>
+      <span style={{ fontFamily: FH, fontSize: 20, color: T.peach, flexShrink: 0 }}>›</span>
+    </button>
+  );
+}
+
+
+// ---------- THE HUB: single-screen home, no scroll ----------
+function Hub({ now, scores, onGo, onSwitch, isFull, onResetWeek, wk: wkProp }) {
+  const wk = weekNumber(now);
+  const dayIdx = dayOfWeek(now);
+  const leader = (scores.Hammy || 0) === (scores.Naddy || 0) ? null
+    : (scores.Hammy || 0) > (scores.Naddy || 0) ? "Hammy" : "Naddy";
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column",
+      padding: "18px 18px 20px",
+      background: "linear-gradient(180deg, #fff6ee 0%, #ffefe4 100%)",
+    }}>
+      {/* top bar: week + switch user */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 22, color: T.ink, lineHeight: 1 }}>
+            Week <span style={{ color: T.coral }}>{wk}</span>
+          </div>
+          <div style={{ fontFamily: FM, fontSize: 9.5, letterSpacing: ".1em", color: T.inkSoft, textTransform: "uppercase", marginTop: 4 }}>
+            {DAY_NAMES[dayIdx]} · {weekEndsIn(now)}
+          </div>
+        </div>
+        <button onClick={onSwitch} style={{
+          background: "rgba(255,255,255,.7)", border: "1px solid " + T.line, borderRadius: 18,
+          padding: "7px 12px", cursor: "pointer", fontFamily: FH, fontWeight: 600, fontSize: 12, color: T.inkSoft,
+        }}>switch ›</button>
+      </div>
+
+      {/* scoreboard hero */}
+      <div style={{ marginTop: 18 }}>
+        <ScoreHero scores={scores} leader={leader} />
+      </div>
+
+      {/* the tap-throughs */}
+      <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 10 }}>
+        <HubTile label="This week's board" sub="Quick wins, sign scrambles, and the big one." accent={T.coral} onClick={() => onGo("board")} />
+        <HubTile label="The memory wall" sub="Pen a thought, snap a moment. Just the two of you." accent={T.good} onClick={() => onGo("wall")} />
+        <HubTile label="Throw-down dares" sub="Lob a cheeky challenge at your other half." accent={T.spurs} onClick={() => onGo("dares")} />
+        <HubTile label="Coach Saliba's Thai school" sub="Today's word. Keep the streak alive." accent={T.arsenal} onClick={() => onGo("school")} />
+        <HubTile label="The scrapbook" sub="Your week so far, in photos and taunts." accent={T.sun} onClick={() => onGo("scrapbook")} />
+      </div>
+
+      {/* footer whisper, pushed to bottom */}
+      <div style={{ marginTop: "auto", paddingTop: 16, textAlign: "center" }}>
+        <div style={{ fontFamily: FM, fontSize: 8.5, letterSpacing: ".12em", color: "#d8b8a4", textTransform: "uppercase" }}>
+          Spurs vs Arsenal · the pitch is Phuket
+        </div>
+        {isFull && onResetWeek ? (
+          <button onClick={() => {
+            if (confirm("Dev reset: wipe this week's claims and set the scoreboard back to zero? (Only affects week " + (wkProp != null ? wkProp : wk) + " on this device.)")) onResetWeek();
+          }} style={{
+            marginTop: 12, background: "transparent", border: "1px dashed #d8b8a4", borderRadius: 10,
+            padding: "5px 12px", cursor: "pointer", fontFamily: FM, fontSize: 9, letterSpacing: ".08em",
+            color: "#c9a48f", textTransform: "uppercase",
+          }}>reset my test data</button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+
+// ---------- a simple inner screen shell (back to hub + title) ----------
+function Screen({ title, onBack, children }) {
+  return (
+    <div style={{ minHeight: "100vh", padding: "16px 18px 24px", background: "linear-gradient(180deg, #fff6ee 0%, #ffefe4 100%)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18 }}>
+        <button onClick={onBack} style={{
+          background: T.card, border: "1px solid " + T.line, borderRadius: 16,
+          padding: "8px 13px 8px 10px", cursor: "pointer", fontFamily: FH, fontWeight: 700,
+          fontSize: 13, color: T.inkSoft, display: "inline-flex", alignItems: "center", gap: 5,
+        }}><span style={{ fontSize: 15 }}>‹</span> hub</button>
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 19, color: T.ink }}>{title}</div>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// A gentle "still cooking" placeholder for screens we build in later phases.
+function ComingNext({ line }) {
+  return (
+    <div style={{
+      marginTop: 40, textAlign: "center", fontFamily: FB, fontSize: 15,
+      color: T.inkSoft, lineHeight: 1.6, padding: "0 20px",
+    }}>
+      <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 16, color: T.ink, marginBottom: 8 }}>
+        Being built next
+      </div>
+      {line}
+    </div>
+  );
+}
+
+// ---------- THE GAME ROUTER ----------
+function Game({ now, who, isFull, onSwitch }) {
+  const [view, setView] = useState("hub");
+  const wk = weekNumber(now);
+  const [claims, setClaimsState] = useState(() => loadClaims(wk));
+  const [dares, setDaresState] = useState(() => loadDares(wk));
+
+  // the shared book (memory wall, season score, scrapbooks, spoils): cross-phone,
+  // near-instant. Your own changes show at once; the other phone's land in seconds.
+  const [shared, updateShared] = useSharedState();
+
+  // persist claims whenever they change (device-local).
+  // Accepts either a plain object or an updater function (prev => next), so
+  // background updates (like a photo URL landing later) compose safely.
+  function setClaims(weekNo, next) {
+    setClaimsState((prev) => {
+      const resolved = typeof next === "function" ? next(prev) : next;
+      saveClaims(weekNo, resolved);
+      return resolved;
+    });
+  }
+  function setDares(next) {
+    saveDares(wk, next);
+    setDaresState(next);
+  }
+
+  // The week's dealt board, plus the wildcard once it's live (Thursday on).
+  const { dealt } = dealtBoard(wk);
+  const wild = wildcardForWeek(wk);
+  const fullDealt = wild && wildcardLive(now) ? dealt.concat([wild]) : dealt;
+
+  // live scores: tasks (with doubles + VAR) plus the dare economy
+  const taskScores = tallyScores(fullDealt, claims, wk);
+  const dareScores = tallyDares(dares);
+  const scores = {
+    Hammy: taskScores.Hammy + dareScores.Hammy,
+    Naddy: taskScores.Naddy + dareScores.Naddy,
+  };
+
+  // "you" on this device: the picked side, or Hammy when he's testing pre-launch
+  const me = who || "Hammy";
+
+  // Dev-only: wipe this week's claims AND dares so everything goes back to zero.
+  // Behind isFull (Hammy testing), so Naddy never sees it. A belt-and-braces tidy
+  // for pre-launch testing; the fresh Monday start is already guaranteed by the
+  // per-week storage keys regardless.
+  function resetThisWeek() {
+    saveClaims(wk, {});
+    setClaimsState({});
+    saveDares(wk, []);
+    setDaresState([]);
+    setView("hub");
+  }
+
+  // Share a claim to Bluesky. On the live site this posts via /api/bluesky using
+  // the player's saved handle + app password (set up in settings) and the claim's
+  // public photo URL. In preview there's no backend, so it just acknowledges.
+  function shareToBluesky(task, claim) {
+    if (!claim) return;
+    const text = (claim.caption || ("Touched some grass: " + task.title)).slice(0, 280);
+    try {
+      fetch("/api/bluesky", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ who: me, text: text, imageUrl: claim.photoUrl || "" }),
+      })
+        .then((r) => r.ok ? r.json() : Promise.reject())
+        .then(() => {
+          // mark it shared on the stored claim
+          setClaims(wk, (prev) => {
+            const cur = prev && prev[task.id];
+            if (!cur) return prev;
+            return { ...prev, [task.id]: { ...cur, shared: true } };
+          });
+          if (typeof window !== "undefined" && window.alert) window.alert("Shared to Bluesky.");
+        })
+        .catch(() => {
+          if (typeof window !== "undefined" && window.alert) {
+            window.alert("Sharing works on the live site once your Bluesky login is set up. (No backend in preview.)");
+          }
+        });
+    } catch (e) { /* preview: no-op */ }
+  }
+
+  // Share a memory-wall entry to Bluesky (penned thought + its photo). Same
+  // proven shape as the claim share, with the graceful preview fallback.
+  function shareMemoryToBluesky(mem) {
+    if (!mem) return;
+    const text = (mem.text || "A moment from Phuket.").slice(0, 280);
+    try {
+      fetch("/api/bluesky", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ who: me, text: text, imageUrl: mem.photoUrl || "" }),
+      })
+        .then((r) => r.ok ? r.json() : Promise.reject())
+        .then(() => {
+          if (typeof window !== "undefined" && window.alert) window.alert("Shared to Bluesky.");
+        })
+        .catch(() => {
+          if (typeof window !== "undefined" && window.alert) {
+            window.alert("Sharing works on the live site once your Bluesky login is set up. (No backend in preview.)");
+          }
+        });
+    } catch (e) { /* preview: no-op */ }
+  }
+
+  if (view === "hub") {
+    return <Hub now={now} scores={scores} onGo={setView} onSwitch={onSwitch}
+      isFull={isFull} onResetWeek={resetThisWeek} wk={wk} />;
+  }
+  if (view === "board") {
+    return <Screen title={"Week " + wk + " board"} onBack={() => setView("hub")}>
+      <Board now={now} who={me} claims={claims} setClaims={setClaims}
+        wildcard={wild && wildcardLive(now) ? wild : null} wk={wk}
+        onShare={shareToBluesky} />
+    </Screen>;
+  }
+  if (view === "wall") {
+    return <Screen title="The memory wall" onBack={() => setView("hub")}>
+      <MemoryWall me={me} shared={shared} updateShared={updateShared}
+        onShareToBluesky={shareMemoryToBluesky} />
+    </Screen>;
+  }
+  if (view === "dares") {
+    return <Screen title="Throw-down dares" onBack={() => setView("hub")}>
+      <DaresScreen me={me} dares={dares} setDares={setDares} />
+    </Screen>;
+  }
+  if (view === "school") {
+    return <Screen title="Coach Saliba's Thai school" onBack={() => setView("hub")}>
+      <ThaiSchool me={me} now={now} />
+    </Screen>;
+  }
+  return <Screen title="The scrapbook" onBack={() => setView("hub")}>
+    <ComingNext line="Your week gathered up: best photos, best captions, the taunts that landed, and who led on what. Revealed in full when the week closes." />
+  </Screen>;
+}
+
+
+// ============================================================
+// IDENTITY (post-launch) — no password, just "pick your side". Remembered per
+// phone. Switchable anytime via a cheeky jersey-confirmation popup.
+// ============================================================
+const WHO_KEY = "tg_who_v1";
+function loadWho() { try { return localStorage.getItem(WHO_KEY); } catch (e) { return null; } }
+function saveWho(id) { try { localStorage.setItem(WHO_KEY, id); } catch (e) {} }
+
+// The cheeky confirm lines, per side. Picked at random for a bit of variety.
+const JERSEY_LINES = {
+  Hammy: [
+    "Ready to pull on the Spurs jersey?",
+    "Lace up. You're playing for the lilywhites.",
+    "To Dare Is To Do. You in?",
+    "Confirm: you bleed navy and white?",
+  ],
+  Naddy: [
+    "Ready to pull on the Arsenal jersey?",
+    "Time to go Gunners. You sure?",
+    "Victoria Concordia Crescit. Suit up?",
+    "Confirm: you're marching on together?",
+  ],
+};
+
+// The jersey-confirmation popup.
+function JerseyConfirm({ who, onYes, onNo }) {
+  const p = PLAYERS[who];
+  const line = pick(JERSEY_LINES[who]);
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 50, display: "flex",
+      alignItems: "center", justifyContent: "center", padding: 26,
+      background: "rgba(74,59,51,.34)", backdropFilter: "blur(3px)", WebkitBackdropFilter: "blur(3px)",
+    }}>
+      <div style={{
+        width: "100%", maxWidth: 320, background: T.card, borderRadius: 22,
+        border: "2px solid " + p.colour, padding: "24px 22px 20px", textAlign: "center",
+        animation: "tgPop .4s ease both", boxShadow: "0 18px 50px rgba(74,59,51,.28)",
+      }}>
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 13, color: p.colour, letterSpacing: ".04em" }}>
+          {p.club.toUpperCase()}
+        </div>
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 20, color: T.ink, lineHeight: 1.3, marginTop: 8 }}>
+          {line}
+        </div>
+        <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+          <button onClick={onNo} style={{
+            flex: 1, background: "transparent", border: "1px solid " + T.line, borderRadius: 14,
+            padding: "11px 0", cursor: "pointer", fontFamily: FH, fontWeight: 700, fontSize: 14, color: T.inkSoft,
+          }}>Not yet</button>
+          <button onClick={onYes} style={{
+            flex: 1, background: p.colour, border: "none", borderRadius: 14,
+            padding: "11px 0", cursor: "pointer", fontFamily: FH, fontWeight: 700, fontSize: 14, color: "#fff",
+          }}>Let's go</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The "pick your side" screen (post-launch, first open on a phone).
+function PickSide({ onPick }) {
+  const [pending, setPending] = useState(null); // which side is mid-confirm
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", padding: "40px 24px",
+      background: "linear-gradient(165deg, #fff6ee 0%, #ffe9db 55%, #ffdcc8 100%)",
+    }}>
+      <Wordmark size={.92} />
+      <div style={{
+        marginTop: 30, fontFamily: FM, fontSize: 10.5, letterSpacing: ".16em",
+        textTransform: "uppercase", color: T.inkSoft,
+      }}>Pick your side</div>
+
+      <div style={{ marginTop: 18, width: "100%", maxWidth: 340, display: "flex", flexDirection: "column", gap: 12 }}>
+        {PLAYER_IDS.map((id) => {
+          const p = PLAYERS[id];
+          return (
+            <button key={id} onClick={() => setPending(id)} style={{
+              width: "100%", cursor: "pointer", background: T.card,
+              border: "2px solid " + T.line, borderLeft: "6px solid " + p.colour,
+              borderRadius: 18, padding: "18px 20px", textAlign: "left",
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+            }}>
+              <span>
+                <span style={{ display: "block", fontFamily: FH, fontWeight: 700, fontSize: 20, color: T.ink }}>{p.name}</span>
+                <span style={{ display: "block", fontFamily: FB, fontSize: 13, color: p.colour, fontWeight: 700, marginTop: 1 }}>{p.club}</span>
+              </span>
+              <span style={{ fontFamily: FH, fontSize: 22, color: T.peach }}>›</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {pending && (
+        <JerseyConfirm who={pending} onNo={() => setPending(null)} onYes={() => { saveWho(pending); onPick(pending); }} />
+      )}
+    </div>
+  );
+}
+
+
+// ============================================================
+// THEME TOKENS — coral & cream, warm tropical sunset.
+// ============================================================
+const T = {
+  cream:   "#fff6ee",   // page background, soft warm cream
+  card:    "#fffdfa",   // raised surfaces
+  coral:   "#ff8a5c",   // primary warm coral
+  coralDk: "#f06a3c",   // deeper coral for accents/pressed
+  peach:   "#ffd9c2",   // soft peach fill
+  sun:     "#ffc24d",   // sunny yellow pop
+  ink:     "#4a3b33",   // warm dark brown text
+  inkSoft: "#8a7568",   // muted brown text
+  line:    "#f0e0d4",   // hairline dividers
+  spurs:   "#5b9bd5",   // Hammy
+  arsenal: "#e0577a",   // Naddy
+  good:    "#3fae7a",   // success green
+};
+const FH = "'Quicksand', sans-serif";   // headings (rounded, friendly)
+const FB = "'Nunito', sans-serif";      // body (rounded workhorse)
+const FM = "'Space Mono', monospace";   // mono accents (countdowns, labels)
+
+// ============================================================
+// LAUNCH — the game goes live Monday 6 Jul 2026, 00:00 Phuket time.
+// Before then, everyone lands on the teaser. Hammy's password is the skeleton
+// key that jumps straight past it for testing.
+// ============================================================
+const LAUNCH = new Date("2026-07-06T00:00:00+07:00");
+function msUntilLaunch(now) { return LAUNCH.getTime() - new Date(now).getTime(); }
+function launched(now) { return msUntilLaunch(now) <= 0; }
+
+// ---------- passwords (polite lock, not Fort Knox) ----------
+// "hammy"    -> full access (test everything, even pre-launch)
+// "bablydoo" -> teaser access (Naddy: curiosity preserved until Monday)
+function checkPassword(raw) {
+  const p = String(raw || "").trim().toLowerCase();
+  if (p === "hammy") return "full";
+  if (p === "bablydoo") return "teaser";
+  return null;
+}
+
+// Cheeky rotating rejections for a wrong word. Warm, teasing, never cold.
+const WRONG_WORDS = [
+  "Nope. But you typed that with real confidence, respect.",
+  "Not it. The door remains smugly shut.",
+  "Wrong-o. The bouncer folds his arms.",
+  "That's a no from me, and I'm a very polite no.",
+  "Incorrect. Have you tried being married to the developer?",
+  "Nuh-uh. Close, in the way that Reading is close to the Premier League.",
+  "Denied. Michael Oliver has reviewed it. Still denied.",
+  "That's not the word, but I admire the audacity.",
+  "No dice. The secret word is feeling shy about you specifically.",
+  "Wrong. Somewhere, a cat judged you for that attempt.",
+];
+
+// Little persistence so nobody re-types the word every open (device-only,
+// won't persist inside the Claude preview, only on the live site).
+const GATE_KEY = "tg_gate_v1";
+function loadGate() { try { return localStorage.getItem(GATE_KEY); } catch (e) { return null; } }
+function saveGate(level) { try { localStorage.setItem(GATE_KEY, level); } catch (e) {} }
+function clearGate() { try { localStorage.removeItem(GATE_KEY); } catch (e) {} }
+
+
+// ============================================================
+// REACT — hooks + tiny shared UI atoms
+// ============================================================
+// (useState / useEffect / useRef are provided as globals by the boot loader)
+
+// A soft rounded button that presses in slightly. Reused everywhere.
+function Btn({ onClick, children, style, kind }) {
+  const [down, setDown] = useState(false);
+  const base = {
+    fontFamily: FH, fontWeight: 700, fontSize: 15, border: "none",
+    borderRadius: 16, padding: "13px 20px", cursor: "pointer",
+    transition: "transform .08s ease, filter .15s ease",
+    transform: down ? "scale(.96)" : "scale(1)",
+    background: kind === "ghost" ? "transparent" : T.coral,
+    color: kind === "ghost" ? T.inkSoft : "#fff",
+    boxShadow: kind === "ghost" ? "none" : "0 6px 18px rgba(240,106,60,.32)",
+  };
+  return (
+    <button onClick={onClick}
+      onPointerDown={() => setDown(true)}
+      onPointerUp={() => setDown(false)}
+      onPointerLeave={() => setDown(false)}
+      style={{ ...base, ...style }}>
+      {children}
+    </button>
+  );
+}
+
+// The little sun/leaf wordmark lockup, used on gate + teaser.
+function Wordmark({ size }) {
+  const s = size || 1;
+  return (
+    <div style={{ textAlign: "center", userSelect: "none" }}>
+      <div style={{ fontSize: 46 * s, lineHeight: 1, animation: "tgFloat 4s ease-in-out infinite" }}>🌴</div>
+      <div style={{
+        fontFamily: FH, fontWeight: 700, fontSize: 30 * s, color: T.ink,
+        letterSpacing: "-.01em", marginTop: 8 * s,
+      }}>
+        Touch Grass <span style={{ color: T.coral }}>HKT</span>
+      </div>
+    </div>
+  );
+}
+
+// A small, tasteful "back to hammyLabs" link, fixed top-left. Returns to the
+// index page (works on the live site where index.html is a neighbour; in the
+// Claude preview there's no sibling page so it may simply do nothing).
+function BackLink() {
+  return (
+    <a href="index.html" style={{
+      position: "fixed", top: 16, left: 16, zIndex: 20,
+      display: "inline-flex", alignItems: "center", gap: 6,
+      textDecoration: "none", fontFamily: FH, fontWeight: 600, fontSize: 13,
+      color: T.inkSoft, background: "rgba(255,255,255,.72)",
+      border: "1px solid " + T.line, borderRadius: 20, padding: "7px 13px 7px 10px",
+      backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)",
+    }}>
+      <span style={{ fontSize: 15, lineHeight: 1 }}>‹</span> hammyLabs
+    </a>
+  );
+}
+
+
+// ============================================================
+// THE PASSWORD GATE — mysterious & minimal. Just the wordmark and a prompt.
+// ============================================================
+function Gate({ onPass }) {
+  const [val, setVal] = useState("");
+  const [msg, setMsg] = useState("");
+  const [shake, setShake] = useState(false);
+  const [wrongIdx, setWrongIdx] = useState(0);
+
+  function submit() {
+    const level = checkPassword(val);
+    if (level) {
+      saveGate(level);
+      onPass(level);
+      return;
+    }
+    // wrong: cheeky message + a little shake, cycle through the bank
+    setMsg(WRONG_WORDS[wrongIdx % WRONG_WORDS.length]);
+    setWrongIdx(wrongIdx + 1);
+    setShake(true);
+    setVal("");
+    setTimeout(() => setShake(false), 500);
+  }
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", padding: "0 28px",
+      background: "linear-gradient(165deg, #fff6ee 0%, #ffe9db 55%, #ffdcc8 100%)",
+    }}>
+      <BackLink />
+      <div style={{ animation: "tgFadeUp .7s ease both", transform: shake ? undefined : "none" }}>
+        <div style={{ animation: shake ? "tgShake .5s" : "none" }}>
+          <Wordmark size={1} />
+        </div>
+      </div>
+
+      <div style={{
+        marginTop: 40, width: "100%", maxWidth: 320,
+        animation: "tgFadeUp .7s ease .15s both",
+      }}>
+        <div style={{
+          fontFamily: FM, fontSize: 10.5, letterSpacing: ".16em",
+          textTransform: "uppercase", color: T.inkSoft, textAlign: "center",
+          marginBottom: 14,
+        }}>
+          Say the secret word
+        </div>
+        <input
+          value={val}
+          onChange={(e) => setVal(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+          placeholder="……………"
+          autoCapitalize="none" autoCorrect="off" spellCheck="false"
+          style={{
+            width: "100%", textAlign: "center", fontFamily: FB, fontWeight: 700,
+            fontSize: 18, color: T.ink, background: T.card,
+            border: "2px solid " + T.peach, borderRadius: 16,
+            padding: "14px 16px", outline: "none", letterSpacing: ".05em",
+          }}
+        />
+        <div style={{ marginTop: 14, display: "flex", justifyContent: "center" }}>
+          <Btn onClick={submit} style={{ minWidth: 150 }}>Enter</Btn>
+        </div>
+
+        {msg && (
+          <div style={{
+            marginTop: 18, fontFamily: FB, fontSize: 13.5, fontStyle: "italic",
+            color: T.coralDk, textAlign: "center", lineHeight: 1.5,
+            animation: "tgFadeUp .4s ease both",
+          }}>
+            {msg}
+          </div>
+        )}
+      </div>
+
+      <div style={{
+        position: "fixed", bottom: 22, fontFamily: FM, fontSize: 9,
+        letterSpacing: ".14em", color: "#d8b8a4", textTransform: "uppercase",
+      }}>
+        hammyLabs · HKT
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// THE TEASER — what Naddy sees until Monday. A live countdown + curious hints,
+// enough to intrigue, never enough to spoil.
+// ============================================================
+const TEASE_HINTS = [
+  "Something is coming to get us off this sofa.",
+  "It involves you, me, and the whole island.",
+  "There will be points. There will be a winner. There will be gloating.",
+  "Arsenal vs Spurs, but the pitch is the whole of Phuket.",
+  "One of us is about to find out they're more competitive than they let on.",
+  "A very particular referee has been appointed. He is thorough.",
+  "Your favourite centre-half has quietly taken a second job.",
+  "He'll be teaching. You'll be learning. There may be a test on Fridays.",
+  "Every day hides a secret that's worth double. You won't know which.",
+  "Somewhere out there, a prize is floating on the water, waiting.",
+  "There are duels you win simply by being quicker to notice.",
+  "Midweek, a wildcard appears. It can turn the whole thing upside down.",
+  "Bring your appetite. Bring your competitive streak. Bring your phone.",
+  "Some challenges we tackle together. Most, we race each other to.",
+  "Ronald is doing something odd out front, and it's worth points.",
+  "There's a booth. There's an appeal. There's a man who draws little lines.",
+  "It rewards the curious, the quick, and the slightly ridiculous.",
+  "Whoever wins the week gets a scrapbook. Whoever loses gets... this look.",
+  "No bootcamps. No misery. Just the two of us, out in the world, being daft.",
+  "By Monday, the sofa loses. That's the only spoiler you're getting.",
+];
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+function Teaser({ now, isFull, onReset, onEnterGame }) {
+  const [tick, setTick] = useState(0);
+  const [hintIdx, setHintIdx] = useState(0);
+  const [taps, setTaps] = useState(0);
+
+  // live countdown, re-render every second
+  useEffect(() => {
+    const t = setInterval(() => setTick((x) => x + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  // rotate the hints every 3.2s
+  useEffect(() => {
+    const t = setInterval(() => setHintIdx((i) => (i + 1) % TEASE_HINTS.length), 3200);
+    return () => clearInterval(t);
+  }, []);
+
+  const ms = Math.max(0, msUntilLaunch(Date.now()));
+  const days = Math.floor(ms / 86400000);
+  const hrs = Math.floor((ms % 86400000) / 3600000);
+  const mins = Math.floor((ms % 3600000) / 60000);
+  const secs = Math.floor((ms % 60000) / 1000);
+
+  // easter egg: tap the palm 7 times for a cheeky cat cameo
+  const catEgg = taps >= 7;
+
+  const Unit = ({ v, label }) => (
+    <div style={{ textAlign: "center", minWidth: 58 }}>
+      <div style={{
+        fontFamily: FH, fontWeight: 700, fontSize: 38, color: T.ink,
+        lineHeight: 1, fontVariantNumeric: "tabular-nums",
+      }}>{pad2(v)}</div>
+      <div style={{
+        fontFamily: FM, fontSize: 9, letterSpacing: ".14em", color: T.inkSoft,
+        textTransform: "uppercase", marginTop: 6,
+      }}>{label}</div>
+    </div>
+  );
+
+  return (
+    <div style={{
+      minHeight: "100vh", display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", padding: "48px 28px",
+      background: "linear-gradient(165deg, #fff6ee 0%, #ffe9db 55%, #ffdcc8 100%)",
+      textAlign: "center",
+    }}>
+      <BackLink />
+      <div onClick={() => setTaps((t) => t + 1)} style={{ cursor: "pointer" }}>
+        <Wordmark size={1.05} />
+      </div>
+
+      {catEgg && (
+        <div style={{ fontSize: 30, marginTop: 10, animation: "tgPop .5s ease both" }}>
+          🐱 🐱 🐱 🐱 🐱
+          <div style={{ fontFamily: FB, fontSize: 11, color: T.inkSoft, fontStyle: "italic", marginTop: 4 }}>
+            the five have approved this teaser
+          </div>
+        </div>
+      )}
+
+      <div style={{
+        marginTop: 34, fontFamily: FM, fontSize: 10.5, letterSpacing: ".18em",
+        textTransform: "uppercase", color: T.coralDk,
+      }}>
+        Kick-off · Monday 6 July
+      </div>
+
+      <div style={{
+        marginTop: 20, display: "flex", gap: 8, alignItems: "flex-start",
+        animation: "tgFadeUp .7s ease both",
+      }}>
+        <Unit v={days} label="days" />
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 30, color: T.peach }}>:</div>
+        <Unit v={hrs} label="hrs" />
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 30, color: T.peach }}>:</div>
+        <Unit v={mins} label="min" />
+        <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 30, color: T.peach }}>:</div>
+        <Unit v={secs} label="sec" />
+      </div>
+
+      <div style={{
+        marginTop: 26, maxWidth: 288, fontFamily: FB, fontSize: 13.5,
+        color: T.inkSoft, lineHeight: 1.6,
+      }}>
+        A week-long duel across Phuket. Just the two of us, one quietly ridiculous
+        contest, and a whole island to play it on.
+      </div>
+
+      <div style={{
+        marginTop: 30, maxWidth: 300, minHeight: 44,
+        fontFamily: FB, fontSize: 16, fontWeight: 600, color: T.ink,
+        lineHeight: 1.5,
+      }}>
+        <span key={hintIdx} style={{ display: "inline-block", animation: "tgFadeUp .6s ease both" }}>
+          {TEASE_HINTS[hintIdx]}
+        </span>
+      </div>
+
+      <div style={{
+        marginTop: 34, padding: "12px 18px", borderRadius: 14,
+        background: "rgba(224,87,122,.08)", border: "1px solid rgba(224,87,122,.25)",
+        maxWidth: 300,
+      }}>
+        <div style={{ fontFamily: FM, fontSize: 9, letterSpacing: ".16em", color: T.arsenal, textTransform: "uppercase" }}>
+          A message for the Gunner
+        </div>
+        <div style={{ fontFamily: FB, fontSize: 13.5, color: T.ink, lineHeight: 1.6, marginTop: 7 }}>
+          He thinks he's got this in the bag, Naddy. He's already picked out his
+          gloating face. Monday, you get the chance to wipe it clean off him.
+        </div>
+      </div>
+
+      {isFull && (
+        <div style={{
+          marginTop: 40, fontFamily: FM, fontSize: 9.5, color: T.inkSoft,
+          letterSpacing: ".1em", animation: "tgFadeUp .7s ease .3s both",
+        }}>
+          [ DEV: logged in as Hammy ]
+        </div>
+      )}
+
+      {isFull && onEnterGame && (
+        <div style={{ marginTop: 12, animation: "tgFadeUp .7s ease .3s both" }}>
+          <Btn onClick={onEnterGame} style={{ fontSize: 13 }}>
+            enter the game (test) ›
+          </Btn>
+        </div>
+      )}
+
+      <div style={{ marginTop: isFull ? 12 : 44, animation: "tgFadeUp .7s ease .3s both" }}>
+        <Btn onClick={onReset} kind="ghost" style={{ fontSize: 13 }}>
+          switch user ›
+        </Btn>
+      </div>
+
+      <div style={{
+        position: "fixed", bottom: 22, fontFamily: FM, fontSize: 9,
+        letterSpacing: ".14em", color: "#d8b8a4", textTransform: "uppercase",
+      }}>
+        made with love · for lil naddy
+      </div>
+    </div>
+  );
+}
+
+
+// ============================================================
+// APP ROOT — the whole flow.
+//   BEFORE Monday: password gate guards the surprise.
+//     - Naddy's key -> teaser (curiosity preserved)
+//     - Hammy's key -> may test the game
+//   ON/AFTER Monday: password retires. Open door.
+//     - first open on a phone -> "pick your side" (with jersey confirm)
+//     - thereafter -> straight into the game, side remembered
+//     - can switch side anytime
+// ============================================================
+function App() {
+  const [gate, setGate] = useState(loadGate());     // null | 'teaser' | 'full'
+  const [who, setWho] = useState(loadWho());        // null | 'Hammy' | 'Naddy'
+  const [previewGame, setPreviewGame] = useState(false); // Hammy testing pre-launch
+  const now = Date.now();
+  const isLaunched = launched(now);
+
+  // ---------- POST-LAUNCH: open door, identity not password ----------
+  if (isLaunched) {
+    if (!who) return <PickSide onPick={setWho} />;
+    return <Game now={now} who={who} isFull={true} onSwitch={() => { setWho(null); }} />;
+  }
+
+  // ---------- PRE-LAUNCH: password guards the reveal ----------
+  if (!gate) return <Gate onPass={setGate} />;
+  const isFull = gate === "full";
+
+  function relock() { clearGate(); setGate(null); setPreviewGame(false); }
+
+  // Hammy (full) can flip into the game to test it before Monday.
+  if (isFull && previewGame) {
+    return <Game now={now} who="Hammy" isFull={true} onSwitch={relock} />;
+  }
+
+  // Otherwise show the teaser. Hammy gets a dev button to enter the game.
+  return (
+    <Teaser
+      now={now}
+      isFull={isFull}
+      onReset={relock}
+      onEnterGame={isFull ? () => setPreviewGame(true) : null}
+    />
+  );
+}
+// (the boot loader below appends the ReactDOM mount for <App />)
+</script>
+
+<script>
+(function () {
+  var ROOT = document.getElementById("root");
+  function showError(msg) {
+    ROOT.innerHTML = '<div class="errbox"><b>Something went wrong loading Touch Grass HKT.</b>\n\n' +
+      String(msg).replace(/</g, "&lt;") +
+      '\n\nIf you are viewing this inside an app preview, open the real website link in your browser instead.</div>';
+  }
+  function loadScript(urls, done, fail) {
+    var i = 0;
+    function tryNext() {
+      if (i >= urls.length) { fail(); return; }
+      var s = document.createElement("script");
+      s.src = urls[i++]; s.crossOrigin = "anonymous";
+      s.onload = function () { done(); };
+      s.onerror = function () { tryNext(); };
+      document.head.appendChild(s);
+    }
+    tryNext();
+  }
+  var REACT = ["https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js","https://unpkg.com/react@18.3.1/umd/react.production.min.js","https://cdnjs.cloudflare.com/ajax/libs/react@18.3.1/umd/react.production.min.js"];
+  var REACTDOM = ["https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js","https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js","https://cdnjs.cloudflare.com/ajax/libs/react-dom@18.3.1/umd/react-dom.production.min.js"];
+  var BABEL = ["https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js","https://unpkg.com/@babel/standalone@7.25.6/babel.min.js","https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"];
+  function boot() {
+    try {
+      if (!window.React || !window.ReactDOM) { showError("React did not load from any CDN."); return; }
+      if (!window.Babel) { showError("Babel did not load."); return; }
+      var hooks = "var useState=React.useState,useMemo=React.useMemo,useEffect=React.useEffect,useRef=React.useRef;\n";
+      var mount = "\nReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));";
+      var src = document.getElementById("appsrc").textContent;
+      var compiled = Babel.transform(hooks + src + mount, { presets: ["react"] }).code;
+      (0, eval)(compiled);
+    } catch (err) { showError((err && err.stack) || err); }
+  }
+  loadScript(REACT, function () {
+    loadScript(REACTDOM, function () {
+      loadScript(BABEL, boot, function () { showError("Could not load Babel."); });
+    }, function () { showError("Could not load ReactDOM."); });
+  }, function () { showError("Could not load React."); });
+})();
+</script>
+</body>
+</html>
