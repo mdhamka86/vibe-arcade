@@ -29,7 +29,7 @@
   window.addEventListener('unhandledrejection',function(e){
     __diag('PROMISE ERROR: '+((e.reason&&e.reason.message)||e.reason));
   });
-  __diag('THE TERMINAL v1.2 · boot '+new Date().toTimeString().slice(0,8)+' · if you can read this, the new file arrived');
+  __diag('THE TERMINAL v1.3 · boot '+new Date().toTimeString().slice(0,8)+' · if you can read this, the new file arrived');
   setTimeout(function(){
     if(window.__terminalMounted) return;
     __diag('MOUNT FAILED after 6s. Library check — React: '+(!!window.React)+' · ReactDOM: '+(!!window.ReactDOM)+' · Babel: '+(!!window.Babel));
@@ -74,15 +74,10 @@
   .tabs button{flex:1;border:none;border-radius:0;background:transparent;color:var(--dim);padding:12px 0 10px;font-size:11px;letter-spacing:.08em;border-top:2px solid transparent}
   .tabs button.on{color:var(--amber);border-top-color:var(--amber)}
   .wrap{padding:12px 14px;max-width:760px;margin:0 auto}
-  .chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:none}
-  .chips::-webkit-scrollbar{display:none}
-  .chip{flex:0 0 auto;font-size:11px;letter-spacing:.06em;padding:7px 12px;border-radius:3px}
-  .chip.on{background:var(--amber);color:#141005;border-color:var(--amber);font-weight:600}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px;margin-bottom:10px}
   .eyebrow{font-size:10px;letter-spacing:.16em;color:var(--amber-dim);margin-bottom:6px;text-transform:uppercase}
   .hl{font-family:'Barlow Condensed',sans-serif;font-size:17px;font-weight:600;line-height:1.25;color:var(--ink)}
   .meta{font-size:10px;color:var(--dim);margin-top:6px;display:flex;gap:10px;flex-wrap:wrap}
-  .desc{font-size:12px;color:#BDB8A8;margin-top:6px;line-height:1.5}
   .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
   .kv{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:8px}
@@ -116,10 +111,6 @@ const {useState,useEffect,useRef,useCallback} = React;
 const API_NEWS='/api/terminal-news', API_ENG='/api/terminal-engine';
 
 // ---------- helpers ----------
-const store={
-  get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch{return d}},
-  set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch{}}
-};
 async function eng(action,payload={}){
   const r=await fetch(API_ENG,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...payload})});
   const j=await r.json();
@@ -195,57 +186,6 @@ function Tape(){
   if(!rates) return <div className="tape"><div style={{padding:'7px 14px'}} className="dim">connecting to wire…</div></div>;
   const cells=rates.map(([k,v],i)=><span key={i}><b>{k}</b> {v}</span>);
   return <div className="tape"><div className="tape-inner">{cells}{cells.map((c,i)=>React.cloneElement(c,{key:'b'+i}))}</div></div>;
-}
-
-// ---------- WIRE (news) ----------
-const TOPICS=[['spurs','SPURS'],['football','FOOTBALL'],['worldcup','WORLD CUP'],['racing','RACING'],
-  ['markets','MARKETS'],['f1','F1'],['singapore','SINGAPORE'],['phuket','PHUKET'],['fm','FM'],['forex','FOREX']];
-function Wire(){
-  const [topic,setTopic]=useState(store.get('t_topic','spurs'));
-  const [items,setItems]=useState(null);
-  const [tickers,setTickers]=useState(store.get('t_tickers','CRDO,CAMT,MRVL,NTAP,TSLA,AMD,COHR,MGNI,AMBA,MBLY,SIA'));
-  const [editing,setEditing]=useState(false);
-  const load=useCallback(async(t,tk)=>{
-    setItems(null);
-    try{
-      const r=await fetch(`${API_NEWS}?topic=${t}${t==='markets'?'&tickers='+encodeURIComponent(tk):''}`);
-      const j=await r.json(); setItems(j.items||[]);
-    }catch{ setItems([]); }
-  },[]);
-  useEffect(()=>{ load(topic,tickers); },[topic]);
-  return (
-    <div className="wrap">
-      <div className="chips">
-        {TOPICS.map(([k,l])=>
-          <button key={k} className={'chip '+(topic===k?'on':'')} onClick={()=>{setTopic(k);store.set('t_topic',k)}}>{l}</button>)}
-      </div>
-      {topic==='markets' && (
-        <div className="card">
-          <div className="eyebrow">Watchlist</div>
-          {editing
-            ? <div className="row">
-                <input type="text" value={tickers} onChange={e=>setTickers(e.target.value)} />
-                <button className="pri" onClick={()=>{store.set('t_tickers',tickers);setEditing(false);load('markets',tickers)}}>Save</button>
-              </div>
-            : <div className="row" style={{justifyContent:'space-between'}}>
-                <span className="note">{tickers}</span>
-                <button className="ghost" onClick={()=>setEditing(true)}>Edit</button>
-              </div>}
-        </div>
-      )}
-      {items===null && <div className="note"><span className="spin">◐</span> pulling the wire…</div>}
-      {items && items.length===0 && <div className="note">Wire is quiet for this desk. Try another topic or check back shortly.</div>}
-      {items && items.map((it,i)=>(
-        <a key={i} href={it.link} target="_blank" rel="noreferrer">
-          <div className="card">
-            <div className="hl">{it.title}</div>
-            {it.desc && <div className="desc">{it.desc}</div>}
-            <div className="meta"><span className="ambr">{it.source}</span><span>{ago(it.ts)}</span></div>
-          </div>
-        </a>
-      ))}
-    </div>
-  );
 }
 
 // ---------- DESK (ideas) ----------
@@ -557,10 +497,12 @@ function Vitals({state}){
 
 // ---------- App shell ----------
 function App(){
-  const [tab,setTab]=useState('wire');
+  const [tab,setTab]=useState('desk');
   const [state,setState]=useState(null);
+  const [engineErr,setEngineErr]=useState(null);
   const refresh=useCallback(async()=>{
-    try{ setState(await eng('get')); }catch(e){ console.error(e); }
+    try{ setState(await eng('get')); setEngineErr(null); }
+    catch(e){ setEngineErr(e.message); }
   },[]);
   useEffect(()=>{
     window.__terminalMounted=true;
@@ -570,17 +512,17 @@ function App(){
   const open=fxMarketOpen();
   return (<>
     <div className="topbar">
-      <div className="brand disp">THE TERMINAL<small>hammyLabs · wire &amp; desk</small></div>
+      <div className="brand disp">THE TERMINAL<small>hammyLabs · forex desk</small></div>
       <span className={'pill '+(open?'open':'shut')}>{open?'FX OPEN':'FX SHUT'}</span>
     </div>
     <Tape/>
-    {tab==='wire' && <Wire/>}
+    {engineErr && <div className="wrap" style={{paddingBottom:0}}><div className="alertbox a-red">ENGINE OFFLINE: {engineErr}. Check ANTHROPIC_API_KEY and the Upstash variables in Vercel, then reload.</div></div>}
     {tab==='desk' && <Desk state={state} refresh={refresh}/>}
     {tab==='book' && <Book state={state} refresh={refresh}/>}
     {tab==='aar' && <Archive state={state}/>}
     {tab==='vitals' && <Vitals state={state}/>}
     <nav className="tabs">
-      {[['wire','WIRE'],['desk','DESK'],['book','BOOK'],['aar','AAR'],['vitals','VITALS']].map(([k,l])=>
+      {[['desk','DESK'],['book','BOOK'],['aar','AAR'],['vitals','VITALS']].map(([k,l])=>
         <button key={k} className={tab===k?'on':''} onClick={()=>setTab(k)}>{l}</button>)}
     </nav>
   </>);
