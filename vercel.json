@@ -9,6 +9,7 @@
     "api/odds2.js": { "maxDuration": 10 },
     "api/mission.js": { "maxDuration": 10 },
     "api/stewards.js": { "maxDuration": 60 },
-    "api/trawl.js": { "maxDuration": 300 }
+    "api/trawl.js": { "maxDuration": 300 },
+    "api/propose.js": { "maxDuration": 120 }
   }
 }
