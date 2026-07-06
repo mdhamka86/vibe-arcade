@@ -14,6 +14,10 @@
   html, body { margin: 0; padding: 0; background: #fff6ee; }
   #root { min-height: 100vh; }
   body { font-family: 'Nunito', system-ui, sans-serif; color: #4a3b33; }
+  /* Belt-and-braces: a long unbroken string (a pasted URL, a Bluesky handle, a
+     mashed word) can never push a container past the screen edge and force an
+     ugly horizontal scroll. Protects every text container, present and future. */
+  div, span, p, a, li, td, textarea, input { overflow-wrap: break-word; word-break: break-word; }
   .loading { color:#ff8a5c; font-family:'Quicksand',sans-serif; font-weight:700; text-align:center;
     padding-top:44vh; font-size:15px; letter-spacing:.24em; text-transform:uppercase; }
   .errbox { color:#c0492b; font-family:'Space Mono',monospace; font-size:12px; white-space:pre-wrap;
@@ -4263,6 +4267,87 @@ function wordsThisWeek(now) {
 }
 function isFriday(now) { return dayOfWeek(now) === 4; } // Mon=0 ... Fri=4
 
+// ---------- the day's HARDEST word, for the say-it-back challenge ----------
+// Coach sets the toughest of the day's three as the one you must say back, so
+// the speaking test has real bite. Difficulty is scored honestly from the
+// romanisation: more syllables, more tone marks, and greater length all make a
+// word harder for a farang tongue. Ties break toward the later word in the day.
+function wordDifficulty(w) {
+  if (!w || !w.say) return 0;
+  const say = w.say;
+  const syllables = say.split(/[-\s]/).filter(Boolean).length;
+  // tone-marked vowels (the à â á ǎ family) are the real difficulty in Thai
+  const toneMarks = (say.match(/[àâáǎèêéěìîíǐòôóǒùûúǔ]/gi) || []).length;
+  const length = say.replace(/[-\s]/g, "").length;
+  return syllables * 3 + toneMarks * 2 + length * 0.3;
+}
+function hardestOfDay(words) {
+  if (!words || !words.length) return null;
+  let best = words[0], bestScore = -1;
+  words.forEach((w, i) => {
+    const s = wordDifficulty(w) + i * 0.01; // tiny nudge so ties favour the later word
+    if (s >= bestScore) { bestScore = s; best = w; }
+  });
+  return best;
+}
+
+// Coach Saliba's verdict on your spoken attempt. Two banks in his warm, wry
+// voice, both leaning on the house Arsenal-versus-Spurs rivalry. Seeded per
+// day+word so a given attempt reads consistently, not a fresh random each render.
+const SALIBA_GOOD = [
+  "Beautiful. Absolutely beautiful. That tone was cleaner than Arsenal's passing triangles. Hammy could learn a thing or two, but he never will.",
+  "Now THAT is how you say it. Crisp, confident, correct. You'd walk into the Arsenal midfield with pronunciation like that. Chef's kiss.",
+  "Oh, lovely. The vowels sat perfectly. That's Champions League diction, that is. Wenger himself would nod slowly and say nothing, which is the highest praise.",
+  "Spot on. You said it like you were born on Sukhumvit. Gooner precision. Keep this up and the whole island will think you're a local.",
+  "Yes! Sharp, clean, tonal. That's the sound of a winner. Spurs fans mumble; Arsenal fans enunciate. You've picked the right side, clearly.",
+];
+const SALIBA_BAD = [
+  "Oh dear. That was less a Thai word and more a cry for help. My ears are filing a complaint. Even a Tottenham back four defends better than that.",
+  "No, no, no. What WAS that? You've taken a beautiful language and dropped it like Spurs drop points in April. Try again, and mean it this time.",
+  "Hmm. I heard... something. A noise. A vibe. Not the word, but a noise. That's a Harry Kane penalty run-up of a pronunciation: all build-up, no end product.",
+  "Painful. Genuinely painful. That tone went up when it should have gone down, like Tottenham's league position. Say it again, slower, with feeling.",
+  "I'll be kind, because I'm a gentleman. But between us? That was relegation-form Thai. The tone wandered offside twice. Regroup and go again.",
+];
+function salibaVerdict(good, seedKey) {
+  const bank = good ? SALIBA_GOOD : SALIBA_BAD;
+  const pool = seededShuffle(bank, "saliba-" + (seedKey || "x"));
+  return pool[0];
+}
+
+// Did the browser's transcript plausibly match the target word? A forgiving
+// check: browser speech recognition on Thai from a phone mic is variable and
+// cannot truly grade tones, so we reward a genuine, recognisable attempt rather
+// than demanding perfection. Matches on the Thai script OR a loose romanised
+// resemblance (strip tone marks, compare bare syllables).
+function bareRoman(s) {
+  return String(s || "").toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // strip combining tone marks
+    .replace(/[^a-z]/g, "");
+}
+function attemptMatches(heard, target) {
+  if (!heard || !target) return false;
+  const h = String(heard).trim();
+  // 1) direct Thai-script hit: the transcript contains the target Thai word
+  if (target.thai && h.indexOf(target.thai) !== -1) return true;
+  // 2) romanised resemblance: bare syllables overlap meaningfully. BOTH sides
+  // must be non-empty first, else an empty bare string (e.g. the browser heard
+  // a DIFFERENT Thai word, which strips to nothing) would falsely match.
+  const hb = bareRoman(h), tb = bareRoman(target.say);
+  if (!tb || hb.length < 2) return false; // nothing romanised to compare against
+  if (hb.indexOf(tb) !== -1 || tb.indexOf(hb) !== -1) return true;
+  // 3) partial: share a decent run of characters (handles near-misses)
+  const shorter = hb.length < tb.length ? hb : tb;
+  const longer = hb.length < tb.length ? tb : hb;
+  if (shorter.length >= 3) {
+    for (let len = shorter.length; len >= 3; len--) {
+      for (let i = 0; i + len <= shorter.length; i++) {
+        if (longer.indexOf(shorter.substr(i, len)) !== -1) return true;
+      }
+    }
+  }
+  return false;
+}
+
 // ---------- streak + progress storage (device-local) ----------
 // Shape: { done: { "<dayIndex>": true }, lastDay: <idx>, streak: <n>, best: <n> }
 function schoolKey(who) { return "tg_school_" + (who || "Hammy"); }
@@ -4323,6 +4408,7 @@ function speakThai(text) {
 // ---------- THE THAI SCHOOL SCREEN ----------
 function ThaiSchool({ me, now, spectating }) {
   const words = wordsForToday(now); // the day's trio, in steady order
+  const challenge = hardestOfDay(words); // the toughest one: the say-it-back target
   const particle = politeParticle(me);
   const particleThai = politeThai(me);
   const mgrTip = managerTip(me, now); // Wenger for Naddy, Ange for Hammy
@@ -4330,6 +4416,7 @@ function ThaiSchool({ me, now, spectating }) {
   const [listening, setListening] = useState(false);
   const [saidIt, setSaidIt] = useState(doneToday(me, now));
   const [praise, setPraise] = useState("");
+  const [verdictGood, setVerdictGood] = useState(null); // true | false | null
 
   const streak = liveStreak(me, now);
   const friday = isFriday(now);
@@ -4340,39 +4427,64 @@ function ThaiSchool({ me, now, spectating }) {
     setSaidIt(true);
   }
 
-  // Say-it-back: uses browser speech recognition where available. It's
-  // encouraging, not a strict examiner (it can't truly grade Thai tones), so
-  // any genuine attempt is warmly rewarded.
+  // Coach's ruling on your spoken attempt. He judges the HARDEST word of the day.
+  // We feed the browser's transcript through a forgiving match: a recognisable
+  // attempt earns glowing (Arsenal-flavoured) praise; a miss earns a funny
+  // (Arsenal-flavoured) roasting. Either way the day is marked practised, because
+  // showing up and speaking is the habit we're building. He cannot truly grade
+  // tones (no phone browser can), so he rewards a genuine, recognisable go.
+  function rule(good) {
+    const seed = dayIndex(now) + "-" + (challenge ? challenge.thai : "x") + "-" + (good ? "g" : "b");
+    setVerdictGood(good);
+    setPraise(salibaVerdict(good, seed));
+    practise();
+  }
+
   function sayItBack() {
     const SR = (typeof window !== "undefined") &&
       (window.SpeechRecognition || window.webkitSpeechRecognition);
     if (!SR) {
-      // no recognition on this phone: still reward the attempt generously
-      setPraise("Coach didn't quite catch that on this phone, but I trust you. Nice one.");
+      // no recognition on this phone: can't judge fairly, so give the benefit of
+      // the doubt with a warm word and mark the day done.
+      setVerdictGood(true);
+      setPraise("Coach can't hear you on this phone, so he'll take it on trust. But he's watching, Gooner. Don't make him regret it.");
       practise();
       return;
     }
     try {
       const rec = new SR();
       rec.lang = "th-TH";
-      rec.maxAlternatives = 3;
+      rec.maxAlternatives = 5;
       rec.interimResults = false;
       setListening(true);
       setPraise("");
-      rec.onresult = () => {
+      setVerdictGood(null);
+      rec.onresult = (ev) => {
         setListening(false);
-        setPraise("Heard you loud and clear. That's the spirit, keep going.");
-        practise();
+        // gather every alternative the browser offers, judge the best match
+        let matched = false;
+        try {
+          const res = ev.results && ev.results[0];
+          if (res) {
+            for (let i = 0; i < res.length; i++) {
+              if (attemptMatches(res[i].transcript, challenge)) { matched = true; break; }
+            }
+          }
+        } catch (e) { /* fall through to a miss */ }
+        rule(matched);
       };
       rec.onerror = () => {
         setListening(false);
-        setPraise("Coach's ears glitched, but the effort counts. Well tried.");
+        // a mic error isn't the player's fault: don't roast them for it.
+        setVerdictGood(true);
+        setPraise("Coach's ears glitched there, not your fault. He'll mark you present. But no hiding next time, eh.");
         practise();
       };
       rec.onend = () => setListening(false);
       rec.start();
     } catch (e) {
-      setPraise("Mic's being shy today. No matter, I'll mark you present. Good lad... lass... you.");
+      setVerdictGood(true);
+      setPraise("Mic's being shy today. Coach will let it slide, this once. Good Gooner.");
       practise();
     }
   }
@@ -4405,9 +4517,9 @@ function ThaiSchool({ me, now, spectating }) {
         {friday ? "Friday · test day · today's three" : "Today's three words"}
       </div>
       {words.map((word, wi) => (
-        <div key={word.thai + wi} style={{ background: T.card, border: "1px solid " + T.line, borderRadius: 18, padding: "18px 18px", textAlign: "center", marginBottom: 12 }}>
-          <div style={{ fontFamily: FM, fontSize: 8.5, letterSpacing: ".14em", color: T.inkSoft, textTransform: "uppercase" }}>
-            Word {wi + 1} of {words.length}
+        <div key={word.thai + wi} style={{ background: T.card, border: "1px solid " + (challenge && word.thai === challenge.thai ? T.arsenal : T.line), borderRadius: 18, padding: "18px 18px", textAlign: "center", marginBottom: 12 }}>
+          <div style={{ fontFamily: FM, fontSize: 8.5, letterSpacing: ".14em", color: challenge && word.thai === challenge.thai ? T.arsenal : T.inkSoft, textTransform: "uppercase" }}>
+            {challenge && word.thai === challenge.thai ? "Word " + (wi + 1) + " · Coach's say-it-back word" : "Word " + (wi + 1) + " of " + words.length}
           </div>
           <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 40, color: T.ink, marginTop: 8, lineHeight: 1.1 }}>
             {word.thai}
@@ -4455,8 +4567,13 @@ function ThaiSchool({ me, now, spectating }) {
         </div>
       </div>
 
-      {/* say it back */}
+      {/* say it back — Coach judges the HARDEST word of the day */}
       <div style={{ marginTop: 16 }}>
+        {!spectating && challenge ? (
+          <div style={{ fontFamily: FB, fontSize: 12, color: T.inkSoft, lineHeight: 1.55, textAlign: "center", marginBottom: 10 }}>
+            Coach's challenge: say <b style={{ color: T.ink }}>{challenge.thai}</b> ({challenge.say}) back to him. He's picked the day's toughest, and he <i>is</i> listening.
+          </div>
+        ) : null}
         {spectating ? (
           <div style={{
             textAlign: "center", borderRadius: 12, padding: "12px 0",
@@ -4471,12 +4588,19 @@ function ThaiSchool({ me, now, spectating }) {
           </div>
         ) : (
           <Btn onClick={sayItBack} style={{ width: "100%" }}>
-            {listening ? "Listening..." : "Say it back to Coach"}
+            {listening ? "Coach is listening..." : "Say it back to Coach"}
           </Btn>
         )}
         {praise ? (
-          <div style={{ marginTop: 10, textAlign: "center", fontFamily: FB, fontSize: 12.5, color: T.inkSoft, fontStyle: "italic", lineHeight: 1.5 }}>
-            {praise}
+          <div style={{
+            marginTop: 12, padding: "12px 14px", borderRadius: 13, lineHeight: 1.55,
+            background: verdictGood === false ? "rgba(224,87,122,.09)" : "rgba(63,174,122,.09)",
+            border: "1px solid " + (verdictGood === false ? "rgba(224,87,122,.3)" : "rgba(63,174,122,.3)"),
+          }}>
+            <div style={{ fontFamily: FM, fontSize: 8.5, letterSpacing: ".12em", textTransform: "uppercase", color: verdictGood === false ? T.arsenal : T.good, marginBottom: 5 }}>
+              {verdictGood === false ? "Coach Saliba is not impressed" : "Coach Saliba approves"}
+            </div>
+            <div style={{ fontFamily: FB, fontSize: 12.5, color: T.ink, fontStyle: "italic" }}>"{praise}"</div>
           </div>
         ) : null}
       </div>
@@ -5118,6 +5242,26 @@ function wxBucket(code) {
   return { key: "cloudy", label: "Unsettled" };
 }
 
+// A big friendly icon per condition, so a glance tells you the day's mood.
+const WX_EMOJI = {
+  clear: "\u2600\ufe0f", partly: "\u26c5", cloudy: "\u2601\ufe0f", fog: "\ud83c\udf2b\ufe0f",
+  drizzle: "\ud83c\udf26\ufe0f", rain: "\ud83c\udf27\ufe0f", showers: "\ud83c\udf26\ufe0f", storm: "\u26c8\ufe0f",
+};
+// A soft background wash per condition, so the headline card carries a little
+// mood. Kept gentle and warm to sit inside the app's cream-and-coral world.
+const WX_TINT = {
+  clear:   "linear-gradient(135deg, #fff4e0, #ffe6c9)",
+  partly:  "linear-gradient(135deg, #fff2e2, #ffe9d6)",
+  cloudy:  "linear-gradient(135deg, #f4f1ee, #e9e4de)",
+  fog:     "linear-gradient(135deg, #f1efec, #e6e2dd)",
+  drizzle: "linear-gradient(135deg, #eef3f6, #dfeaf0)",
+  rain:    "linear-gradient(135deg, #e8f0f5, #d5e6ef)",
+  showers: "linear-gradient(135deg, #eef3f6, #dfeaf0)",
+  storm:   "linear-gradient(135deg, #ecebf2, #dcd9ea)",
+};
+function wxEmoji(key) { return WX_EMOJI[key] || "\ud83c\udf24\ufe0f"; }
+function wxTint(key) { return WX_TINT[key] || WX_TINT.cloudy; }
+
 // big banks of funny one-liners per condition, assembled randomly so it rarely repeats
 const WX_LINES = {
   clear: [
@@ -5375,17 +5519,18 @@ function ForecastDesk() {
         const clock = (iso) => { const dt = new Date(iso); return `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`; };
         return (
           <div>
-            {/* today's headline */}
-            <div style={{ ...cardBase, marginBottom: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                <div style={{ fontFamily: FH, fontWeight: 800, fontSize: 56, color: T.coralDk, lineHeight: .85 }}>{temp}\u00b0</div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 20, color: T.ink, lineHeight: 1 }}>{bucket.label}</div>
-                  <div style={{ fontFamily: FM, fontSize: 10, color: T.inkSoft, marginTop: 4 }}>feels like {feels}\u00b0</div>
+            {/* today's headline, with a big condition icon and a mood wash */}
+            <div style={{ ...cardBase, marginBottom: 14, background: wxTint(bucket.key), border: "1px solid rgba(255,255,255,.5)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <div style={{ fontSize: 52, lineHeight: 1, flexShrink: 0 }}>{wxEmoji(bucket.key)}</div>
+                <div style={{ fontFamily: FH, fontWeight: 800, fontSize: 54, color: T.coralDk, lineHeight: .85 }}>{temp}°</div>
+                <div style={{ flex: 1, minWidth: 0, textAlign: "right" }}>
+                  <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 19, color: T.ink, lineHeight: 1.1 }}>{bucket.label}</div>
+                  <div style={{ fontFamily: FM, fontSize: 10, color: T.inkSoft, marginTop: 4 }}>feels like {feels}°</div>
                   <div style={{ fontFamily: FM, fontSize: 10, color: T.inkSoft, marginTop: 2 }}>{cur.relative_humidity_2m}% humidity</div>
                 </div>
               </div>
-              <div style={{ height: 1, background: T.line, margin: "13px 0" }} />
+              <div style={{ height: 1, background: "rgba(74,59,51,.12)", margin: "13px 0" }} />
               <div style={{ fontFamily: FB, fontSize: 13.5, color: T.ink, lineHeight: 1.6 }}>{condLine}</div>
               <div style={{ fontFamily: FB, fontSize: 12, color: T.inkSoft, lineHeight: 1.6, marginTop: 8 }}>{tLine} {fLine}</div>
             </div>
@@ -5444,11 +5589,12 @@ function ForecastDesk() {
                 return (
                   <div key={iso} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderTop: i === 0 ? "none" : "1px solid " + T.line }}>
                     <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 15, color: T.ink, width: 42 }}>{i === 0 ? "Today" : dayName(iso)}</div>
+                    <div style={{ fontSize: 20, width: 26, textAlign: "center", flexShrink: 0 }}>{wxEmoji(b.key)}</div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontFamily: FB, fontSize: 12.5, color: T.inkSoft }}>{b.label}{pr != null ? ` · ${pr}% rain` : ""}</div>
                     </div>
                     <div style={{ fontFamily: FM, fontSize: 12.5, color: T.ink }}>
-                      <b>{hi}\u00b0</b> <span style={{ color: T.inkSoft }}>{lo}\u00b0</span>
+                      <b>{hi}°</b> <span style={{ color: T.inkSoft }}>{lo}°</span>
                     </div>
                   </div>
                 );
@@ -6016,7 +6162,7 @@ function Scrapbook({ now, wk, shared }) {
             <span style={{ fontFamily: FH, fontWeight: 700, fontSize: 13.5, color: T.ink }}>{c.taskTitle}</span>
             <span style={{ fontFamily: FM, fontSize: 9.5, color: who(c.by).colour, flexShrink: 0 }}>{who(c.by).name}{c.overturned ? " · OVERTURNED" : ""}</span>
           </div>
-          {c.photo ? <img src={c.photo} alt="proof" style={{ width: "100%", borderRadius: 10, marginTop: 9, display: "block" }} /> : null}
+          {c.photo ? <img src={c.photo} alt="proof" style={{ width: "100%", borderRadius: 10, marginTop: 9, display: "block", maxHeight: 300, objectFit: "cover" }} /> : null}
           {c.caption ? <div style={{ fontFamily: FB, fontSize: 12.5, color: T.ink, lineHeight: 1.5, marginTop: 8 }}>{c.caption}</div> : null}
           {c.taunt ? <div style={{ fontFamily: FB, fontSize: 11.5, color: T.inkSoft, lineHeight: 1.5, marginTop: 5, fontStyle: "italic" }}>Taunt: "{c.taunt}"</div> : null}
         </div>
@@ -6029,7 +6175,7 @@ function Scrapbook({ now, wk, shared }) {
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
             <span style={{ fontFamily: FM, fontSize: 9.5, color: who(m.by).colour }}>{who(m.by).name}{m.starred ? " · \u2b50 starred" : ""}</span>
           </div>
-          {m.photoUrl ? <img src={m.photoUrl} alt="moment" style={{ width: "100%", borderRadius: 10, marginTop: 8, display: "block" }} /> : null}
+          {m.photoUrl ? <img src={m.photoUrl} alt="moment" style={{ width: "100%", borderRadius: 10, marginTop: 8, display: "block", maxHeight: 300, objectFit: "cover" }} /> : null}
           {m.text ? <div style={{ fontFamily: FB, fontSize: 12.5, color: T.ink, lineHeight: 1.5, marginTop: 8 }}>{m.text}</div> : null}
         </div>
       ))}
