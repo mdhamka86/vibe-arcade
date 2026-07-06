@@ -256,7 +256,7 @@
 
     <footer>
       Raw rows are stored verbatim, exactly as the journal recorded them. All computed figures use the normalisation layer (Loss&rarr;Lose, Med-High&rarr;Medium-High) so the dashboards see the truth without rewriting history. Export rebuilds the four-sheet workbook from the vault as computed values.<br><br>
-      <span style="color:var(--gold);font-weight:600;" class="serif">The Stewards&rsquo; Room v1.6</span> &middot; Phase 3 complete, with Guide &amp; tooltips &middot; the loop closes &middot; hammyLabs &middot; 06/07/2026
+      <span style="color:var(--gold);font-weight:600;" class="serif">The Stewards&rsquo; Room v1.7</span> &middot; Guide flow corrected: place, log pending, then recon &middot; the loop closes &middot; hammyLabs &middot; 06/07/2026
     </footer>
   </div>
 
@@ -617,7 +617,7 @@ function renderQuill(){
   h+='<div class="qmsg" id="settleMsg"></div></div>';
 
   // --- log new legs ---
-  h+='<div class="card quill"><h3>Log new legs (at slip time)'+tip("Add legs by hand when you place them. Date and meet stay sticky so a multi-leg night is quick. Or use the paste-JSON lane below, which is what the Stable feeds when you send a betlist across.")+'</h3>'+
+  h+='<div class="card quill"><h3>Log new legs (at slip time)'+tip("Record legs here AFTER you have placed them on SGPools, so each one carries its real receipt. They land as Pending, the placed-and-open state. Date and meet stay sticky for a quick multi-leg night, or use the paste-JSON lane below, which is what the Stable feeds when you send a betlist across.")+'</h3>'+
     '<div class="qgrid">'+
     '<div><label>Date</label><input id="q-date" value="'+todayDDMM()+'" /></div>'+
     '<div><label>Meet</label><input id="q-meet" placeholder="e.g. South Africa (Turffontein)" /></div>'+
@@ -1063,7 +1063,8 @@ function renderGuide(){
 
   h+='<div class="lead">Welcome to the Stewards\u2019 Room, the digital home of The Outsider Method. '+
     'The whole day runs as one gentle loop: the room gathers the intelligence and drafts the bets in the morning, '+
-    'you place them at Singapore Pools yourself, and at night the room reads your receipts and settles the book. '+
+    'you place them at Singapore Pools yourself and then log the placed slip into the book as pending, '+
+    'and at night, or by a 7:30am backstop, the room reads your receipts and settles the book. '+
     'Here is the full rhythm, hour by hour, with a note on where to tap and, more importantly, why each step is there.</div>';
 
   h+='<div class="lore">A small point of orientation before we begin. Nothing in this room ever places a bet or moves money on '+
@@ -1081,21 +1082,27 @@ function renderGuide(){
   h+=step("The Stable proposes",["Propose the betlist"],
     "In the Stable panel, one tap sends the pack through the Charter, the ten locked laws distilled from a month of your own hard-won lessons. Back comes a betlist in your exact slip shape: flat stakes, a WIN-leg only on the cleanest convergence, a place-led book, a Trio only on a genuine frame. Every horse number is checked against the SGPools card, and anything it cannot verify is flagged UNCONFIRMED in red.",
     "the model\u2019s proven edge is patience and selection, not chasing winners. The Charter makes sure the brain never forgets the flat-stake rule or the WIN-pool leak, even on a tempting morning.");
-  h+=step("Review, then send to the Quill",["Send betlist to the Quill","Validate & commit"],
-    "Read the proposal, especially the gold enforcement box that shows every correction the law made to the brain\u2019s draft. When you are happy, Send betlist to the Quill drops it into the paste lane, and Validate & commit writes it to the vault as your pending legs.",
-    "the room proposes but you dispose. Committing logs the legs at slip-time, which is the standing rule that keeps the book honest and gap-free.");
+  h+=step("Review the proposed betslip",["read the gold enforcement box"],
+    "Read the proposal carefully, especially the gold enforcement box that shows every correction the law made to the brain\u2019s draft, and note any UNCONFIRMED legs. This is your considered read of the day\u2019s book before a single dollar is committed anywhere.",
+    "the room proposes but you dispose. Reviewing before you place is the moment your own judgement sits on top of the model\u2019s, exactly as a trainer signs off on the stable\u2019s runners.");
 
   h+='<h2>At the counter</h2>';
   h+='<div class="clock">when you place \u00b7 on Singapore Pools</div>';
-  h+=step("Place the bets yourself",["SGPools app"],
-    "Open the Singapore Pools app and place each leg exactly as the slip reads, matching meet, race, horse number and bet type. Pay special attention to any UNCONFIRMED leg: check the race on the app before placing it, because that flag means the room could not verify the number against the card itself.",
-    "SGPools is the single source of truth for what is actually on. The UNCONFIRMED flag exists because of a real past scare where a right horse was nearly placed on the wrong race. Better a flag than a mistake.");
+  h+=step("Place the bets yourself first",["SGPools app"],
+    "Before anything touches the vault, open the Singapore Pools app and place each leg exactly as the proposed slip reads, matching meet, race, horse number and bet type. Pay special attention to any UNCONFIRMED leg: check the race on the app before placing it, because that flag means the room could not verify the number against the card itself.",
+    "SGPools is the single source of truth for what is actually on, and placing first is what mints the real receipt numbers. Those receipts are the anchor everything else hangs on, so they must exist before the leg is ever logged. The UNCONFIRMED flag exists because of a real past scare where a right horse was nearly placed on the wrong race. Better a flag than a mistake.");
 
-  h+='<h2>The night</h2>';
-  h+='<div class="clock">after the races \u00b7 recon</div>';
-  h+=step("Upload the paperwork",["Quill tab","Clerk of the Scales","Read & reconcile uploads"],
-    "When the races have run, open your SGPools transaction history and take screenshots of the pages, plus the account overview if you like. In the Quill, the Clerk of the Scales takes those images, reads every horse-wagering row, matches each by receipt number to your open legs, and fills in the results and payouts for you.",
-    "matching on receipt numbers means no guesswork and no wrong-race errors. The clerk reads the official scales; you never type a dividend by hand again.");
+  h+='<h2>Logging the placed book</h2>';
+  h+='<div class="clock">right after you place \u00b7 in the Quill</div>';
+  h+=step("Send to the Quill and log as pending",["Send betlist to the Quill","Validate & commit"],
+    "Now that the bets are on, send the slip to the Quill. Send betlist to the Quill drops it into the paste lane, and Validate & commit writes each leg into the Bet Log with a status of Pending, which is the placed-and-open state that SGPools itself shows as an open bet. The Recon lamp turns amber to tell you the book is on and awaiting results.",
+    "logging happens after placing, never before, so every pending leg carries its true slip-time context and can later be matched to its real receipt. Committing at slip-time is the standing rule that keeps the book honest, contiguous and gap-free.");
+
+  h+='<h2>The night, or the morning after</h2>';
+  h+='<div class="clock">nighttime \u00b7 or early morning \u00b7 7:30am backstop</div>';
+  h+=step("Submit the settled races for recon",["Quill tab","Clerk of the Scales","Read & reconcile uploads"],
+    "Once the races have run, open your SGPools transaction history and screenshot the pages, plus the account overview if you like. You can do this at night, early the next morning, or by your 7:30am backstop if you have missed both earlier windows. In the Quill, the Clerk of the Scales reads every horse-wagering row, matches each by receipt number to your open pending legs, and fills in the results and payouts for you.",
+    "matching on receipt numbers means no guesswork and no wrong-race errors, which is precisely why the legs were logged against those receipts when you placed. The 7:30am backstop matters because a process is only as good as its fallback for the days life gets in the way. The clerk reads the official scales; you never type a dividend by hand again.");
   h+=step("Commit the settlements",["Commit settlements"],
     "Glance down the gold-ringed legs the clerk filled in, correct anything that looks off, and commit. The book settles, the Recon lamp swings from amber to green, and the day\u2019s figures update everywhere.",
     "settling promptly keeps the vault in step with reality, so the calibration tables and the next morning\u2019s lessons are always working from the true record.");
@@ -1126,7 +1133,8 @@ function renderGuide(){
     'Rather fitting that the name was right all along.</div>';
 
   h+='<div class="step" style="border-color:var(--gold)"><h3>The whole loop in one breath</h3>'+
-    '<p>8am the touts gather and the Stable drafts. You place at SGPools. At night the Clerk reads your receipts and settles. '+
+    '<p>8am the touts gather and the Stable drafts. You place at SGPools, then send the slip to the Quill to log it as pending. '+
+    'At night, or by your 7:30am backstop, the Clerk reads your receipts and settles. '+
     'You wrap the day with a lesson. Tomorrow the room is a little wiser. That is the Outsider Method, running as a living stable.</p></div>';
 
   h+='</div>';
