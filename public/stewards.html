@@ -201,13 +201,15 @@
     <div class="flags" id="flags"></div>
 
     <div class="tabs" id="tabs" style="display:none">
-      <div class="tab on" data-pane="ledger">Ledger</div>
+      <div class="tab on" data-pane="morning">Morning</div>
+      <div class="tab" data-pane="ledger">Ledger</div>
       <div class="tab" data-pane="quill">Quill</div>
       <div class="tab" data-pane="days">Days</div>
       <div class="tab" data-pane="notes">Notes</div>
       <div class="tab" data-pane="calib">Calibration</div>
     </div>
-    <div class="pane on" id="pane-ledger"></div>
+    <div class="pane on" id="pane-morning"></div>
+    <div class="pane" id="pane-ledger"></div>
     <div class="pane" id="pane-quill"></div>
     <div class="pane" id="pane-days"></div>
     <div class="pane" id="pane-notes"></div>
@@ -222,7 +224,7 @@
 
     <footer>
       Raw rows are stored verbatim, exactly as the journal recorded them. All computed figures use the normalisation layer (Loss&rarr;Lose, Med-High&rarr;Medium-High) so the dashboards see the truth without rewriting history. Export rebuilds the four-sheet workbook from the vault as computed values.<br><br>
-      <span style="color:var(--gold);font-weight:600;" class="serif">The Stewards&rsquo; Room v1.3</span> &middot; Phase 2: The Quill, with Doctor &amp; Clerk of the Scales &middot; hammyLabs &middot; 06/07/2026
+      <span style="color:var(--gold);font-weight:600;" class="serif">The Stewards&rsquo; Room v1.4</span> &middot; Phase 3 Stage B: The Tout &middot; Quill, Doctor &amp; Clerk aboard &middot; hammyLabs &middot; 06/07/2026
     </footer>
   </div>
 
@@ -389,6 +391,7 @@ async function loadState(){
   trace("state: "+(s.betlog?s.betlog.length:0)+" rows loaded in "+(Date.now()-t0)+"ms");
   $("tabs").style.display="flex";
   renderLedger(); renderQuill(); renderDays(); renderNotes(); renderCalib();
+  loadMorning();
 }
 
 // ---- seed / reseed ----
@@ -783,6 +786,100 @@ function wireQuill(){
       if(await afterWrite("noteMsg",r,"Note appended ("+(r.noteCount||"?")+" total).")) $("n-text").value="";
     }catch(e){ qmsg("noteMsg","Failed: "+e.message,"err"); }
     finally{ $("noteBtn").disabled=false; }
+  });
+}
+
+// ---- the Tout: morning pack (Phase 3, Stage B) ----
+const TRAWL="/api/trawl";
+let morningPack=null;
+async function trawlApi(action, timeoutMs){
+  const ctrl=new AbortController();
+  const timer=setTimeout(()=>ctrl.abort(),timeoutMs||30000);
+  const t0=Date.now();
+  let r;
+  try{ r=await fetch(TRAWL+"?"+action,{signal:ctrl.signal}); }
+  catch(e){
+    clearTimeout(timer);
+    const why=e.name==="AbortError"?"timed out":(e.message||String(e));
+    traceErr("TOUT "+action.split("&")[0]+" fetch failed: "+why);
+    throw new Error(why);
+  }
+  clearTimeout(timer);
+  const txt=await r.text();
+  let j=null; try{ j=JSON.parse(txt); }catch(e){}
+  trace("TOUT "+action.split("&")[0]+" -> HTTP "+r.status+" in "+(Date.now()-t0)+"ms");
+  if(!j) throw new Error("HTTP "+r.status+": "+txt.slice(0,120));
+  return j;
+}
+
+async function loadMorning(){
+  try{
+    const p=await trawlApi("action=pack",25000);
+    if(p.error){ morningPack=null; renderMorning(p.error); return; }
+    morningPack=p; renderMorning();
+  }catch(e){ morningPack=null; renderMorning(e.message); }
+}
+
+function srcChip(s){
+  const cls=s.ok?"win":"lose";
+  return '<span class="chip '+cls+'">'+esc(s.id)+(s.ok?" "+Math.round(s.chars/1000)+"k":" ✗")+'</span>';
+}
+
+function renderMorning(msg){
+  let h="";
+  h+='<div class="card quill"><h3>The Tout</h3>'+
+    '<div class="lesson">The morning trawl: triage with the data-edge gate applied in code, SGPools tipster PDFs deep-read, the scout manifest\u2019s pundit sources harvested per region, and weather pulled at every track. Runs by cron at 8am, or by hand right here. The pack below feeds our convergence session.</div>'+
+    '<button class="qbtn" id="toutRun">Run the morning trawl now (60-120s)</button>'+
+    '<div class="qmsg" id="toutMsg">'+(msg?esc(msg):"")+'</div></div>';
+
+  if(morningPack){
+    const p=morningPack;
+    h+='<div class="card"><h3>Pack '+esc(p.date)+'</h3>'+
+      '<div class="kv">Built <b>'+esc(new Date(p.builtAt).toLocaleString())+'</b> &middot; '+
+      p.meets.length+' of '+esc(p.scanned)+' meets passed the gate</div>';
+    (p.deselected||[]).forEach(d=>{
+      h+='<div class="lesson">Deselected: '+esc(d.venue)+' \u2014 '+esc(d.why)+'</div>';
+    });
+    h+='<button class="qbtn gold small" id="toutCopy">Copy full pack (paste to Claude)</button></div>';
+
+    p.meets.forEach(m=>{
+      const w=m.weather;
+      h+='<div class="card"><h3>'+esc(m.venue)+' <span class="score hi" style="font-size:12px;border:1px solid var(--green2);color:var(--green);border-radius:999px;padding:2px 8px;">'+esc(m.score)+'</span></h3>'+
+        '<div class="kv">'+esc(m.races)+' races &middot; avg field '+esc(m.avgField)+(m.coupon?' &middot; '+esc(m.coupon):'')+'</div>'+
+        '<div class="lesson">'+esc(m.reason)+'</div>'+
+        (w&&!w.error?'<div class="kv">Weather '+esc(w.city)+': rain yday <b>'+esc(w.yesterdayRainMm)+'mm</b>, today <b>'+esc(w.todayRainMm)+'mm</b> ('+esc(w.rainChancePct)+'%), max '+esc(w.maxTempC)+'&deg;C, wind '+esc(w.maxWindKmh)+'km/h</div>':'<div class="kv">Weather: '+esc(w?w.error:"pending")+'</div>')+
+        '<div class="pills" style="margin-top:8px">'+
+          (m.docs||[]).map(d=>'<span class="chip '+(d.error?"lose":"win")+'">'+esc(d.label)+(d.error?" ✗":"")+'</span>').join(" ")+
+          (m.sources||[]).map(srcChip).join(" ")+
+        '</div>'+
+        '<details class="more"><summary>Read the intel</summary>'+
+          (m.docs||[]).map(d=>d.error?'':'<div class="lesson"><b style="color:var(--gold)">[SGPools '+esc(d.label)+']</b><br>'+esc(String(d.text).slice(0,900))+'\u2026</div>').join("")+
+          (m.sources||[]).map(s=>!s.ok?'':'<div class="lesson"><b style="color:var(--gold)">['+esc(s.id)+']</b><br>'+esc(String(s.text).slice(0,900))+'\u2026</div>').join("")+
+        '</details></div>';
+    });
+  } else if(!msg){
+    h+='<div class="card"><div class="lesson">No morning pack yet today. Run the Tout, or wait for the 8am cron.</div></div>';
+  }
+  $("pane-morning").innerHTML=h;
+
+  $("toutRun").addEventListener("click",async()=>{
+    $("toutRun").disabled=true;
+    qmsg("toutMsg","The Tout is at the gallops\u2026 triage, PDFs, pundits, weather. Give it a minute or two.");
+    try{
+      const r=await trawlApi("action=run&stage=all",240000);
+      if(r.error){ qmsg("toutMsg",r.error,"err"); }
+      else{
+        qmsg("toutMsg","Trawl complete in "+Math.round(r.totalMs/1000)+"s: "+r.meets.length+" meets packed. Loading\u2026","ok");
+        await loadMorning();
+      }
+    }catch(e){ qmsg("toutMsg","Trawl failed: "+e.message,"err"); }
+    finally{ const b=$("toutRun"); if(b) b.disabled=false; }
+  });
+  const tc=$("toutCopy");
+  if(tc) tc.addEventListener("click",async()=>{
+    try{ await navigator.clipboard.writeText(morningPack.copyText||""); tc.textContent="Copied!"; }
+    catch(e){ qmsg("toutMsg","Copy failed: "+e.message,"err"); }
+    setTimeout(()=>{ tc.textContent="Copy full pack (paste to Claude)"; },1500);
   });
 }
 
