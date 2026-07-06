@@ -1,0 +1,72 @@
+{
+ "version": "charter-1",
+ "distilledFrom": "the_outsider_method_journal-52.xlsx Model Notes (129 rows), locked rules as of 06/07/2026",
+ "builtAt": "2026-07-06",
+ "laws": [
+  {
+   "id": "flat-stake",
+   "title": "Flat staking, no exceptions",
+   "rule": "Every WIN leg is exactly $10. Every PLA leg is exactly $5. A PLA-only pick is $5. Confidence NEVER changes stake size. This was decreed 26/06/2026 after the inverted-ladder finding: High-confidence WIN legs had the most money on them ($215 staked at -34% ROI) and bled worst. Stake sizing by conviction is retired. Do not propose any stake other than $10 WIN / $5 PLA.",
+   "origin": "Model Notes rows 123-127, 147-158"
+  },
+  {
+   "id": "win-leak",
+   "title": "The WIN-pool leak — fade WIN exposure",
+   "rule": "Across ~80 settled legs per side, WIN ran -19.6% ROI (36% cash rate) while PLA ran -9.4% (61% cash rate). WIN bleeds ~2.5x faster. The lever is WIN-EXPOSURE: take a WIN leg ONLY on the cleanest, highest-divergence value spots, and lean toward PLA everywhere else. An odds-on or short-priced favourite is a PLA-LEAN, never a WIN (the winners pay too skinny to cover the write-offs). Most legs should be PLA-led.",
+   "origin": "Model Notes rows 104, 111-121, 132-137, 184-186"
+  },
+  {
+   "id": "medium-high-bias",
+   "title": "Bias the book toward Medium-High convergence",
+   "rule": "Medium-High is the only solidly green band (PLA +19.2%) and the least-bad WIN band. SELECT MORE Medium-High convergence spots. This is a SELECTION dial (how many of each we take), never a staking dial. Do NOT size Medium-High up — the +19.2% rests on a thin ~19-line sample, and parimutuel dilution works against pressing a popular place leg. Capture the edge by taking more of these spots at flat stakes.",
+   "origin": "Model Notes rows 139-158"
+  },
+  {
+   "id": "trim-medium",
+   "title": "Trim marginal Medium and Low-Med place insurance",
+   "rule": "The Medium PLA bucket (-20.9% over 34 lines) is the single biggest quiet drag on the place book. Fewer, better place legs — not blanket insurance on every runner. If a place leg is only a Medium or Low-Med read, it likely should not be on the slip at all.",
+   "origin": "Model Notes rows 135, 141, 144"
+  },
+  {
+   "id": "confidence-gauge",
+   "title": "Confidence is a gauge, not a throttle",
+   "rule": "Keep labelling each pick High / Medium-High / Medium / Low-Med as a pure PREDICTION so the calibration table can score it. The label records what the model expected. It moves no money and changes no stake. It earns back influence only if it genuinely out-predicts out-of-sample under flat staking.",
+   "origin": "Model Notes rows 115, 124-126, 143"
+  },
+  {
+   "id": "data-edge-gate",
+   "title": "Data-edge meet selection",
+   "rule": "Only bet meets where we have a genuine data edge: analysis docs / tipsheets present, a clean full-card parse with populated runner lists, real class spread or a graded feature, AND independent pundit/press or sectional data to cross-check. Meets that are flying blind (no analysis docs, no runner map, no external opinion) are DESELECTED or minimum-touch. Spreading thin across many meets dilutes; the blind meets are where the day goes red.",
+   "origin": "Model Notes rows 168-170, 190, 192"
+  },
+  {
+   "id": "convergence-engine",
+   "title": "Convergence is the core signal",
+   "rule": "A pick's conviction comes from INDEPENDENT sources agreeing: the SGPools tipster/analysis grid, regional press synthesis, form-panel previews, and objective sectional/pace data. The goal is NOT to follow the crowd — extra tipsters piling on the same favourite is the overbet tote side we FADE. The edge is where crowd-underweighted data (sectionals, pace, closing splits) points to a place-pool value the market has missed. Note which sources were checked for each meet.",
+   "origin": "Model Notes rows 19-21, 167-169"
+  },
+  {
+   "id": "exotic-trio",
+   "title": "Convergence-gated Trio only",
+   "rule": "An exotic may be played ONLY when 3+ horses in ONE race each independently clear the Med-High convergence bar (a genuine frame, not a single banker). Order-tolerant Trio only. $6 flat, capped at ONE per meet, logged on the separate Exotic ledger so it never pollutes the WIN/PLA split or calibration. If no clean 3+ convergent frame exists, propose NO exotic.",
+   "origin": "Model Notes rows 28-32, 194-195"
+  },
+  {
+   "id": "japan-caution",
+   "title": "No Japan without prior conviction",
+   "rule": "Japan meets carry a standing caution flag. Do NOT propose Japanese legs unless there is genuine independent conviction from the data layer — the region has repeatedly blanked and lacks the accessible press-synthesis edge of France or the form depth of SA/HK.",
+   "origin": "Model Notes rows 190, standing caution"
+  },
+  {
+   "id": "card-match",
+   "title": "Card-match discipline (the Pachoui Kkum rule)",
+   "rule": "NEVER infer a SGPools horse number from grid ordering alone. The horse number MUST come from the SGPools integrated coupon card (the runner map in the pack). If a proposed pick's number cannot be confirmed against the runner map, flag it as UNCONFIRMED and tell the user to verify the race on the SGPools app before placing. A wrong-race inference once put the right horse on the wrong runner.",
+   "origin": "Model Notes rows 164, 177-181"
+  }
+ ],
+ "outputContract": {
+  "slipFormat": "One line per bet: Meet | Race | Horse No | Horse Name | Bet Type | Stake | Confidence | Reason. WIN and PLA on the same horse are two separate lines (separate SGPools tickets, per the 26/06 discipline note). Stakes are $10 WIN / $5 PLA / $6 Trio, flat.",
+  "mustInclude": "For each meet: which pundit/data sources were checked, the convergence read per pick, and any UNCONFIRMED card-match flags. A short day-shape summary at the top (how many meets survived, WIN vs PLA lean, any exotic).",
+  "restraint": "It is correct and expected to propose FEW WIN legs. A PLA-heavy, selective book is the model working as designed. If a meet has no clean Medium-High spot, take little or nothing there. Never pad the slip."
+ }
+}
