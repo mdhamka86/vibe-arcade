@@ -1,9 +1,14 @@
 {
   "outputDirectory": "public",
+  "crons": [
+    { "path": "/api/trawl?action=run&stage=all", "schedule": "0 1 * * *" }
+  ],
   "functions": {
     "api/triage.js": { "maxDuration": 10 },
     "api/deep.js": { "maxDuration": 10, "memory": 1024 },
     "api/odds2.js": { "maxDuration": 10 },
-    "api/mission.js": { "maxDuration": 10 }
+    "api/mission.js": { "maxDuration": 10 },
+    "api/stewards.js": { "maxDuration": 60 },
+    "api/trawl.js": { "maxDuration": 300 }
   }
 }
