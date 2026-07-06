@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>THE TERMINAL — hammyLabs</title>
+<script>
+/* ---- DIAGNOSTIC CONSOLE v1.1 — paints errors on screen so no failure is silent ---- */
+(function(){
+  var logs=[];
+  function paint(){
+    var el=document.getElementById('diag');
+    if(!el){
+      el=document.createElement('div'); el.id='diag';
+      el.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;background:#2A0F0C;color:#FFB3AD;font:11px/1.5 monospace;padding:8px 10px;white-space:pre-wrap;border-bottom:1px solid #FF4B3E;max-height:45vh;overflow:auto';
+      document.body.appendChild(el);
+    }
+    el.textContent=logs.join('\n');
+  }
+  window.__diag=function(m){
+    logs.push(m);
+    if(document.body) paint();
+    else document.addEventListener('DOMContentLoaded',paint);
+  };
+  window.addEventListener('error',function(e){
+    if(e.target && e.target.tagName==='SCRIPT'){ __diag('SCRIPT FAILED TO LOAD: '+(e.target.src||'inline')); }
+    else { __diag('ERROR: '+(e.message||e.type)+(e.filename?' @ '+e.filename.split('/').pop()+':'+e.lineno:'')); }
+  },true);
+  window.addEventListener('unhandledrejection',function(e){
+    __diag('PROMISE ERROR: '+((e.reason&&e.reason.message)||e.reason));
+  });
+  __diag('THE TERMINAL v1.4 · boot '+new Date().toTimeString().slice(0,8)+' · if you can read this, the new file arrived');
+  setTimeout(function(){
+    if(window.__terminalMounted) return;
+    __diag('MOUNT FAILED after 6s. Library check — React: '+(!!window.React)+' · ReactDOM: '+(!!window.ReactDOM)+' · Babel: '+(!!window.Babel));
+    __diag(!window.React||!window.Babel
+      ? 'VERDICT: the CDN scripts did not load. Connection or unpkg issue, not a code issue.'
+      : 'VERDICT: libraries loaded but the app did not mount. Screenshot this box and send it to the mechanic.');
+  },6000);
+})();
+</script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg:#0A0A08; --panel:#15140F; --panel2:#1D1B14; --line:#2A2820;
+    --amber:#FFA028; --amber-dim:#8A6420; --green:#3BD46A; --red:#FF4B3E;
+    --cyan:#41C7DE; --ink:#EAE6D8; --dim:#8B8678;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{background:var(--bg);color:var(--ink);font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px}
+  #root{padding-bottom:74px}
+  .disp{font-family:'Barlow Condensed',sans-serif;letter-spacing:.04em}
+  a{color:var(--cyan);text-decoration:none}
+  button{font-family:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--ink);border-radius:4px;padding:8px 12px;font-size:12px}
+  button:focus-visible{outline:2px solid var(--amber)}
+  button.pri{background:var(--amber);color:#141005;border-color:var(--amber);font-weight:600}
+  button.ghost{background:transparent}
+  button:disabled{opacity:.45;cursor:default}
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:10}
+  .brand{font-size:22px;font-weight:700;color:var(--amber)}
+  .brand small{color:var(--dim);font-size:11px;font-weight:600;letter-spacing:.12em;display:block;margin-top:-2px}
+  .pill{font-size:10px;padding:3px 8px;border-radius:3px;border:1px solid var(--line);color:var(--dim);letter-spacing:.08em}
+  .pill.open{color:var(--green);border-color:var(--green)}
+  .pill.shut{color:var(--red);border-color:var(--red)}
+  .tape{overflow:hidden;border-bottom:1px solid var(--line);background:#0E0D09;height:30px;position:relative}
+  .tape-inner{display:inline-flex;gap:26px;padding:7px 0;white-space:nowrap;animation:tape 45s linear infinite;will-change:transform}
+  @keyframes tape{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+  @media (prefers-reduced-motion:reduce){.tape-inner{animation:none}}
+  .tape b{color:var(--amber);font-weight:600}
+  .tabs{position:fixed;bottom:0;left:0;right:0;display:flex;background:#0E0D09;border-top:1px solid var(--line);z-index:20;padding-bottom:env(safe-area-inset-bottom)}
+  .tabs button{flex:1;border:none;border-radius:0;background:transparent;color:var(--dim);padding:12px 0 10px;font-size:11px;letter-spacing:.08em;border-top:2px solid transparent}
+  .tabs button.on{color:var(--amber);border-top-color:var(--amber)}
+  .wrap{padding:12px 14px;max-width:760px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px;margin-bottom:10px}
+  .eyebrow{font-size:10px;letter-spacing:.16em;color:var(--amber-dim);margin-bottom:6px;text-transform:uppercase}
+  .hl{font-family:'Barlow Condensed',sans-serif;font-size:17px;font-weight:600;line-height:1.25;color:var(--ink)}
+  .meta{font-size:10px;color:var(--dim);margin-top:6px;display:flex;gap:10px;flex-wrap:wrap}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
+  .kv{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:8px}
+  .kv .k{font-size:9px;letter-spacing:.12em;color:var(--dim)}
+  .kv .v{font-size:15px;font-weight:600;margin-top:2px}
+  .green{color:var(--green)} .red{color:var(--red)} .ambr{color:var(--amber)} .dim{color:var(--dim)}
+  .badge{font-size:9px;letter-spacing:.1em;padding:3px 7px;border-radius:3px;font-weight:600}
+  .b-ok{background:#12301C;color:var(--green)} .b-note{background:#2A2510;color:#D8B23A}
+  .b-amber{background:#3A2A0C;color:var(--amber)} .b-red{background:#3A130F;color:var(--red)}
+  .b-buy{background:#12301C;color:var(--green)} .b-sell{background:#3A130F;color:var(--red)}
+  .conv-HIGH{color:var(--green)} .conv-MED{color:var(--amber)} .conv-LOW{color:var(--dim)}
+  .note{font-size:11px;color:var(--dim);line-height:1.55}
+  .thesis{font-size:12px;line-height:1.6;color:#CFCABB;margin-top:8px;border-left:2px solid var(--amber-dim);padding-left:10px}
+  .lesson{font-size:12px;line-height:1.5;padding:8px 10px;border-left:2px solid var(--cyan);background:var(--panel2);border-radius:0 4px 4px 0;margin-bottom:8px}
+  .paste{font-size:10px;background:#0E0D09;border:1px dashed var(--line);border-radius:4px;padding:8px;overflow-x:auto;white-space:pre;margin-top:8px;color:#BDB8A8}
+  .spin{display:inline-block;animation:sp 1s steps(8) infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .alertbox{border-radius:6px;padding:10px 12px;font-size:12px;margin-bottom:10px;line-height:1.5}
+  .a-red{background:#2A0F0C;border:1px solid var(--red);color:#FFB3AD}
+  .a-amber{background:#2A2008;border:1px solid var(--amber);color:#FFD9A0}
+  .a-green{background:#0E2416;border:1px solid #1F5C34;color:#A8E8BE}
+  input[type=text]{background:var(--panel2);border:1px solid var(--line);color:var(--ink);border-radius:4px;padding:8px 10px;font-family:inherit;font-size:12px;width:100%}
+  .spark{width:100%;height:46px;margin-top:6px}
+  h3.sec{font-family:'Barlow Condensed',sans-serif;font-size:15px;letter-spacing:.14em;color:var(--amber);margin:16px 0 8px;text-transform:uppercase}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const {useState,useEffect,useRef,useCallback} = React;
+const API_NEWS='/api/terminal-news', API_ENG='/api/terminal-engine';
+
+// ---------- helpers ----------
+async function eng(action,payload={}){
+  const r=await fetch(API_ENG,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...payload})});
+  const j=await r.json();
+  if(j.error) throw new Error(j.error);
+  return j;
+}
+function compressImage(file,maxW=1400){
+  return new Promise((res,rej)=>{
+    const img=new Image();
+    img.onload=()=>{
+      const scale=Math.min(1,maxW/img.width);
+      const c=document.createElement('canvas');
+      c.width=Math.round(img.width*scale); c.height=Math.round(img.height*scale);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      res(c.toDataURL('image/jpeg',0.82).split(',')[1]);
+    };
+    img.onerror=rej;
+    img.src=URL.createObjectURL(file);
+  });
+}
+function ago(ts){
+  if(!ts) return '';
+  const m=Math.round((Date.now()-ts)/60000);
+  if(m<60) return m+'m ago';
+  const h=Math.round(m/60);
+  if(h<24) return h+'h ago';
+  return Math.round(h/24)+'d ago';
+}
+function copy(text,setMsg){
+  navigator.clipboard.writeText(text).then(()=>{setMsg('Copied'); setTimeout(()=>setMsg(''),1500)}).catch(()=>setMsg('Copy failed'));
+}
+function fxMarketOpen(){
+  // FX week: Mon 04:00 BKK (Sydney open) to Sat 04:00 BKK (NY close), close enough
+  const d=new Date(); const bkk=new Date(d.toLocaleString('en-US',{timeZone:'Asia/Bangkok'}));
+  const day=bkk.getDay(), h=bkk.getHours();
+  if(day===0) return false;
+  if(day===6) return h<4;
+  if(day===1) return h>=4;
+  return true;
+}
+
+// ---------- shot picker button ----------
+function ShotButton({label,onImage,primary,disabled}){
+  const ref=useRef();
+  const [busy,setBusy]=useState(false);
+  return (<>
+    <input ref={ref} type="file" accept="image/*" style={{display:'none'}}
+      onChange={async e=>{
+        const f=e.target.files[0]; if(!f) return;
+        setBusy(true);
+        try{ const b64=await compressImage(f); await onImage(b64); }
+        catch(err){ alert(err.message); }
+        setBusy(false); e.target.value='';
+      }}/>
+    <button className={primary?'pri':''} disabled={busy||disabled} onClick={()=>ref.current.click()}>
+      {busy? <span className="spin">◐</span> : label}
+    </button>
+  </>);
+}
+
+// ---------- ticker tape ----------
+function Tape(){
+  const [rates,setRates]=useState(null);
+  useEffect(()=>{
+    fetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR,GBP,JPY,CHF,AUD,NZD')
+      .then(r=>r.json())
+      .then(j=>{
+        const inv=x=>(1/x).toFixed(4);
+        setRates([['EURUSD',inv(j.rates.EUR)],['GBPUSD',inv(j.rates.GBP)],['USDJPY',j.rates.JPY.toFixed(2)],
+                  ['USDCHF',j.rates.CHF.toFixed(4)],['AUDUSD',inv(j.rates.AUD)],['NZDUSD',inv(j.rates.NZD)],['REF',j.date]]);
+      }).catch(()=>{});
+  },[]);
+  if(!rates) return <div className="tape"><div style={{padding:'7px 14px'}} className="dim">connecting to wire…</div></div>;
+  const cells=rates.map(([k,v],i)=><span key={i}><b>{k}</b> {v}</span>);
+  return <div className="tape"><div className="tape-inner">{cells}{cells.map((c,i)=>React.cloneElement(c,{key:'b'+i}))}</div></div>;
+}
+
+// ---------- DESK (ideas) ----------
+function IdeaCard({idea,rec,onTaken,onPassed}){
+  const [done,setDone]=useState(rec?.status && rec.status!=='offered' ? rec.status : null);
+  return (
+    <div className="card">
+      <div className="row" style={{justifyContent:'space-between'}}>
+        <span className="hl" style={{fontSize:20}}>{idea.pair}</span>
+        <span className={'badge '+(idea.direction==='BUY'?'b-buy':'b-sell')}>{idea.direction}</span>
+      </div>
+      <div className="grid2">
+        <div className="kv"><div className="k">ENTRY ZONE</div><div className="v">{idea.entry_zone}</div></div>
+        <div className="kv"><div className="k">LOTS</div><div className="v">{idea.lots}</div></div>
+        <div className="kv"><div className="k">TAKE PROFIT</div><div className="v green">{idea.tp}</div></div>
+        <div className="kv"><div className="k">STOP LOSS</div><div className="v red">{idea.sl}</div></div>
+      </div>
+      <div className="meta">
+        <span>HORIZON {idea.horizon}</span>
+        <span className={'conv-'+idea.conviction}>CONVICTION {idea.conviction}</span>
+      </div>
+      <div className="thesis">{idea.thesis}</div>
+      <div className="note" style={{marginTop:8}}><span className="red">RISKS</span> {idea.risks}</div>
+      {(idea.sizing_note||idea.margin_note) && <div className="note" style={{marginTop:4}}><span className="ambr">SIZING</span> {idea.sizing_note||idea.margin_note}</div>}
+      {idea.correlation_note && idea.correlation_note.toLowerCase()!=='none' &&
+        <div className="note" style={{marginTop:4}}><span className="cyan" style={{color:'var(--cyan)'}}>CORRELATION</span> {idea.correlation_note}</div>}
+      <div className="row" style={{marginTop:10}}>
+        {done
+          ? <span className={'badge '+(done==='taken'?'b-ok':'b-note')}>{done.toUpperCase()}</span>
+          : <>
+              <ShotButton primary label="TAKEN — upload fill" onImage={async b64=>{await onTaken(b64,rec?.id); setDone('taken');}} />
+              <button className="ghost" onClick={async()=>{await onPassed(rec?.id); setDone('passed');}}>Pass</button>
+            </>}
+      </div>
+    </div>
+  );
+}
+function Desk({state,refresh}){
+  const [busy,setBusy]=useState(false);
+  const [ideas,setIdeas]=useState(state?.ideasToday||null);
+  const [weekend,setWeekend]=useState(false);
+  const [slip,setSlip]=useState(null);
+  useEffect(()=>{ setIdeas(state?.ideasToday||null); },[state]);
+  const clock=state?.clock;
+  const readyHour = clock && (clock.hour>20 || (clock.hour===20 && clock.minute>=30));
+  const gen=async(force)=>{
+    setBusy(true);
+    try{
+      const r=await eng('ideas',{force});
+      if(r.weekend){ setWeekend(true); }
+      else setIdeas(r.ideas);
+      refresh();
+    }catch(e){ alert(e.message); }
+    setBusy(false);
+  };
+  const onTaken=async(b64,ideaLedgerId)=>{
+    const r=await eng('fill',{image:b64,ideaLedgerId});
+    if(r.slippage!=null) setSlip(r.slippage);
+    refresh();
+  };
+  const onPassed=async(id)=>{ if(id) await eng('pass',{ideaLedgerId:id}); refresh(); };
+  const recFor=(idea)=> (state?.ledger||[]).slice().reverse().find(r=>r.idea && r.idea.pair===idea.pair && r.idea.thesis===idea.thesis);
+  return (
+    <div className="wrap">
+      <div className="card">
+        <div className="eyebrow">Night Desk — 21:20 BKK session</div>
+        <div className="note">Ideas generate once daily from the forex wire, your live book, account vitals and the lessons archive. Best generated from 20:30 Bangkok, after New York data has settled.</div>
+        <div className="row" style={{marginTop:10}}>
+          <button className="pri" disabled={busy} onClick={()=>gen(false)}>
+            {busy? <span className="spin">◐</span> : (ideas? 'Refetch tonight\u2019s ideas' : 'Generate tonight\u2019s ideas')}
+          </button>
+          {!readyHour && !ideas && <button className="ghost" disabled={busy} onClick={()=>gen(true)}>Force early</button>}
+        </div>
+        {!readyHour && !ideas && <div className="note" style={{marginTop:8}}>It is before 20:30 BKK. An early generation will miss the settled read on US data. Force only if you must.</div>}
+      </div>
+      {weekend && <div className="alertbox a-green">Market is shut for the weekend. The desk stands down; the wire and AAR archive remain open. See you at the Monday morning sync.</div>}
+      {slip!=null && <div className="alertbox a-amber">Fill logged. Slippage vs idea entry: {slip>0?'+':''}{slip}. Real levels now govern the book.</div>}
+      {ideas && <>
+        {ideas.stand_down && <div className="alertbox a-amber">STAND DOWN advisory: the engine rates tonight poor. Candidates shown for completeness, conviction marked accordingly.</div>}
+        <div className="card"><div className="eyebrow">Desk note</div><div className="note" style={{color:'#CFCABB'}}>{ideas.desk_note}</div>
+          <div className="meta"><span>generated {ideas.generatedAt? ago(Date.parse(ideas.generatedAt)):''}</span></div>
+        </div>
+        {(ideas.ideas||[]).map((idea,i)=><IdeaCard key={i} idea={idea} rec={recFor(idea)} onTaken={onTaken} onPassed={onPassed} />)}
+      </>}
+      {!ideas && !weekend && <div className="note" style={{marginTop:6}}>No ideas on the desk yet today.</div>}
+    </div>
+  );
+}
+
+// ---------- BOOK (positions, sync, AAR pipeline) ----------
+function Book({state,refresh}){
+  const [posImg,setPosImg]=useState(null);
+  const [syncing,setSyncing]=useState(false);
+  const [report,setReport]=useState(null);
+  const [morning,setMorning]=useState(null);
+  const [aarBusy,setAarBusy]=useState(null);
+  const [aarOut,setAarOut]=useState(null);
+  const [rfBusy,setRfBusy]=useState(null);
+  const [rfOut,setRfOut]=useState(null);
+  const [msg,setMsg]=useState('');
+  const book=state?.book;
+
+  const runSync=async(historyB64)=>{
+    setSyncing(true);
+    try{
+      const r=await eng('sync',{positionsImage:posImg,historyImage:historyB64||null});
+      setReport(r.report); setMorning(r.morningNote); setPosImg(null); refresh();
+    }catch(e){ alert(e.message); }
+    setSyncing(false);
+  };
+  const runAAR=async(closureId,histB64)=>{
+    setAarBusy(closureId);
+    try{
+      const r=await eng('aar',{closureId,historyImage:histB64||null});
+      if(r.needsHistory){ alert('The engine needs the MT5 history screenshot to see the exit. Upload it on the closure card.'); }
+      else setAarOut(r);
+      refresh();
+    }catch(e){ alert(e.message); }
+    setAarBusy(null);
+  };
+  const runRF=async(positionId)=>{
+    setRfBusy(positionId);
+    try{ const r=await eng('redflag',{positionId}); setRfOut(r); refresh(); }
+    catch(e){ alert(e.message); }
+    setRfBusy(null);
+  };
+  const flagCls={OK:'b-ok',NOTE:'b-note',AMBER:'b-amber',RED:'b-red'};
+
+  return (
+    <div className="wrap">
+      <div className="card">
+        <div className="eyebrow">Morning sync — 08:00 BKK</div>
+        <div className="note">Step 1: upload the MT5 open-positions screen. Step 2 (if anything closed): upload history. The engine diffs the book, detects closures, adopts orphans, reads vitals and flags aging.</div>
+        <div className="row" style={{marginTop:10}}>
+          <ShotButton primary={!posImg} label={posImg?'✓ positions loaded':'1 · Positions screenshot'} onImage={async b=>setPosImg(b)} />
+          <ShotButton label="2 · History (optional)" disabled={!posImg||syncing} onImage={async b=>runSync(b)} />
+          <button className="pri" disabled={!posImg||syncing} onClick={()=>runSync(null)}>{syncing? <span className="spin">◐</span>:'Run sync'}</button>
+        </div>
+      </div>
+
+      {report && <>
+        {report.vitalsAlert && <div className={'alertbox '+(report.vitalsAlert.level==='RED'?'a-red':'a-amber')}>MARGIN {report.vitalsAlert.level}: {report.vitalsAlert.msg}</div>}
+        <div className="alertbox a-green">Sync complete. {report.updated} updated · {report.closedDetected.length} closure(s) detected · {report.orphansAdded.length} orphan(s) adopted.</div>
+      </>}
+
+      {(() => {
+        const brief = morning || book?.morningNote;
+        if (!brief) return null;
+        return (
+          <div className="card">
+            <div className="eyebrow">Morning briefing{brief.at ? ' · ' + ago(Date.parse(brief.at)) : ''}</div>
+            <div className="hl">{brief.headline}</div>
+            {(brief.lines || []).map((l, i) => (
+              <div key={i} className="note" style={{marginTop: 6}}><span className="ambr">{l.pair}</span> {l.read}</div>
+            ))}
+            {(brief.calendar || []).length > 0 && (
+              <div style={{marginTop: 12}}>
+                <div className="eyebrow">Calendar</div>
+                {brief.calendar.map((c, i) => (
+                  <div key={i} className="note" style={{marginTop: 5}}>
+                    <span className="ambr">{c.when}</span> {c.what} <span className="dim">· {c.why}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {brief.calendar_watch && <div className="note" style={{marginTop: 8}}><span className="red">CALENDAR</span> {brief.calendar_watch}</div>}
+            {brief.overall && <div className="thesis">{brief.overall}</div>}
+          </div>
+        );
+      })()}
+
+      {(book?.pendingAAR||[]).length>0 && <>
+        <h3 className="sec">Closures awaiting AAR</h3>
+        {book.pendingAAR.map(c=>(
+          <div key={c.id} className="card" style={{borderColor:'var(--amber-dim)'}}>
+            <div className="row" style={{justifyContent:'space-between'}}>
+              <span className="hl">{c.position.pair} <span className="dim">{c.position.direction} {c.position.lots}</span></span>
+              {c.close
+                ? <span className={'badge '+(c.close.profit>=0?'b-ok':'b-red')}>{c.close.profit>=0?'+':''}{c.close.profit}</span>
+                : <span className="badge b-note">EXIT UNKNOWN</span>}
+            </div>
+            <div className="row" style={{marginTop:10}}>
+              {c.close
+                ? <button className="pri" disabled={aarBusy===c.id} onClick={()=>runAAR(c.id)}>{aarBusy===c.id? <span className="spin">◐</span>:'Run AAR'}</button>
+                : <ShotButton primary label="Upload history to AAR" onImage={async b=>runAAR(c.id,b)} />}
+            </div>
+          </div>
+        ))}
+      </>}
+
+      {aarOut && <div className="card" style={{borderColor:'var(--cyan)'}}>
+        <div className="eyebrow">AAR verdict</div>
+        <div className="row" style={{justifyContent:'space-between'}}>
+          <span className={'badge '+(aarOut.aar.bucket.includes('GOOD')?'b-ok':'b-red')}>{aarOut.aar.bucket.replace(/_/g,' ')}</span>
+        </div>
+        <div className="hl" style={{marginTop:8}}>{aarOut.aar.headline}</div>
+        <div className="note" style={{marginTop:8}}><span className="ambr">SUPPOSED</span> {aarOut.aar.supposed}</div>
+        <div className="note" style={{marginTop:4}}><span className="ambr">ACTUAL</span> {aarOut.aar.actual}</div>
+        <div className="note" style={{marginTop:4}}><span className="ambr">WHY</span> {aarOut.aar.why_different}</div>
+        <div className="note" style={{marginTop:4}}><span className="ambr">NEXT TIME</span> {aarOut.aar.next_time}</div>
+        <div className="note" style={{marginTop:4}}><span className="ambr">EXIT READ</span> {aarOut.aar.exit_read}</div>
+        {aarOut.aar.lesson!=='NONE' && <div className="lesson" style={{marginTop:10}}>LESSON BANKED: {aarOut.aar.lesson}</div>}
+        <div className="paste">{aarOut.pasteRow}</div>
+        <div className="row" style={{marginTop:8}}>
+          <button onClick={()=>copy(aarOut.pasteRow,setMsg)}>Copy journal row</button>
+          <span className="note green">{msg}</span>
+        </div>
+      </div>}
+
+      <h3 className="sec">Open book</h3>
+      {(book?.positions||[]).length===0 && <div className="note">Book is flat. All equity free, all options open.</div>}
+      {(book?.positions||[]).map(p=>(
+        <div key={p.id} className="card">
+          <div className="row" style={{justifyContent:'space-between'}}>
+            <span className="hl">{p.pair} <span className="dim">{p.direction} {p.lots} @ {p.entry}</span></span>
+            <span className={'badge '+flagCls[p.ageFlag]}>{p.ageDays}D {p.ageFlag!=='OK'?p.ageFlag:''}</span>
+          </div>
+          <div className="meta">
+            <span>SL {p.sl??'—'}</span><span>TP {p.tp??'—'}</span>
+            <span className={p.floating>=0?'green':'red'}>float {p.floating??'?'}</span>
+            {p.orphan && <span className="ambr">OFF-BOOK</span>}
+            {p.ageResetAt && <span className="dim">re-underwritten</span>}
+          </div>
+          {p.thesis && <div className="thesis">{p.thesis}</div>}
+          {p.lastReview && <div className="note" style={{marginTop:6}}><span className={p.lastReview.verdict==='CLOSE'?'red':'green'}>REVIEW {p.lastReview.verdict}</span> {p.lastReview.reason} <span className="dim">· {ago(Date.parse(p.lastReview.at))}</span></div>}
+          {p.ageFlag==='RED' &&
+            <div className="row" style={{marginTop:10}}>
+              <button className="pri" disabled={rfBusy===p.id} onClick={()=>runRF(p.id)}>{rfBusy===p.id? <span className="spin">◐</span>:'RED FLAG — keep or close?'}</button>
+            </div>}
+          {p.ageFlag==='AMBER' && <div className="note" style={{marginTop:8,color:'var(--amber)'}}>Day {p.ageDays}: is the original thesis alive, or are you holding hope? Red flag review unlocks at day 5.</div>}
+        </div>
+      ))}
+
+      {rfOut && <div className="card" style={{borderColor: rfOut.verdict.verdict==='CLOSE'?'var(--red)':'var(--green)'}}>
+        <div className="eyebrow">Red flag review — {rfOut.verdict.verdict==='CLOSE'?'burden of proof not met':'thesis re-underwritten'}</div>
+        <div className="hl">{rfOut.verdict.verdict}: {rfOut.position.pair}</div>
+        <div className="note" style={{marginTop:8}}>{rfOut.verdict.reason}</div>
+        {(rfOut.verdict.evidence||[]).map((e,i)=><div key={i} className="note" style={{marginTop:4}}>• {e}</div>)}
+        {rfOut.verdict.new_thesis && <div className="thesis">NEW THESIS: {rfOut.verdict.new_thesis} <span className="dim">({rfOut.verdict.new_horizon})</span></div>}
+        {rfOut.verdict.suggested_levels && <div className="note" style={{marginTop:6}}><span className="ambr">LEVELS</span> {rfOut.verdict.suggested_levels}</div>}
+        {rfOut.verdict.margin_note && <div className="note" style={{marginTop:4}}><span className="ambr">MARGIN</span> {rfOut.verdict.margin_note}</div>}
+        <div className="note dim" style={{marginTop:8}}>The verdict is logged and will itself be graded at AAR. The reviewer gets reviewed.</div>
+      </div>}
+    </div>
+  );
+}
+
+// ---------- AAR archive ----------
+function Archive({state}){
+  const [msg,setMsg]=useState('');
+  const lessons=state?.lessons||[];
+  const aars=(state?.ledger||[]).filter(r=>r.aar).reverse();
+  const passed=(state?.ledger||[]).filter(r=>r.status==='passed').reverse().slice(0,10);
+  return (
+    <div className="wrap">
+      <h3 className="sec">Scar tissue — lessons archive</h3>
+      {lessons.length===0 && <div className="note">No lessons banked yet. The archive fills itself as trades close and AARs run.</div>}
+      {lessons.slice().reverse().map((l,i)=><div key={i} className="lesson">{l.text} <span className="dim">({l.pair} · {l.date})</span></div>)}
+      <h3 className="sec">Completed AARs</h3>
+      {aars.length===0 && <div className="note">No AARs yet.</div>}
+      {aars.map((r,i)=>(
+        <div key={i} className="card">
+          <div className="row" style={{justifyContent:'space-between'}}>
+            <span className="hl">{r.idea?.pair||r.close?.pair} <span className="dim">{r.date}</span></span>
+            <span className={'badge '+(r.aar.bucket.includes('GOOD')?'b-ok':'b-red')}>{r.aar.bucket.replace(/_/g,' ')}</span>
+          </div>
+          <div className="note" style={{marginTop:6}}>{r.aar.headline}</div>
+          {r.close && <div className="meta"><span className={r.close.profit>=0?'green':'red'}>realised {r.close.profit>=0?'+':''}{r.close.profit}</span></div>}
+          {r.pasteRow && <>
+            <div className="paste">{r.pasteRow}</div>
+            <div className="row" style={{marginTop:6}}><button onClick={()=>copy(r.pasteRow,setMsg)}>Copy journal row</button><span className="note green">{msg}</span></div>
+          </>}
+        </div>
+      ))}
+      <h3 className="sec">Passed ideas — shadow book</h3>
+      {passed.length===0 && <div className="note">Nothing passed yet. Every idea you decline is tracked, so the system learns whether your filter beats the engine or the engine beats your filter.</div>}
+      {passed.map((r,i)=>(
+        <div key={i} className="card">
+          <div className="row" style={{justifyContent:'space-between'}}>
+            <span className="hl">{r.idea.pair} <span className="dim">{r.idea.direction} · {r.date}</span></span>
+            {r.passedEval
+              ? <span className={'badge '+(r.passedEval.grade==='WOULD_BE_GREEN'?'b-ok':'b-red')}>{r.passedEval.grade.replace(/_/g,' ')}</span>
+              : <span className="badge b-note">GRADING…</span>}
+          </div>
+          {r.passedEval && <div className="meta"><span className="dim">{r.passedEval.note}</span></div>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ---------- VITALS ----------
+function Vitals({state}){
+  const v=state?.book?.vitals;
+  const hist=state?.book?.vitalsHistory||[];
+  const ml=v?.marginLevel;
+  const light = ml==null?null : ml>=400?['GREEN','a-green','All clear. Plenty of sea room.'] : ml>=250?['GREEN','a-green','Healthy, keep sizing honest.'] : ml>=150?['AMBER','a-amber','Thin for correlated positions. A couple of bad candles moves this fast.'] : ['RED','a-red','Stop-out territory approaches. Reduce exposure now.'];
+  const spark=()=>{
+    const pts=hist.filter(h=>h.marginLevel).slice(-30);
+    if(pts.length<2) return null;
+    const vals=pts.map(p=>p.marginLevel);
+    const min=Math.min(...vals), max=Math.max(...vals), rng=(max-min)||1;
+    const W=320,H=46;
+    const d=vals.map((val,i)=>`${i===0?'M':'L'}${(i/(vals.length-1)*W).toFixed(1)},${(H-4-((val-min)/rng)*(H-8)).toFixed(1)}`).join(' ');
+    return <svg className="spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none"><path d={d} fill="none" stroke="var(--amber)" strokeWidth="1.5"/></svg>;
+  };
+  return (
+    <div className="wrap">
+      {!v && <div className="note">No vitals yet. They flow in automatically from every positions screenshot at sync and fill time.</div>}
+      {v && <>
+        {light && <div className={'alertbox '+light[1]}>MARGIN {light[0]} · level {ml}% — {light[2]}</div>}
+        <div className="grid2">
+          <div className="kv"><div className="k">BALANCE</div><div className="v">{v.balance}</div></div>
+          <div className="kv"><div className="k">EQUITY</div><div className="v">{v.equity}</div></div>
+          <div className="kv"><div className="k">FREE MARGIN</div><div className="v">{v.freeMargin??'—'}</div></div>
+          <div className="kv"><div className="k">MARGIN LEVEL</div><div className={'v '+(ml>=250?'green':ml>=150?'ambr':'red')}>{ml}%</div></div>
+        </div>
+        <div className="card">
+          <div className="eyebrow">Margin level drift — last {Math.min(hist.length,30)} reads</div>
+          {spark()||<div className="note">Need at least two synced reads to draw the drift line.</div>}
+          <div className="note" style={{marginTop:6}}>P/L flatters and deceives daily. This line tells you how close the operation stands to the edge, and which way it is walking.</div>
+        </div>
+        <div className="meta"><span>last read {v.ts? ago(Date.parse(v.ts)):''}</span></div>
+      </>}
+    </div>
+  );
+}
+
+// ---------- App shell ----------
+function App(){
+  const [tab,setTab]=useState('desk');
+  const [state,setState]=useState(null);
+  const [engineErr,setEngineErr]=useState(null);
+  const refresh=useCallback(async()=>{
+    try{ setState(await eng('get')); setEngineErr(null); }
+    catch(e){ setEngineErr(e.message); }
+  },[]);
+  useEffect(()=>{
+    window.__terminalMounted=true;
+    const d=document.getElementById('diag'); if(d) d.remove();
+    refresh();
+  },[]);
+  const open=fxMarketOpen();
+  return (<>
+    <div className="topbar">
+      <div className="brand disp">THE TERMINAL<small>hammyLabs · forex desk</small></div>
+      <span className={'pill '+(open?'open':'shut')}>{open?'FX OPEN':'FX SHUT'}</span>
+    </div>
+    <Tape/>
+    {engineErr && <div className="wrap" style={{paddingBottom:0}}><div className="alertbox a-red">ENGINE OFFLINE: {engineErr}. Check ANTHROPIC_API_KEY and the Upstash variables in Vercel, then reload.</div></div>}
+    {tab==='desk' && <Desk state={state} refresh={refresh}/>}
+    {tab==='book' && <Book state={state} refresh={refresh}/>}
+    {tab==='aar' && <Archive state={state}/>}
+    {tab==='vitals' && <Vitals state={state}/>}
+    <nav className="tabs">
+      {[['desk','DESK'],['book','BOOK'],['aar','AAR'],['vitals','VITALS']].map(([k,l])=>
+        <button key={k} className={tab===k?'on':''} onClick={()=>setTab(k)}>{l}</button>)}
+    </nav>
+  </>);
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
