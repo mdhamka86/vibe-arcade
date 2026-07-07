@@ -211,25 +211,38 @@ async function actIdeas(force) {
   // names the user has confirmed are NOT available on Phillip Nova: never propose again
   const unavailable = new Set((s.universe.unavailable || []).map((u) => (u || '').toUpperCase()));
 
+  // ---- financial headroom: what the account can honestly afford to take up ----
+  // Drawn from the synced NOVA account summary so ideas are sized to reality, not fantasy.
+  const acc = s.book.account || {};
+  const buyingPower = num(acc.buyingPowerETD) ?? num(acc.buyingPowerSecurities);
+  const netLiq = num(s.book.netLiq) ?? num(acc.netLiquidityValue);
+  const initialMargin = num(acc.initialMargin);
+  const marginUtilPct = (initialMargin != null && netLiq) ? (initialMargin / netLiq) * 100 : null;
+  const affordLine = buyingPower != null
+    ? `Your genuine buying power right now is about $${buyingPower.toFixed(0)}${netLiq != null ? ` on net liquidity of $${netLiq.toFixed(0)}` : ''}${marginUtilPct != null ? `, with roughly ${marginUtilPct.toFixed(0)}% of the account already committed as margin` : ''}. EVERY idea you propose must be genuinely affordable inside this buying power at a sensible position size; never recommend something that would need more firepower than he has.`
+    : 'Account buying power is not yet synced, so size ideas conservatively and note that he should confirm affordability on his platform before taking anything.';
+
   const historyLines = recent.map((r) => `- ${r.date}: ${r.idea.name}${r.idea.ticker ? ' (' + r.idea.ticker + ')' : ''} ${r.idea.direction} (${r.status})`).join('\n') || '- none';
   const priorGuidance = (s.guidance || []).map((g) => `- ${g.text}${g.basis ? ' [' + g.basis + ']' : ''}`).join('\n') || '- none yet; not enough resolved history';
   const recentLessons = (s.lessons || []).slice(-10).map((l) => `- ${l.text}`).join('\n') || '- none yet';
 
-  const prompt = `You are the ideas engine of THE EXCHANGE, the equities desk of a retail investor in Phuket who trades US stocks through Phillip Nova (a "NOVA" account). His long-term convictions are already held in his portfolio; your job is DIFFERENT and specific: hunt SHORT-TERM SWING TRADES to hold for 5-6 days, one week maximum. No long-term plays.
+  const prompt = `You are the ideas engine of THE EXCHANGE, the equities desk of a retail investor in Phuket who trades US stocks through Phillip Nova (a "NOVA" account). His long-term convictions are already held in his portfolio; your job is DIFFERENT and specific: hunt SHORT to SHORTER-TERM TRADES, punchy positions held a few days up to about a week. No long-term plays.
 
 YOUR MANDATE (read carefully):
-1. HORIZON: every idea is a 5-6 day swing, one week ceiling. Not a long-term investment. The thesis must be able to play out inside a week (a catalyst, a technical bounce, a post-earnings drift, an insider-buying pop).
-2. ROAM ALL INDUSTRIES: actively hunt across the WHOLE market, healthcare, energy, industrials, financials, consumer, materials, utilities, biotech, and yes occasionally tech. DELIBERATELY AVOID semiconductors and chip names: his portfolio is already saturated with them, so a semi idea is near-useless to him. Find gems in corners he is NOT already exposed to.
-3. BE ADVENTUROUS: he wants genuine gems, so range into small and mid caps and special situations, not just mega-caps. But see the TRADEABILITY rule below.
-4. WEIGH ALL FOUR SIGNAL FAMILIES and prize CONVERGENCE where several align on one name:
+1. HORIZON: every idea is a short to shorter-term trade, a few days out to roughly a week at the ceiling. Not a long-term investment. The thesis must be able to play out quickly (a catalyst, a technical bounce, a post-earnings drift, an insider-buying pop, a momentum move).
+2. LEVERAGE & AGGRESSION WELCOME, BUT EARNED: he actively WANTS to be more aggressive on these shorter trades, and CFDs are welcome and often preferred precisely because they are more volatile and leveraged, which suits a punchy short-term style. HOWEVER this aggression must be EARNED, never assumed. Only lean aggressive (a CFD framing, a tighter-to-price entry, a fuller size) when there is genuine NEWS CONVERGENCE (two or more independent signals or sources pointing the same way) or otherwise strong, well-evidenced confidence. Where conviction is merely moderate, stay proportionate and say so honestly. Reckless aggression on a thin thesis is exactly what to avoid; aggression is the reward for conviction, not a default.
+3. WITHIN HIS MEANS (critical): ${affordLine} State briefly in each idea's reason that it fits comfortably within his firepower.
+4. ROAM ALL INDUSTRIES: hunt across the WHOLE market, healthcare, energy, industrials, financials, consumer, materials, utilities, biotech, and yes occasionally tech. DELIBERATELY AVOID semiconductors and chip names: his portfolio is already saturated with them, so a semi idea is near-useless to him. Find gems in corners he is NOT already exposed to.
+5. BE ADVENTUROUS: he wants genuine gems, so range into small and mid caps and special situations, not just mega-caps. But see the TRADEABILITY rule below.
+6. WEIGH ALL FOUR SIGNAL FAMILIES and prize CONVERGENCE where several align on one name:
    - Insider & congressional buying (an insider or member of Congress recently buying with real money is a strong tell)
    - Value & fundamentals (cheap versus peers, quality at a temporary discount)
    - News & catalysts (earnings beats, upgrades, contract wins, product news, FDA decisions)
    - Technical setups (pullback into support, a clean base, a breakout with volume)
-   The best idea is one where 2+ of these point the same way. Name which signals fire in the reason.
-5. TRADEABILITY (critical): only propose names that are properly LISTED on a major US exchange (NASDAQ, NYSE, or NYSE American). NEVER propose OTC, pink-sheet, or nano-cap names that a retail broker like Phillip Nova almost certainly cannot trade. When in doubt, prefer the more liquid, clearly-listed name. Mark each idea's availability as "likely" and note it needs his confirmation on the platform.
-6. NO DUPLICATES: do NOT propose any name in this banned list (recently proposed or already held): ${bannedList.join(', ') || 'none yet'}.
-7. NEVER propose any name he has flagged unavailable on his platform: ${[...unavailable].join(', ') || 'none yet'}.
+   The best idea is one where 2+ of these point the same way. Name which signals fire in the reason. Convergence is also precisely what licenses a more aggressive, leveraged framing per rule 2.
+7. TRADEABILITY (critical): only propose names that are properly LISTED on a major US exchange (NASDAQ, NYSE, or NYSE American), tradeable as either a share or a CFD on Phillip Nova. NEVER propose OTC, pink-sheet, or nano-cap names a retail broker almost certainly cannot trade. When in doubt, prefer the more liquid, clearly-listed name. Mark each idea's availability as "likely" and note it needs his confirmation on the platform.
+8. NO DUPLICATES: do NOT propose any name in this banned list (recently proposed or already held): ${bannedList.join(', ') || 'none yet'}.
+9. NEVER propose any name he has flagged unavailable on his platform: ${[...unavailable].join(', ') || 'none yet'}.
 
 CURRENT HOLDINGS (context only, do NOT propose these): ${holdingsSummary(s.book)}
 
@@ -245,7 +258,7 @@ ${recentLessons}
 TODAY'S MARKET & COMPANY NEWS WIRE:
 ${digest(news, 28)}
 
-TASK: Propose exactly 2 fresh week-long swing ideas. Present each EXACTLY in his journal's language: stock name, ticker, entry point, current market price, buy or sell, take profit, stop loss, and the reason (naming the signals that fire). Be genuinely critical and honest: if today offers nothing genuinely worth a week of risk, say so plainly in desk_note and mark ideas at their true lower conviction rather than inflating them.
+TASK: Propose exactly 2 fresh short-term trade ideas. For each, indicate whether it is best taken as a plain SHARE or as a more aggressive CFD, letting that instrument choice follow the conviction: reserve the CFD/aggressive framing for genuine convergence or strong confidence. Present each EXACTLY in his journal's language: stock name, ticker, entry point, current market price, buy or sell, take profit, stop loss, and the reason (naming the signals that fire and noting it fits his buying power). Be genuinely critical and honest: if today offers nothing genuinely worth the risk, say so plainly in desk_note and mark ideas at their true lower conviction rather than inflating them.
 
 LEVEL DISCIPLINE (every number is validated after you respond, so get them right):
 - entry must sit within ~8% of the current price (a fillable swing entry, not a far-off limit).
@@ -255,7 +268,7 @@ LEVEL DISCIPLINE (every number is validated after you respond, so get them right
 - CONVICTION on a four-rung scale: LOW, MED, MED-HIGH, HIGH. Reserve the top two rungs for genuine multi-signal convergence.
 
 Respond ONLY with JSON, no markdown:
-{"ideas":[{"name":"Company Name","ticker":"TICK","exchange":"NASDAQ|NYSE|NYSE American","industry":"e.g. Healthcare","direction":"BUY|SELL","current_price":"12.40","entry":"12.00-12.30","tp":"14.20","sl":"11.10","horizon":"5-6 day swing","conviction":"LOW|MED|MED-HIGH|HIGH","signals":["insider","value","catalyst","technical"],"reason":"the thesis, naming which signals fire, max 45 words","availability":"likely — confirm on your NOVA platform"}],"stand_down":false,"desk_note":"one honest paragraph on the session's hunt, max 55 words"}`;
+{"ideas":[{"name":"Company Name","ticker":"TICK","exchange":"NASDAQ|NYSE|NYSE American","industry":"e.g. Healthcare","direction":"BUY|SELL","instrument":"SHARE|CFD","current_price":"12.40","entry":"12.00-12.30","tp":"14.20","sl":"11.10","horizon":"e.g. 3-5 day trade","conviction":"LOW|MED|MED-HIGH|HIGH","signals":["insider","value","catalyst","technical"],"reason":"the thesis, naming which signals fire and noting it fits his buying power, max 48 words","availability":"likely — confirm on your NOVA platform"}],"stand_down":false,"desk_note":"one honest paragraph on the session's hunt, max 55 words"}`;
 
   let ideas = await claude(prompt, 2600);
 
@@ -325,10 +338,10 @@ Respond ONLY with JSON, no markdown:
 // ---------- Vision: parse a NOVA screenshot ----------
 async function parseShot(image, kind) {
   const spec = {
-    positions: `This is a screenshot of a Phillip Nova (NOVA) equities account showing stock holdings.
-Extract EVERY holding and the account totals.
-JSON: {"holdings":[{"name":"Company Name","ticker":"TICK or null","qty":5,"avgCost":192.02,"lastPrice":195.02,"unrealised":11.59,"status":"Open"}],"netLiq":3864.04}
-Use null for anything not visible. Numbers as numbers, not strings. Fractional qty is allowed (e.g. 0.1).`,
+    positions: `This is a screenshot of a Phillip Nova (NOVA) equities account showing stock holdings and an account summary bar.
+Extract EVERY holding, note whether each is Leveraged (CFD) or Non-Leveraged (EQ/ETF), and read the account summary figures along the bottom.
+JSON: {"holdings":[{"name":"Company Name","ticker":"TICK or null","qty":5,"avgCost":192.02,"lastPrice":195.02,"unrealised":11.59,"assetClass":"CFD|EQ|ETF","leveraged":true,"status":"Open"}],"netLiq":3864.04,"account":{"ledgerBalance":null,"equityBalance":null,"unrealizedPL":null,"initialMargin":null,"buyingPowerETD":null,"netLiquidityValue":null}}
+Use null for anything not visible. Numbers as numbers, not strings. Fractional qty is allowed (e.g. 0.1). leveraged is true only for CFD/Leveraged rows.`,
     history: `This is a screenshot of Phillip Nova (NOVA) trade history / closed positions.
 Extract EVERY closed deal visible.
 JSON: {"closes":[{"name":"Company Name","ticker":"TICK or null","qty":5,"avgCost":192.02,"exit":198.10,"realised":30.40,"closeDate":"2026.07.02"}]}`,
@@ -377,6 +390,8 @@ async function actSync(positionsImg, historyImg) {
     }
   }
   // 2) holdings on screen but not in the book => newly seen, adopt them
+  const pendingFills = s.book.pendingFills || [];
+  report.filledFromGems = [];
   for (const x of seen) {
     if (!(s.book.holdings || []).find((h) => sameHolding(h, x))) {
       const adopted = {
@@ -385,16 +400,36 @@ async function actSync(positionsImg, historyImg) {
         lastPrice: x.lastPrice ?? null, unrealised: x.unrealised ?? null,
         openedAt: Date.now(), firstSeen: t.dmy,
       };
+      // if this newly-appeared holding was a gem you took up, carry its thesis and
+      // proposed levels across so the reasoning travels into the book with the position.
+      const nm = (x.ticker || x.name || '').toUpperCase();
+      const match = pendingFills.find((p) => (p.ticker || '').toUpperCase() === nm || (p.name || '').toUpperCase() === (x.name || '').toUpperCase());
+      if (match) {
+        adopted.fromGem = true;
+        adopted.gemThesis = match.reason || null;
+        adopted.mentalTP = match.tp || null;
+        adopted.mentalSL = match.sl || null;
+        report.filledFromGems.push(adopted.name);
+      }
       still.push(adopted);
       report.newAdded.push(adopted);
     }
   }
   s.book.holdings = still;
+  // clear any pending fills that have now genuinely appeared in the book
+  if (pendingFills.length) {
+    s.book.pendingFills = pendingFills.filter((p) =>
+      !(s.book.holdings || []).some((h) => (h.ticker || h.name || '').toUpperCase() === (p.ticker || '').toUpperCase() || (h.name || '').toUpperCase() === (p.name || '').toUpperCase()));
+  }
 
   // 3) net liquidation value + its history trail (the equity equivalent of vitals)
   if (posParse.netLiq != null) {
     s.book.netLiq = posParse.netLiq;
     s.book.netLiqHistory = [...(s.book.netLiqHistory || []), { ts: t.iso, netLiq: posParse.netLiq }].slice(-90);
+  }
+  // capture the richer NOVA account vitals if the parser saw them
+  if (posParse.account) {
+    s.book.account = { ...(s.book.account || {}), ...posParse.account, ts: t.iso };
   }
   s.book.lastSync = t.iso;
   await rSet('exchange:book', s.book);
@@ -426,6 +461,15 @@ async function actReview(holdingId) {
     ? `currently ${priceNow >= h.avgCost ? 'above' : 'below'} cost: paid ${h.avgCost}, now ${priceNow} (${(((priceNow - h.avgCost) / h.avgCost) * 100).toFixed(1)}%)`
     : 'cost basis unclear';
 
+  // ---- financial mindfulness: the account's health and this holding's margin nature ----
+  const acc = s.book.account || {};
+  const rvBuyingPower = num(acc.buyingPowerETD) ?? num(acc.buyingPowerSecurities);
+  const rvNetLiq = num(s.book.netLiq) ?? num(acc.netLiquidityValue);
+  const rvInitialMargin = num(acc.initialMargin);
+  const rvMarginUtil = (rvInitialMargin != null && rvNetLiq) ? (rvInitialMargin / rvNetLiq) * 100 : null;
+  const isLeveraged = !!(h.leveraged || h.assetClass === 'CFD');
+  const financeBlock = `Account posture: ${rvNetLiq != null ? `net liquidity about $${rvNetLiq.toFixed(0)}` : 'net liquidity not synced'}${rvBuyingPower != null ? `, buying power about $${rvBuyingPower.toFixed(0)}` : ''}${rvMarginUtil != null ? `, roughly ${rvMarginUtil.toFixed(0)}% of the account committed as margin` : ''}. This holding is a ${isLeveraged ? 'LEVERAGED CFD position, which consumes margin and carries financing/swap costs, so holding it on has an ongoing cost and closing it frees up margin and buying power' : 'non-leveraged owned position (share/ETF), which ties up capital but not margin in the same way'}. Weigh this in your call: if margin is stretched, be readier to free it by trimming or closing a weak leveraged holding; if there is ample room, financial pressure is not itself a reason to act.`;
+
   // ---- the running history of prior reviews, so each review builds on the last ----
   const history = h.reviewHistory || [];
   const priorReviewsBlock = history.length
@@ -456,6 +500,9 @@ ${priorReviewsBlock}
 LEVEL CHECK SINCE LAST REVIEW:
 ${levelEvent}
 
+FINANCIAL MINDFULNESS (weigh the account's health, not just this stock in isolation):
+${financeBlock}
+
 FRESH COMPANY & MARKET NEWS:
 ${digest(news, 16)}
 
@@ -463,10 +510,10 @@ LESSONS ARCHIVE:
 ${priorLessons}
 
 Your job, honest judgements that CONTINUE the story from your prior reviews:
-1. HOLD, TRIM or CLOSE: is the original reason for owning this still intact? A holding being down is NOT itself a reason to close; a broken thesis is. A holding being up is not itself a reason to sell; a spent thesis, a hit target, or a better use of the capital might be. If a proposed level was hit (see the level check above), give a direct hold-or-close call on that basis. Default to patience for a long-term conviction, but be honest if the story has genuinely broken or evolved since your last review.
+1. HOLD, TRIM or CLOSE: is the original reason for owning this still intact? A holding being down is NOT itself a reason to close; a broken thesis is. A holding being up is not itself a reason to sell; a spent thesis, a hit target, or a better use of the capital might be. If a proposed level was hit (see the level check above), give a direct hold-or-close call on that basis. Weigh the financial mindfulness above: a weak leveraged holding eating margin is a stronger candidate to free up than an owned position when the account is tight. Be honest if the story has genuinely broken or evolved since your last review.
 2. PROPOSED LEVELS: suggest a sensible stop loss and take profit grounded in the CURRENT live price. If your prior levels still make sense, you may keep them; if the situation has moved, adjust them and say why. Give real price levels.
 3. WHAT'S CHANGED: explicitly note how your view has shifted (or held firm) since the last review, referencing it.
-4. HOLDING HORIZON: given it is a long-term conviction, offer a sensible sense of how long to keep holding or what milestone/catalyst to hold toward.
+4. HOLDING HORIZON & FINANCES: offer a sensible sense of how long to keep holding or what milestone/catalyst to hold toward, and note briefly whether holding on or closing helps or hurts his margin and buying power.
 
 Respond ONLY with JSON, no markdown:
 {"verdict":"HOLD|CLOSE|TRIM","reason":"2-3 sentences grounded in current facts, referencing how the view has evolved since the last review","proposed_sl":"price level","proposed_tp":"price level","level_note":"one sentence on whether a prior proposed level was hit and what to do, or empty if none","change_note":"one sentence on what has changed since the last review","hold_guidance":"how long / toward what, one sentence","conviction":"how sure you are, one short phrase"}`, 1500);
@@ -565,6 +612,33 @@ async function actPass(ideaLedgerId) {
   return { ok: true };
 }
 
+// ---------- Take up an idea (commit to it, awaiting confirmation on next sync) ----------
+// The first half of a two-stage flow: you signal intent here, then when you next sync
+// your NOVA book and the position genuinely appears, actSync links it back to this gem
+// so its thesis and proposed levels travel into the holding rather than being lost.
+async function actTakeUp(ideaLedgerId) {
+  const s = await loadAll();
+  const rec = s.ledger.find((r) => r.id === ideaLedgerId);
+  if (!rec) throw new Error('Idea not found to take up.');
+  rec.status = 'taken';
+  rec.takenAt = Date.now();
+  // record it in a pending-fills list so the desk watches for it on the next sync
+  s.book.pendingFills = s.book.pendingFills || [];
+  if (!s.book.pendingFills.some((p) => p.ticker === (rec.idea.ticker || rec.idea.name))) {
+    s.book.pendingFills.push({
+      ticker: rec.idea.ticker || rec.idea.name,
+      name: rec.idea.name,
+      ideaLedgerId: rec.id,
+      entry: rec.idea.entry, tp: rec.idea.tp, sl: rec.idea.sl,
+      direction: rec.idea.direction, reason: rec.idea.reason,
+      takenAt: Date.now(),
+    });
+  }
+  await rSet('exchange:ledger', s.ledger.slice(-400));
+  await rSet('exchange:book', s.book);
+  return { ok: true, pending: s.book.pendingFills.length };
+}
+
 // ---------- Resolve passed ideas across their week-long window ----------
 // priceMap (optional) lets a caller (or our web-search-enriched sessions) supply
 // current prices keyed by uppercased ticker/name, so verdicts can be grounded in
@@ -615,6 +689,90 @@ function resolveShadow(s, t, priceMap = {}) {
 }
 
 // ---------- Gather the whole state for the front end ----------
+// ---------- Vitals: gather the account figures and interpret them with insight ----------
+// The equity cousin of The Terminal's Vitals. Beyond listing balances, it reads what
+// the numbers MEAN together: margin utilisation, leverage exposure, cash cushion, and
+// the health of the book, each with a plain-language read and a status colour.
+function computeVitals(book) {
+  if (!book) return null;
+  const acc = book.account || {};
+  const holdings = book.holdings || [];
+  const netLiq = num(book.netLiq) ?? num(acc.netLiquidityValue);
+  const initialMargin = num(acc.initialMargin);
+  const buyingPower = num(acc.buyingPowerETD);
+  const equityBalance = num(acc.equityBalance);
+  const ledgerBalance = num(acc.ledgerBalance);
+  const unrealizedPL = num(acc.unrealizedPL);
+
+  const reads = []; // each: { label, value, status, note }
+
+  // 1) margin utilisation: how much of the account is committed to holding leverage
+  if (initialMargin != null && netLiq != null && netLiq > 0) {
+    const util = (initialMargin / netLiq) * 100;
+    const status = util > 60 ? 'RED' : util > 35 ? 'AMBER' : 'GREEN';
+    reads.push({
+      label: 'Margin utilisation', value: `${util.toFixed(1)}%`, status,
+      note: status === 'GREEN'
+        ? `Only ${util.toFixed(0)}% of your net liquidity is tied up as margin. A comfortable, conservative posture with ample room to breathe.`
+        : status === 'AMBER'
+        ? `${util.toFixed(0)}% of your account is committed to margin. Workable, but a sharp move against the leveraged names would bite. Tread thoughtfully before adding more.`
+        : `${util.toFixed(0)}% of your account is consumed by margin. This is stretched; a drawdown on the CFDs could force action. Consider trimming leverage.`,
+    });
+  }
+
+  // 2) leverage exposure: what share of the book rides on CFDs vs owned shares
+  const levHoldings = holdings.filter((h) => h.leveraged || h.assetClass === 'CFD');
+  if (holdings.length) {
+    const levValue = levHoldings.reduce((sum, h) => sum + Math.abs((num(h.qty) || 0) * (num(h.lastPrice) || 0)), 0);
+    const totalValue = holdings.reduce((sum, h) => sum + Math.abs((num(h.qty) || 0) * (num(h.lastPrice) || 0)), 0);
+    const levPct = totalValue > 0 ? (levValue / totalValue) * 100 : 0;
+    const status = levPct > 50 ? 'AMBER' : 'GREEN';
+    reads.push({
+      label: 'Leverage exposure', value: `${levHoldings.length} of ${holdings.length} positions`, status,
+      note: `Your leveraged CFD positions (${levHoldings.map((h) => h.ticker || h.name).join(', ') || 'none'}) carry financing costs and amplify both gains and losses. They make up roughly ${levPct.toFixed(0)}% of your position value. ${status === 'AMBER' ? 'That is a meaningful tilt toward leverage; keep a close eye on those three.' : 'A modest, sensible share riding on leverage.'}`,
+    });
+  }
+
+  // 3) cash cushion: buying power as dry powder
+  if (buyingPower != null && netLiq != null && netLiq > 0) {
+    const cushion = (buyingPower / netLiq) * 100;
+    reads.push({
+      label: 'Dry powder', value: `${buyingPower.toFixed(2)}`, status: cushion < 10 ? 'AMBER' : 'GREEN',
+      note: `You have ${buyingPower.toFixed(0)} of buying power, about ${cushion.toFixed(0)}% of your net liquidity, ready to deploy on a fresh gem should one truly convince you.`,
+    });
+  }
+
+  // 4) book health: unrealised P/L posture
+  if (unrealizedPL != null) {
+    const winners = holdings.filter((h) => (num(h.unrealised) || 0) > 0).length;
+    const laggards = holdings.filter((h) => (num(h.unrealised) || 0) < 0).length;
+    reads.push({
+      label: 'Open P/L', value: `${unrealizedPL >= 0 ? '+' : ''}${unrealizedPL.toFixed(2)}`, status: unrealizedPL >= 0 ? 'GREEN' : 'AMBER',
+      note: `Across the book, ${winners} position${winners !== 1 ? 's' : ''} in the green and ${laggards} in the red, for a net unrealised ${unrealizedPL >= 0 ? 'gain' : 'loss'} of ${Math.abs(unrealizedPL).toFixed(2)}. ${unrealizedPL >= 0 ? 'The book is carrying itself nicely.' : 'A drawdown, but unrealised losses are only paper until you act; let the reviews guide which laggards still have an intact story.'}`,
+    });
+  }
+
+  // net liquidity trend from the history trail
+  let trend = null;
+  const hist = book.netLiqHistory || [];
+  if (hist.length >= 2) {
+    const first = num(hist[0].netLiq), last = num(hist[hist.length - 1].netLiq);
+    if (first != null && last != null && first > 0) {
+      const chg = ((last - first) / first) * 100;
+      trend = { from: first, to: last, pct: +chg.toFixed(1), points: hist.length };
+    }
+  }
+
+  return {
+    figures: {
+      netLiq, ledgerBalance, equityBalance, unrealizedPL, initialMargin, buyingPower,
+    },
+    reads, trend,
+    leveraged: levHoldings.map((h) => h.ticker || h.name),
+    lastSync: book.lastSync || null,
+  };
+}
+
 async function actGet() {
   const t = bkk();
   const s = await loadAll();
@@ -628,6 +786,7 @@ async function actGet() {
     guidanceMeta: s.guidanceMeta,
     universe: s.universe,
     ideasToday: ideas,
+    vitals: computeVitals(s.book),
   };
 }
 
@@ -695,6 +854,7 @@ export default async function handler(req, res) {
     else if (action === 'sync') out = await actSync(p.positionsImage, p.historyImage);
     else if (action === 'review') out = await actReview(p.holdingId);
     else if (action === 'pass') out = await actPass(p.ideaLedgerId);
+    else if (action === 'takeup') out = await actTakeUp(p.ideaLedgerId);
     else if (action === 'flag') out = await actFlagUnavailable(p.name, p.available);
     else if (action === 'learn') out = await actLearn(p.priceMap);
     else if (action === 'seed') out = await actSeed(p.seedBook, p.seedWatchlist);
