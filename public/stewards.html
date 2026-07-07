@@ -6,201 +6,254 @@
 <title>The Stewards' Room</title>
 <style>
   :root{
-    --bg:#0b100c; --card:#131a14; --card2:#0e1410; --line:#243026;
-    --ink:#eaf0e6; --muted:#8fa08c; --gold:#d4a13c; --green:#2ecc71;
-    --green2:#1f9e57; --red:#e05252; --amber:#e6a23c; --blue:#6db8ff;
+    /* charcoal study — warm greys pulled from the painting, brass as the one accent */
+    --bg:#15171a; --card:#1d2024; --card2:#191c1f; --line:#2c3035;
+    --ink:#e6e4df; --muted:#8b8d8a; --faint:#5f6360;
+    --brass:#b8945f; --brass-soft:#8a6f47; --gold:#b8945f;
+    --sage:#8ea08c; --green:#7fa87f; --green2:#5f8a5f;
+    --red:#c17b72; --amber:#c9a15e; --blue:#7f95a8;
+    --shadow:0 1px 3px rgba(0,0,0,.35), 0 6px 20px rgba(0,0,0,.22);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
   body{margin:0;background:var(--bg);color:var(--ink);
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-    padding:16px;max-width:680px;margin:0 auto;}
-  .serif{font-family:Georgia,"Iowan Old Style","Times New Roman",serif;}
-  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    padding:20px 16px 40px;max-width:640px;margin:0 auto;
+    font-feature-settings:"tnum" 1;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
+  .serif{font-family:inherit;}
+  .mono{font-variant-numeric:tabular-nums;
+    font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;}
+  svg.ic{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.6;
+    stroke-linecap:round;stroke-linejoin:round;vertical-align:-3px;flex-shrink:0;}
+  svg.ic.lg{width:19px;height:19px;}
 
   /* masthead */
-  .mast{border-bottom:2px solid var(--gold);padding-bottom:10px;margin-bottom:14px;}
-  .mast h1{font-family:Georgia,"Iowan Old Style","Times New Roman",serif;
-    font-size:24px;margin:0;letter-spacing:0.5px;}
-  .mast .sub{color:var(--muted);font-size:12.5px;margin-top:3px;line-height:1.5;}
+  .mast{padding-bottom:16px;margin-bottom:18px;border-bottom:1px solid var(--line);}
+  .mast h1{font-weight:300;font-size:27px;margin:0;letter-spacing:-0.01em;color:var(--ink);}
+  .mast h1 b{font-weight:600;color:var(--brass);}
+  .mast .sub{color:var(--muted);font-size:13px;margin-top:5px;line-height:1.55;font-weight:400;}
 
-  /* weighed-in lamp panel — the signature */
-  .lamps{display:flex;gap:10px;background:var(--card2);border:1px solid var(--line);
-    border-radius:14px;padding:12px;margin-bottom:14px;}
-  .lamp{flex:1;text-align:center;}
-  .bulb{width:22px;height:22px;border-radius:50%;margin:0 auto 6px;
-    background:#1c241d;border:2px solid var(--line);transition:all .4s;}
-  .lamp.ok .bulb{background:var(--green);border-color:var(--green2);
-    box-shadow:0 0 14px rgba(46,204,113,.55);}
-  .lamp.warn .bulb{background:var(--amber);border-color:var(--amber);
-    box-shadow:0 0 12px rgba(230,162,60,.5);}
-  .lamp.bad .bulb{background:var(--red);border-color:var(--red);
-    box-shadow:0 0 14px rgba(224,82,82,.6);}
-  .lamp .lbl{font-size:11px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;}
-  .lamp .st{font-size:12px;margin-top:2px;font-weight:600;}
-  .lamp.ok .st{color:var(--green);} .lamp.warn .st{color:var(--amber);}
-  .lamp.bad .st{color:var(--red);} .lamp .st{color:var(--muted);}
-  .verdict{text-align:center;font-family:Georgia,serif;font-size:13px;
-    color:var(--muted);margin:-6px 0 14px;letter-spacing:1px;}
-  .verdict.in{color:var(--green);} .verdict.obj{color:var(--red);}
+  /* weighed-in lamp panel — the signature, now restrained */
+  .lamps{display:flex;gap:2px;background:var(--card2);border:1px solid var(--line);
+    border-radius:14px;padding:4px;margin-bottom:16px;box-shadow:var(--shadow);}
+  .lamp{flex:1;text-align:center;padding:13px 6px 12px;border-radius:11px;transition:background .3s;}
+  .bulb{width:9px;height:9px;border-radius:50%;margin:0 auto 9px;
+    background:var(--faint);box-shadow:0 0 0 4px rgba(255,255,255,.02);transition:all .5s;}
+  .lamp.ok .bulb{background:var(--sage);box-shadow:0 0 10px rgba(142,160,140,.6),0 0 0 4px rgba(142,160,140,.1);}
+  .lamp.warn .bulb{background:var(--amber);box-shadow:0 0 10px rgba(201,161,94,.55),0 0 0 4px rgba(201,161,94,.1);}
+  .lamp.bad .bulb{background:var(--red);box-shadow:0 0 11px rgba(193,123,114,.6),0 0 0 4px rgba(193,123,114,.12);}
+  .lamp .lbl{font-size:10px;color:var(--faint);letter-spacing:.16em;text-transform:uppercase;font-weight:500;}
+  .lamp .st{font-size:12.5px;margin-top:4px;font-weight:500;color:var(--muted);}
+  .lamp.ok .st{color:var(--sage);} .lamp.warn .st{color:var(--amber);} .lamp.bad .st{color:var(--red);}
+  .verdict{text-align:center;font-size:11px;color:var(--faint);margin:0 0 16px;
+    letter-spacing:.22em;text-transform:uppercase;font-weight:500;}
+  .verdict.in{color:var(--sage);} .verdict.obj{color:var(--red);}
 
-  /* figures */
-  .figs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;}
-  .fig{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px;}
-  .fig .v{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:17px;font-weight:700;}
-  .fig .k{font-size:10.5px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase;margin-top:2px;}
+  /* figures — clean aligned grid */
+  .figs{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;margin-bottom:16px;
+    background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden;}
+  .fig{background:var(--card);padding:13px 12px;}
+  .fig .v{font-variant-numeric:tabular-nums;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:18px;font-weight:500;color:var(--ink);letter-spacing:-0.02em;}
+  .fig .k{font-size:9.5px;color:var(--faint);letter-spacing:.1em;text-transform:uppercase;margin-top:4px;font-weight:500;}
   .fig .v.neg{color:var(--red);} .fig .v.pos{color:var(--green);}
 
-  button{font-size:15px;border-radius:12px;border:1px solid var(--line);
-    background:var(--card);color:var(--ink);padding:12px 14px;}
-  button.go{background:var(--green);color:#04210f;font-weight:700;border:none;
-    width:100%;padding:15px;font-size:16px;border-radius:14px;margin-bottom:10px;}
-  button.go:active{background:var(--green2);}
-  button.gold{background:transparent;color:var(--gold);border:1px solid var(--gold);
-    width:100%;padding:13px;font-weight:600;margin-bottom:10px;}
-  button.ghost{background:transparent;color:var(--muted);border:1px dashed var(--line);
-    width:100%;padding:10px;font-size:13px;margin-bottom:10px;}
-  button:disabled{opacity:.5;}
-  .status{color:var(--muted);font-size:13px;margin:8px 2px 12px;min-height:18px;line-height:1.5;}
+  /* buttons */
+  button{font-size:15px;font-family:inherit;border-radius:11px;border:1px solid var(--line);
+    background:var(--card);color:var(--ink);padding:12px 14px;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;transition:all .18s;}
+  button:active{transform:translateY(1px);}
+  button.go{background:var(--brass);color:#171310;font-weight:600;border:1px solid var(--brass);
+    width:100%;padding:15px;font-size:15px;border-radius:12px;margin-bottom:10px;box-shadow:var(--shadow);}
+  button.go:active{background:var(--brass-soft);}
+  button.gold{background:transparent;color:var(--brass);border:1px solid var(--brass-soft);
+    width:100%;padding:13px;font-weight:500;margin-bottom:10px;}
+  button.gold:active{background:rgba(184,148,95,.08);}
+  button.ghost{background:transparent;color:var(--muted);border:1px solid var(--line);
+    width:100%;padding:11px;font-size:13px;margin-bottom:10px;}
+  button:disabled{opacity:.45;pointer-events:none;}
+  .status{color:var(--muted);font-size:13px;margin:10px 2px 14px;min-height:18px;line-height:1.55;}
 
   /* flags */
-  .flags{margin-bottom:14px;}
-  .flag{font-size:12.5px;border-radius:10px;padding:9px 11px;margin-bottom:6px;
-    background:var(--card2);border:1px solid var(--line);line-height:1.5;}
-  .flag.obj{border-color:var(--red);color:#f2c4c4;}
-  .flag.not{border-color:var(--gold);color:#e8d3a8;}
+  .flags{margin-bottom:16px;}
+  .flag{font-size:12.5px;border-radius:10px;padding:11px 13px;margin-bottom:7px;
+    background:var(--card2);border:1px solid var(--line);line-height:1.55;
+    display:flex;gap:9px;align-items:flex-start;}
+  .flag svg{margin-top:1px;color:var(--muted);}
+  .flag.obj{border-color:rgba(193,123,114,.4);color:#d9b0aa;}
+  .flag.obj svg{color:var(--red);}
+  .flag.not{border-color:rgba(184,148,95,.35);color:#cbb488;}
+  .flag.not svg{color:var(--brass);}
 
-  /* tabs */
-  .tabs{display:flex;gap:6px;margin-bottom:12px;overflow-x:auto;}
-  .tab{flex:1;text-align:center;padding:9px 4px;border-radius:10px;font-size:13px;
-    color:var(--muted);border:1px solid var(--line);background:var(--card2);white-space:nowrap;}
-  .tab.on{color:var(--gold);border-color:var(--gold);font-weight:700;}
+  /* tabs — quiet underlined nav, no bubbles */
+  .tabs{display:flex;gap:2px;margin:0 -4px 18px;padding:0 4px 1px;overflow-x:auto;
+    border-bottom:1px solid var(--line);scrollbar-width:none;}
+  .tabs::-webkit-scrollbar{display:none;}
+  .tab{flex:0 0 auto;text-align:center;padding:10px 13px 12px;font-size:13.5px;
+    color:var(--muted);background:none;border:none;white-space:nowrap;position:relative;
+    font-weight:500;letter-spacing:.01em;transition:color .18s;cursor:pointer;}
+  .tab:active{color:var(--ink);}
+  .tab.on{color:var(--ink);}
+  .tab.on::after{content:"";position:absolute;left:9px;right:9px;bottom:-1px;height:2px;
+    background:var(--brass);border-radius:2px 2px 0 0;}
   .pane{display:none;} .pane.on{display:block;}
 
-  /* ledger */
-  details.day{background:var(--card);border:1px solid var(--line);border-radius:14px;
-    margin-bottom:10px;overflow:hidden;}
-  details.day>summary{list-style:none;cursor:pointer;padding:12px 14px;
-    display:flex;justify-content:space-between;align-items:center;gap:8px;}
-  details.day>summary::-webkit-details-marker{display:none;}
-  .daydate{font-weight:700;font-size:14.5px;}
-  .daymeta{font-size:11.5px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;}
-  .leg{border-top:1px solid var(--line);padding:9px 14px;font-size:13px;}
-  .legtop{display:flex;justify-content:space-between;gap:8px;align-items:baseline;}
-  .legname{font-weight:600;}
-  .legsub{color:var(--muted);font-size:11.5px;margin-top:2px;font-family:ui-monospace,Menlo,monospace;}
-  .chip{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;
-    border:1px solid var(--line);white-space:nowrap;}
-  .chip.win{color:var(--green);border-color:var(--green2);}
-  .chip.place{color:var(--gold);border-color:var(--gold);}
-  .chip.lose{color:#b98a8a;border-color:#5a3a3a;}
-  .chip.pending{color:var(--blue);border-color:#2a3a4d;}
-  .chip.refund{color:var(--muted);}
-  details.leginfo>summary{list-style:none;cursor:pointer;color:var(--blue);font-size:11.5px;margin-top:4px;}
-  details.leginfo>summary::-webkit-details-marker{display:none;}
-  .legreason{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.5;
-    background:var(--card2);border-radius:8px;padding:8px;}
-
-  /* days + notes */
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
-    padding:12px 14px;margin-bottom:10px;font-size:13px;line-height:1.55;}
-  .card h3{margin:0 0 4px;font-size:14.5px;}
-  .kv{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted);margin:2px 0;}
-  .kv b{color:var(--ink);}
-  details.more>summary{list-style:none;cursor:pointer;color:var(--blue);font-size:12px;margin-top:6px;}
+  /* cards */
+  .card{background:var(--card);border:1px solid var(--line);border-radius:13px;
+    padding:15px 16px;margin-bottom:11px;font-size:13px;line-height:1.6;box-shadow:var(--shadow);}
+  .card h3{margin:0 0 6px;font-size:15px;font-weight:600;letter-spacing:-0.01em;
+    display:flex;align-items:center;gap:8px;}
+  .card h3 svg{color:var(--brass);}
+  .kv{font-variant-numeric:tabular-nums;font-size:12.5px;color:var(--muted);margin:3px 0;line-height:1.6;}
+  .kv b{color:var(--ink);font-weight:600;}
+  details.more>summary{list-style:none;cursor:pointer;color:var(--brass);font-size:12.5px;
+    margin-top:8px;font-weight:500;}
   details.more>summary::-webkit-details-marker{display:none;}
-  .lesson{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.55;}
+  .lesson{font-size:12.5px;color:var(--muted);margin-top:8px;line-height:1.6;}
 
-  table{width:100%;border-collapse:collapse;font-size:12px;margin-top:6px;}
-  th,td{text-align:right;padding:5px 6px;border-bottom:1px solid var(--line);
+  /* ledger */
+  details.day{background:var(--card);border:1px solid var(--line);border-radius:13px;
+    margin-bottom:9px;overflow:hidden;box-shadow:var(--shadow);}
+  details.day>summary{list-style:none;cursor:pointer;padding:14px 16px;
+    display:flex;justify-content:space-between;align-items:center;gap:10px;}
+  details.day>summary::-webkit-details-marker{display:none;}
+  .daydate{font-weight:600;font-size:14.5px;letter-spacing:-0.01em;}
+  .daymeta{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;
+    font-family:ui-monospace,Menlo,monospace;text-align:right;}
+  .leg{border-top:1px solid var(--line);padding:11px 16px;font-size:13px;}
+  .legtop{display:flex;justify-content:space-between;gap:10px;align-items:baseline;}
+  .legname{font-weight:500;}
+  .legsub{color:var(--muted);font-size:11.5px;margin-top:3px;font-variant-numeric:tabular-nums;
     font-family:ui-monospace,Menlo,monospace;}
-  th:first-child,td:first-child{text-align:left;font-family:inherit;}
-  th{color:var(--muted);font-weight:600;font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;}
-  td.neg{color:var(--red);} td.pos{color:var(--green);}
+  .chip{font-size:10px;font-weight:600;padding:3px 9px;border-radius:6px;
+    border:1px solid var(--line);white-space:nowrap;letter-spacing:.03em;text-transform:uppercase;}
+  .chip.win{color:var(--green);border-color:rgba(127,168,127,.4);background:rgba(127,168,127,.06);}
+  .chip.place{color:var(--brass);border-color:rgba(184,148,95,.4);background:rgba(184,148,95,.06);}
+  .chip.lose{color:var(--red);border-color:rgba(193,123,114,.35);}
+  .chip.pending{color:var(--blue);border-color:rgba(127,149,168,.4);background:rgba(127,149,168,.06);}
+  .chip.refund{color:var(--muted);}
+  details.leginfo>summary{list-style:none;cursor:pointer;color:var(--brass);font-size:11.5px;
+    margin-top:6px;font-weight:500;}
+  details.leginfo>summary::-webkit-details-marker{display:none;}
+  .legreason{font-size:12px;color:var(--muted);margin-top:7px;line-height:1.6;
+    background:var(--card2);border-radius:8px;padding:10px;border:1px solid var(--line);}
 
-  /* quill */
-  .qgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px;}
+  /* tables — aligned figures */
+  table{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px;}
+  th,td{text-align:right;padding:7px 8px;border-bottom:1px solid var(--line);
+    font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace;}
+  th:first-child,td:first-child{text-align:left;font-family:inherit;}
+  th{color:var(--faint);font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:.09em;}
+  td{color:var(--ink);}
+  td.neg{color:var(--red);} td.pos{color:var(--green);}
+  tr:last-child td{border-bottom:none;}
+
+  /* quill forms */
+  .qgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;}
   .qgrid .wide{grid-column:1/-1;}
-  .quill input,.quill select,.quill textarea{width:100%;font-size:14px;border-radius:10px;
-    border:1px solid var(--line);background:var(--card2);color:var(--ink);padding:10px 11px;}
-  .quill textarea{min-height:64px;resize:vertical;}
-  .quill label{display:block;font-size:10.5px;color:var(--muted);letter-spacing:.5px;
-    text-transform:uppercase;margin:0 0 3px 2px;}
-  .qbtn{background:var(--green);color:#04210f;font-weight:700;border:none;width:100%;
-    padding:13px;font-size:15px;border-radius:12px;margin-top:10px;}
-  .qbtn:active{background:var(--green2);}
-  .qbtn.gold{background:transparent;color:var(--gold);border:1px solid var(--gold);}
-  .qbtn.small{padding:9px;font-size:13px;}
+  .quill input,.quill select,.quill textarea{width:100%;font-size:15px;font-family:inherit;
+    border-radius:10px;border:1px solid var(--line);background:var(--card2);color:var(--ink);
+    padding:11px 12px;transition:border-color .18s;-webkit-appearance:none;appearance:none;}
+  .quill input:focus,.quill select:focus,.quill textarea:focus{outline:none;border-color:var(--brass-soft);}
+  .quill select{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%238b8d8a' fill='none' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");background-repeat:no-repeat;background-position:right 12px center;padding-right:32px;}
+  .quill textarea{min-height:66px;resize:vertical;line-height:1.5;}
+  .quill label{display:block;font-size:10px;color:var(--faint);letter-spacing:.09em;
+    text-transform:uppercase;margin:0 0 5px 1px;font-weight:500;}
+  .qbtn{background:var(--brass);color:#171310;font-weight:600;border:1px solid var(--brass);width:100%;
+    padding:13px;font-size:14.5px;border-radius:11px;margin-top:12px;font-family:inherit;
+    display:inline-flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;transition:all .18s;}
+  .qbtn:active{background:var(--brass-soft);transform:translateY(1px);}
+  .qbtn.gold{background:transparent;color:var(--brass);border:1px solid var(--brass-soft);}
+  .qbtn.gold:active{background:rgba(184,148,95,.08);}
+  .qbtn.small{padding:10px;font-size:13px;}
+  .qbtn:disabled{opacity:.45;pointer-events:none;}
   .batchleg{display:flex;justify-content:space-between;align-items:center;gap:8px;
-    border-top:1px solid var(--line);padding:8px 2px;font-size:12.5px;}
-  .batchleg .x{color:var(--red);font-weight:700;padding:4px 10px;background:none;border:none;font-size:14px;}
-  .pend{border-top:1px solid var(--line);padding:10px 2px;}
-  .pend .who{font-size:13px;font-weight:600;}
-  .pend .sub{font-size:11.5px;color:var(--muted);font-family:ui-monospace,Menlo,monospace;margin:2px 0 7px;}
-  .pendrow{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:6px;}
-  .qmsg{font-size:12.5px;color:var(--muted);margin-top:8px;line-height:1.5;min-height:16px;}
-  .qmsg.ok{color:var(--green);} .qmsg.err{color:var(--red);}
+    border-top:1px solid var(--line);padding:10px 2px;font-size:12.5px;}
+  .batchleg .x{color:var(--red);font-weight:600;padding:4px 10px;background:none;border:none;font-size:15px;cursor:pointer;}
+  .pend{border-top:1px solid var(--line);padding:12px 2px;}
+  .pend .who{font-size:13px;font-weight:500;}
+  .pend .sub{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums;
+    font-family:ui-monospace,Menlo,monospace;margin:3px 0 9px;}
+  .pendrow{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:7px;}
+  .qmsg{font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.6;min-height:16px;}
+  .qmsg.ok{color:var(--sage);} .qmsg.err{color:var(--red);}
 
   /* tooltips */
-  .tip{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;
-    border-radius:50%;border:1px solid var(--muted);color:var(--muted);font-size:11px;
-    font-weight:700;margin-left:6px;cursor:pointer;vertical-align:middle;user-select:none;
-    font-family:Georgia,serif;line-height:1;}
-  .tip:active{background:var(--gold);color:#04210f;border-color:var(--gold);}
+  .tip{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;
+    border-radius:50%;border:1px solid var(--faint);color:var(--faint);font-size:10px;
+    font-weight:600;margin-left:7px;cursor:pointer;vertical-align:middle;user-select:none;line-height:1;transition:all .18s;}
+  .tip:active{background:var(--brass);color:#171310;border-color:var(--brass);}
   .tipbubble{display:none;font-size:12px;color:var(--ink);background:var(--card2);
-    border:1px solid var(--gold);border-radius:10px;padding:9px 11px;margin:8px 0 2px;
-    line-height:1.55;}
+    border:1px solid var(--brass-soft);border-radius:10px;padding:11px 13px;margin:9px 0 2px;line-height:1.6;}
   .tipbubble.on{display:block;}
 
   /* guide */
-  .guide h2{font-family:Georgia,serif;font-size:19px;margin:18px 0 8px;color:var(--gold);}
-  .guide h2:first-child{margin-top:4px;}
-  .guide .clock{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:12px;
-    color:#04210f;background:var(--gold);border-radius:6px;padding:2px 8px;margin-bottom:6px;font-weight:700;}
+  .guide .lead{font-size:14px;line-height:1.7;color:var(--ink);margin-bottom:16px;font-weight:400;}
+  .guide h2{font-weight:600;font-size:16px;margin:24px 0 10px;color:var(--ink);
+    letter-spacing:-0.01em;display:flex;align-items:center;gap:9px;}
+  .guide h2 svg{color:var(--brass);}
+  .guide h2:first-child{margin-top:6px;}
+  .guide .clock{display:inline-flex;align-items:center;gap:6px;font-size:11px;
+    color:var(--brass);border:1px solid var(--brass-soft);border-radius:7px;padding:4px 10px;
+    margin-bottom:9px;font-weight:500;letter-spacing:.03em;font-variant-numeric:tabular-nums;}
   .guide .step{background:var(--card);border:1px solid var(--line);border-radius:12px;
-    padding:13px 15px;margin-bottom:10px;}
-  .guide .step h3{margin:0 0 4px;font-size:14.5px;}
-  .guide .step p{margin:6px 0 0;font-size:13px;line-height:1.6;color:var(--ink);}
-  .guide .step .why{color:var(--muted);font-size:12.5px;font-style:italic;margin-top:7px;line-height:1.55;}
-  .guide .tap{display:inline-block;font-size:11px;font-weight:700;color:var(--green);
-    border:1px solid var(--green2);border-radius:999px;padding:2px 9px;margin:2px 4px 2px 0;}
-  .guide .lead{font-size:13.5px;line-height:1.65;color:var(--ink);margin-bottom:14px;}
-  .guide .lore{background:var(--card2);border-left:2px solid var(--gold);border-radius:0 8px 8px 0;
-    padding:10px 13px;margin:12px 0;font-size:12.5px;line-height:1.6;color:var(--muted);}
-  .guide .lamp-key{display:flex;gap:8px;align-items:flex-start;margin:5px 0;font-size:12.5px;line-height:1.5;}
-  .guide .dot{width:14px;height:14px;border-radius:50%;flex-shrink:0;margin-top:2px;}
-  .guide .dot.g{background:var(--green);} .guide .dot.a{background:var(--amber);} .guide .dot.r{background:var(--red);}
+    padding:15px 16px;margin-bottom:10px;box-shadow:var(--shadow);}
+  .guide .step h3{margin:0 0 7px;font-size:14.5px;font-weight:600;letter-spacing:-0.01em;}
+  .guide .step p{margin:7px 0 0;font-size:13px;line-height:1.65;color:var(--ink);}
+  .guide .step .why{color:var(--muted);font-size:12.5px;margin-top:9px;line-height:1.6;
+    padding-left:11px;border-left:2px solid var(--brass-soft);}
+  .guide .tap{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;
+    color:var(--brass);border:1px solid var(--brass-soft);border-radius:7px;padding:3px 9px;margin:3px 5px 3px 0;letter-spacing:.01em;}
+  .guide .lore{background:var(--card2);border-left:2px solid var(--brass);border-radius:0 9px 9px 0;
+    padding:12px 15px;margin:14px 0;font-size:12.5px;line-height:1.65;color:var(--muted);}
+  .guide .lamp-key{display:flex;gap:10px;align-items:flex-start;margin:7px 0;font-size:12.5px;line-height:1.55;}
+  .guide .dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;margin-top:4px;}
+  .guide .dot.g{background:var(--sage);} .guide .dot.a{background:var(--amber);} .guide .dot.r{background:var(--red);}
 
   /* doctor */
-  .doctor{background:var(--card2);border:1px solid var(--line);border-radius:12px;
-    padding:0;margin-top:18px;}
-  .doctor>summary{list-style:none;cursor:pointer;padding:11px 14px;font-size:12.5px;
-    color:var(--muted);letter-spacing:.5px;}
+  .doctor{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:0;margin-top:20px;}
+  .doctor>summary{list-style:none;cursor:pointer;padding:13px 15px;font-size:12.5px;
+    color:var(--muted);letter-spacing:.03em;display:flex;align-items:center;gap:8px;font-weight:500;}
   .doctor>summary::-webkit-details-marker{display:none;}
-  .doctor[open]>summary{color:var(--gold);border-bottom:1px solid var(--line);}
+  .doctor>summary svg{color:var(--muted);}
+  .doctor[open]>summary{color:var(--brass);border-bottom:1px solid var(--line);}
+  .doctor[open]>summary svg{color:var(--brass);}
   .tracelog{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;
     color:var(--muted);white-space:pre-wrap;word-break:break-word;margin:0;
-    padding:10px 14px;max-height:220px;overflow:auto;line-height:1.6;}
-  .doctor .qbtn{width:calc(100% - 28px);margin:4px 14px 14px;}
+    padding:12px 15px;max-height:220px;overflow:auto;line-height:1.7;}
+  .doctor .qbtn{width:calc(100% - 30px);margin:6px 15px 15px;}
 
-  footer{color:var(--muted);font-size:12px;margin-top:22px;line-height:1.6;
-    border-top:1px solid var(--line);padding-top:12px;}
+  footer{color:var(--faint);font-size:11.5px;margin-top:28px;line-height:1.7;
+    border-top:1px solid var(--line);padding-top:16px;}
+  footer .serif{color:var(--brass);font-weight:600;}
 
+  /* gate */
   #gate{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;
-    align-items:center;justify-content:center;gap:14px;padding:24px;z-index:9999;}
-  #gate h2{font-family:Georgia,serif;font-size:20px;margin:0;}
+    align-items:center;justify-content:center;gap:16px;padding:24px;z-index:9999;}
+  #gate .glogo{color:var(--brass);margin-bottom:2px;}
+  #gate h2{font-weight:300;font-size:22px;margin:0;letter-spacing:-0.01em;}
+  #gate h2 b{font-weight:600;color:var(--brass);}
   #gate p{color:var(--muted);font-size:13px;margin:0;text-align:center;}
-  #gate input{font-size:16px;border-radius:12px;border:1px solid var(--line);
-    background:var(--card);color:var(--ink);padding:13px 14px;width:100%;max-width:280px;}
-  #gate button{background:var(--green);color:#04210f;font-weight:700;border:none;
-    padding:13px 24px;font-size:16px;border-radius:12px;width:100%;max-width:280px;}
+  #gate input{font-size:16px;border-radius:11px;border:1px solid var(--line);
+    background:var(--card);color:var(--ink);padding:13px 14px;width:100%;max-width:280px;font-family:inherit;}
+  #gate input:focus{outline:none;border-color:var(--brass-soft);}
+  #gate button{background:var(--brass);color:#171310;font-weight:600;border:none;
+    padding:13px 24px;font-size:15px;border-radius:11px;width:100%;max-width:280px;font-family:inherit;cursor:pointer;}
   #gateErr{color:var(--amber);font-size:13px;min-height:16px;}
   #app{display:none;}
-  @media (prefers-reduced-motion: reduce){ .bulb{transition:none;} }
+  @media (prefers-reduced-motion: reduce){*{transition:none!important;}}
+  @media (max-width:400px){
+    body{padding:16px 12px 36px;}
+    .figs{grid-template-columns:repeat(3,1fr);}
+    .fig .v{font-size:16px;}
+    .pendrow{grid-template-columns:1fr;gap:5px;}
+    .tab{padding:10px 11px 12px;font-size:13px;}
+  }
 </style>
 </head>
 <body>
   <div id="gate">
-    <h2>The Stewards' Room</h2>
+    <svg class="ic lg glogo" viewBox="0 0 24 24" width="34" height="34"><path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg>
+    <h2>The Stewards&rsquo; <b>Room</b></h2>
     <p>Enter password to continue.</p>
     <input id="gatePass" type="password" placeholder="Password" autocomplete="current-password" />
     <button id="gateBtn">Unlock</button>
@@ -209,8 +262,8 @@
 
   <div id="app">
     <div class="mast">
-      <h1>The Stewards&rsquo; Room</h1>
-      <div class="sub">The Outsider Method, digitised. Phase 1: the vault. Every leg, every lesson, every cent, held in Redis and audited on demand.</div>
+      <h1>The Stewards&rsquo; <b>Room</b></h1>
+      <div class="sub">The Outsider Method, digitised. Every leg, every lesson, every cent, held in the vault and audited on demand.</div>
     </div>
 
     <div class="lamps" id="lamps">
@@ -218,7 +271,7 @@
       <div class="lamp" id="lampLedger"><div class="bulb"></div><div class="lbl">Ledger</div><div class="st">&mdash;</div></div>
       <div class="lamp" id="lampRecon"><div class="bulb"></div><div class="lbl">Recon</div><div class="st">&mdash;</div></div>
     </div>
-    <div class="verdict" id="verdict">STEWARDS&rsquo; INQUIRY NOT YET HELD</div>
+    <div class="verdict" id="verdict">Inquiry not yet held</div>
 
     <div class="figs" id="figs" style="display:none"></div>
 
@@ -248,7 +301,7 @@
     <div class="pane" id="pane-guide"></div>
 
     <details id="doctor" class="doctor">
-      <summary>Doctor &mdash; boot trace &amp; diagnostics</summary>
+      <summary><svg class="ic" viewBox="0 0 24 24"><path d="M6 3v6a4 4 0 0 0 8 0V3"/><path d="M10 13v3a4 4 0 0 0 8 0v-1"/><circle cx="18" cy="12" r="2"/></svg>Doctor &middot; boot trace &amp; diagnostics</summary>
       <pre id="traceLog" class="tracelog">(trace empty)</pre>
       <button class="qbtn gold small" id="diagBtn" type="button">Run server diagnostics</button>
       <pre id="diagOut" class="tracelog" style="display:none"></pre>
@@ -256,7 +309,7 @@
 
     <footer>
       Raw rows are stored verbatim, exactly as the journal recorded them. All computed figures use the normalisation layer (Loss&rarr;Lose, Med-High&rarr;Medium-High) so the dashboards see the truth without rewriting history. Export rebuilds the four-sheet workbook from the vault as computed values.<br><br>
-      <span style="color:var(--gold);font-weight:600;" class="serif">The Stewards&rsquo; Room v1.7</span> &middot; Guide flow corrected: place, log pending, then recon &middot; the loop closes &middot; hammyLabs &middot; 06/07/2026
+      <span style="color:var(--brass);font-weight:600;" class="serif">The Stewards&rsquo; Room v1.8</span> &middot; Charcoal study: a cleaner, calmer room &middot; hammyLabs &middot; 07/07/2026
     </footer>
   </div>
 
@@ -284,6 +337,24 @@ document.getElementById("gatePass").addEventListener("keydown",e=>{ if(e.key==="
 const API="/api/stewards";
 const $=(id)=>document.getElementById(id);
 function esc(s){return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+
+// ---- line-art icon library (single-weight strokes, inherit currentColor) ----
+const IC={
+  tout:'<svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/><path d="M11 8v3l2 1"/></svg>',
+  stable:'<svg class="ic" viewBox="0 0 24 24"><path d="M4 10l8-6 8 6"/><path d="M6 10v10h12V10"/><path d="M10 20v-5h4v5"/></svg>',
+  settle:'<svg class="ic" viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M6 7l6-4 6 4"/><path d="M4 10h5l-2.5 5a2.5 2.5 0 0 1-5 0L4 10z"/><path d="M15 10h5l-2.5 5a2.5 2.5 0 0 1-5 0L15 10z"/></svg>',
+  clerk:'<svg class="ic" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>',
+  quill:'<svg class="ic" viewBox="0 0 24 24"><path d="M20 4C11 6 7 11 5 20"/><path d="M5 20c4-1 9-3 11-7"/><path d="M13 7l4 4"/></svg>',
+  paste:'<svg class="ic" viewBox="0 0 24 24"><rect x="6" y="4" width="12" height="16" rx="2"/><path d="M9 4V3h6v1"/><path d="M9 10h6M9 14h4"/></svg>',
+  wrap:'<svg class="ic" viewBox="0 0 24 24"><path d="M4 5h16"/><path d="M4 5v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V5"/><path d="M9 11l2 2 4-4"/></svg>',
+  book:'<svg class="ic" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2V5z"/><path d="M18 3v18"/></svg>',
+  clock:'<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>',
+  tag:'<svg class="ic" viewBox="0 0 24 24"><path d="M12 3H5a2 2 0 0 0-2 2v7l9 9 9-9-9-9z"/><circle cx="8" cy="8" r="1.2"/></svg>',
+  chart:'<svg class="ic" viewBox="0 0 24 24"><path d="M4 20V4"/><path d="M4 20h16"/><path d="M8 16v-4M12 16V8M16 16v-6"/></svg>',
+  compass:'<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5 5-2z"/></svg>',
+  door:'<svg class="ic" viewBox="0 0 24 24"><path d="M6 3h12v18H6z"/><path d="M14 12v.5"/></svg>',
+  scales:'<svg class="ic" viewBox="0 0 24 24"><path d="M12 3v18M7 21h10"/><path d="M5 6l7-1 7 1"/><path d="M3 11l2-5 2 5a2 2 0 0 1-4 0z"/><path d="M17 11l2-5 2 5a2 2 0 0 1-4 0z"/></svg>'
+};
 function num(v){const n=parseFloat(v);return isFinite(n)?n:0;}
 function money(v){const n=Math.round(num(v)*100)/100;return (n<0?"-$":"$")+Math.abs(n).toFixed(2);}
 function normResult(v){const s=String(v==null?"":v).trim().toLowerCase();return s==="loss"?"lose":s;}
@@ -344,10 +415,10 @@ function lamp(id, cls, text){
 }
 function renderVerdict(a){
   const v=$("verdict");
-  if(!a){ v.className="verdict"; v.textContent="STEWARDS\u2019 INQUIRY NOT YET HELD"; return; }
+  if(!a){ v.className="verdict"; v.textContent="Inquiry not yet held"; return; }
   const obj=a.audit.flags.some(f=>f.startsWith("OBJECTION"))||!a.checksum.match;
   v.className="verdict "+(obj?"obj":"in");
-  v.textContent=obj?"OBJECTION \u2014 SEE FLAGS BELOW":"WEIGHED IN \u2014 ALL CLEAR";
+  v.textContent=obj?"Objection \u00b7 see flags below":"Weighed in \u00b7 all clear";
 }
 function renderLamps(a){
   if(!a){ lamp("lampVault","","Empty"); lamp("lampLedger","","\u2014"); lamp("lampRecon","","\u2014"); return; }
@@ -359,9 +430,11 @@ function renderLamps(a){
   lamp("lampRecon", p?"warn":"ok", p?p+" open ("+money(a.audit.model.pendingStake)+")":"Settled");
 }
 function renderFlags(flags){
+  const objIcon='<svg class="ic" viewBox="0 0 24 24"><path d="M12 4l9 16H3L12 4z"/><path d="M12 10v4"/><path d="M12 17.5v.5"/></svg>';
+  const notIcon='<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v.5"/><path d="M12 11.5v5"/></svg>';
   $("flags").innerHTML=(flags||[]).map(f=>{
-    const cls=f.startsWith("OBJECTION")?"obj":"not";
-    return '<div class="flag '+cls+'">'+esc(f)+'</div>';
+    const isObj=f.startsWith("OBJECTION");
+    return '<div class="flag '+(isObj?"obj":"not")+'">'+(isObj?objIcon:notIcon)+'<span>'+esc(f)+'</span></div>';
   }).join("");
 }
 function renderFigs(a){
@@ -591,12 +664,12 @@ function renderQuill(){
   let h="";
 
   // --- settle first: it is the most common evening job ---
-  h+='<div class="card quill"><h3>Settle results'+tip("Set each result and, for Win and Place legs, the total payout as SGPools shows it. Refund returns the stake and moves the leg to the Refund ledger. Commit writes it with a verified, snapshot-backed save.")+'</h3>';
+  h+='<div class="card quill"><h3>'+IC.settle+'Settle results'+tip("Set each result and, for Win and Place legs, the total payout as SGPools shows it. Refund returns the stake and moves the leg to the Refund ledger. Commit writes it with a verified, snapshot-backed save.")+'</h3>';
   if(!pending.length){ h+='<div class="lesson">No open legs. The book is fully settled.</div>'; }
   else{
     h+='<div class="lesson">Set each result, add the dividend for Win and Place legs (total payout for the stake, as SGPools shows it). Refund returns the stake and moves the leg to the Refund ledger, per journal convention.</div>';
     h+='<div style="border:1px dashed var(--gold);border-radius:12px;padding:12px;margin:10px 0 4px;">'+
-      '<div style="font-weight:700;font-size:13.5px;color:var(--gold);margin-bottom:4px;">Clerk of the Scales'+tip("Upload your SGPools transaction-history screenshots (and the account overview if you like). The clerk reads every horse-wagering row, matches each by receipt number to your open legs, and fills in the results and payouts for your review. It never commits by itself.")+'</div>'+
+      '<div style="font-weight:600;font-size:13.5px;color:var(--brass);margin-bottom:4px;display:flex;align-items:center;gap:7px;">'+IC.scales+'Clerk of the Scales'+tip("Upload your SGPools transaction-history screenshots (and the account overview if you like). The clerk reads every horse-wagering row, matches each by receipt number to your open legs, and fills in the results and payouts for your review. It never commits by itself.")+'</div>'+
       '<div class="lesson" style="margin-bottom:8px;">Upload the SGPools transaction history pages (screenshots or photos, several at once is fine) and the account overview if you have it. The clerk reads them, matches receipts to the open legs below, and fills in the results and payouts for your review. Nothing is written until you tap commit yourself.</div>'+
       '<input type="file" id="clerkFiles" accept="image/*" multiple style="width:100%;font-size:13px;color:var(--muted);" />'+
       '<button class="qbtn gold small" id="clerkBtn" type="button">Read &amp; reconcile uploads</button>'+
@@ -617,7 +690,7 @@ function renderQuill(){
   h+='<div class="qmsg" id="settleMsg"></div></div>';
 
   // --- log new legs ---
-  h+='<div class="card quill"><h3>Log new legs (at slip time)'+tip("Record legs here AFTER you have placed them on SGPools, so each one carries its real receipt. They land as Pending, the placed-and-open state. Date and meet stay sticky for a quick multi-leg night, or use the paste-JSON lane below, which is what the Stable feeds when you send a betlist across.")+'</h3>'+
+  h+='<div class="card quill"><h3>'+IC.quill+'Log new legs (at slip time)'+tip("Record legs here AFTER you have placed them on SGPools, so each one carries its real receipt. They land as Pending, the placed-and-open state. Date and meet stay sticky for a quick multi-leg night, or use the paste-JSON lane below, which is what the Stable feeds when you send a betlist across.")+'</h3>'+
     '<div class="qgrid">'+
     '<div><label>Date</label><input id="q-date" value="'+todayDDMM()+'" /></div>'+
     '<div><label>Meet</label><input id="q-meet" placeholder="e.g. South Africa (Turffontein)" /></div>'+
@@ -637,14 +710,14 @@ function renderQuill(){
     '<div class="qmsg" id="legMsg"></div></div>';
 
   // --- paste-a-slip fast lane ---
-  h+='<div class="card quill"><h3>Paste betlist JSON</h3>'+
+  h+='<div class="card quill"><h3>'+IC.paste+'Paste betlist JSON</h3>'+
     '<div class="lesson">Fast lane for slips built in chat: paste the vault-ready JSON block and commit. Accepts {"date":"dd/mm/yyyy","legs":[...]} or a bare array; the API validates every field before anything is written.</div>'+
     '<textarea id="q-json" placeholder=\'{"date":"'+todayDDMM()+'","legs":[{"meet":"...","raceNo":1,"horseNo":4,"horseName":"...","betType":"WIN","stake":10,"confidence":"Medium-High","reason":"..."}]}\'></textarea>'+
     '<button class="qbtn" id="jsonCommit">Validate &amp; commit JSON</button>'+
     '<div class="qmsg" id="jsonMsg"></div></div>';
 
   // --- day wrap + model note ---
-  h+='<div class="card quill"><h3>Day wrap'+tip("Record the day\u2019s meets, best and worst bets, and any lessons. Append a model note if a real rule emerges. These feed straight into tomorrow\u2019s proposal, so the model learns from its own graded record.")+'</h3>'+
+  h+='<div class="card quill"><h3>'+IC.wrap+'Day wrap'+tip("Record the day\u2019s meets, best and worst bets, and any lessons. Append a model note if a real rule emerges. These feed straight into tomorrow\u2019s proposal, so the model learns from its own graded record.")+'</h3>'+
     '<div class="qgrid">'+
     '<div><label>Date</label><input id="d-date" value="'+todayDDMM()+'" /></div>'+
     '<div><label>Meets label</label><input id="d-meets" placeholder="e.g. SA + France" /></div>'+
@@ -859,7 +932,7 @@ function srcChip(s){
 
 function renderMorning(msg){
   let h="";
-  h+='<div class="card quill"><h3>The Tout'+tip("The morning trawl. Runs automatically around 8am, or by hand here. It triages meets with the data-edge gate, deep-reads SGPools PDFs, gathers regional pundits, and pulls track weather, caching the whole pack so the room opens instantly.")+'</h3>'+
+  h+='<div class="card quill"><h3>'+IC.tout+'The Tout'+tip("The morning trawl. Runs automatically around 8am, or by hand here. It triages meets with the data-edge gate, deep-reads SGPools PDFs, gathers regional pundits, and pulls track weather, caching the whole pack so the room opens instantly.")+'</h3>'+
     '<div class="lesson">The morning trawl: triage with the data-edge gate applied in code, SGPools tipster PDFs deep-read, the scout manifest\u2019s pundit sources harvested per region, and weather pulled at every track. Runs by cron at 8am, or by hand right here. The pack below feeds our convergence session.</div>'+
     '<button class="qbtn" id="toutRun">Run the morning trawl now (60-120s)</button>'+
     '<div class="qmsg" id="toutMsg">'+(msg?esc(msg):"")+'</div></div>';
@@ -875,7 +948,7 @@ function renderMorning(msg){
     h+='<button class="qbtn gold small" id="toutCopy">Copy full pack (paste to Claude)</button></div>';
 
     // --- the Stable: propose a betlist from this pack ---
-    h+='<div class="card quill"><h3>The Stable'+tip("Reads the morning pack through the Charter, the ten locked rules from your own Model Notes, and drafts a betlist. It never places or writes anything. You review the draft, and every horse number is checked against the SGPools card, with anything unverifiable flagged UNCONFIRMED in red.")+'</h3>'+
+    h+='<div class="card quill"><h3>'+IC.stable+'The Stable'+tip("Reads the morning pack through the Charter, the ten locked rules from your own Model Notes, and drafts a betlist. It never places or writes anything. You review the draft, and every horse number is checked against the SGPools card, with anything unverifiable flagged UNCONFIRMED in red.")+'</h3>'+
       '<div class="lesson">Reads this pack through the Charter (the ten locked laws) and the recent lessons, then writes a betlist: flat stakes, WIN-leak fade, Medium-High bias, convergence-gated Trio, card-match verified. It proposes; you review and commit.</div>'+
       '<button class="qbtn" id="stableRun">Propose the betlist (brain, ~20-40s)</button>'+
       '<details class="more"><summary>Read the Charter</summary><div id="charterBox" class="lesson">Loading the constitution\u2026</div></details>'+
@@ -975,7 +1048,7 @@ function renderProposalInto(host){
   if(!proposal){ host.innerHTML=""; return; }
   const p=proposal;
   const c=p.counts||{};
-  let h='<div class="card"><h3>Proposed betlist '+esc(p.date)+'</h3>'+
+  let h='<div class="card"><h3>'+IC.stable+'Proposed betlist '+esc(p.date)+'</h3>'+
     '<div class="lesson" style="color:var(--ink)">'+esc(p.dayShape||"")+'</div>'+
     '<div class="kv" style="margin-top:6px">'+
       '<b>'+esc(c.win||0)+'</b> WIN &middot; <b>'+esc(c.pla||0)+'</b> PLA'+
@@ -1071,7 +1144,7 @@ function renderGuide(){
     'your behalf. Singapore Pools has no such door, and that is by design. The room is the brain and the bookkeeper; '+
     'your own thumb is always the hand that places and the signature that commits. Every write shows you what it did and proves it afterward.</div>';
 
-  h+='<h2>The morning</h2>';
+  h+='<h2>'+IC.clock+'The morning</h2>';
   h+='<div class="clock">~8:00am \u00b7 automatic</div>';
   h+=step("The Tout rides out",["nothing to do"],
     "While you are still asleep, a scheduled job wakes at eight and sends the touts to the gallops. It ranks every meet on Singapore Pools, applies the data-edge gate in code so blind meets are set aside, deep-reads the SGPools tipster PDFs, gathers the regional pundit sources, and pulls the weather at every track. All of it lands in the vault as the morning pack.",
@@ -1086,19 +1159,19 @@ function renderGuide(){
     "Read the proposal carefully, especially the gold enforcement box that shows every correction the law made to the brain\u2019s draft, and note any UNCONFIRMED legs. This is your considered read of the day\u2019s book before a single dollar is committed anywhere.",
     "the room proposes but you dispose. Reviewing before you place is the moment your own judgement sits on top of the model\u2019s, exactly as a trainer signs off on the stable\u2019s runners.");
 
-  h+='<h2>At the counter</h2>';
+  h+='<h2>'+IC.tag+'At the counter</h2>';
   h+='<div class="clock">when you place \u00b7 on Singapore Pools</div>';
   h+=step("Place the bets yourself first",["SGPools app"],
     "Before anything touches the vault, open the Singapore Pools app and place each leg exactly as the proposed slip reads, matching meet, race, horse number and bet type. Pay special attention to any UNCONFIRMED leg: check the race on the app before placing it, because that flag means the room could not verify the number against the card itself.",
     "SGPools is the single source of truth for what is actually on, and placing first is what mints the real receipt numbers. Those receipts are the anchor everything else hangs on, so they must exist before the leg is ever logged. The UNCONFIRMED flag exists because of a real past scare where a right horse was nearly placed on the wrong race. Better a flag than a mistake.");
 
-  h+='<h2>Logging the placed book</h2>';
+  h+='<h2>'+IC.quill+'Logging the placed book</h2>';
   h+='<div class="clock">right after you place \u00b7 in the Quill</div>';
   h+=step("Send to the Quill and log as pending",["Send betlist to the Quill","Validate & commit"],
     "Now that the bets are on, send the slip to the Quill. Send betlist to the Quill drops it into the paste lane, and Validate & commit writes each leg into the Bet Log with a status of Pending, which is the placed-and-open state that SGPools itself shows as an open bet. The Recon lamp turns amber to tell you the book is on and awaiting results.",
     "logging happens after placing, never before, so every pending leg carries its true slip-time context and can later be matched to its real receipt. Committing at slip-time is the standing rule that keeps the book honest, contiguous and gap-free.");
 
-  h+='<h2>The night, or the morning after</h2>';
+  h+='<h2>'+IC.scales+'The night, or the morning after</h2>';
   h+='<div class="clock">nighttime \u00b7 or early morning \u00b7 7:30am backstop</div>';
   h+=step("Submit the settled races for recon",["Quill tab","Clerk of the Scales","Read & reconcile uploads"],
     "Once the races have run, open your SGPools transaction history and screenshot the pages, plus the account overview if you like. You can do this at night, early the next morning, or by your 7:30am backstop if you have missed both earlier windows. In the Quill, the Clerk of the Scales reads every horse-wagering row, matches each by receipt number to your open pending legs, and fills in the results and payouts for you.",
@@ -1110,13 +1183,13 @@ function renderGuide(){
     "In the Quill\u2019s Day wrap panel, jot the meets label, the best and worst of the day, and any lessons. If a genuine rule emerges, append it as a model note. These feed straight back into tomorrow\u2019s proposal.",
     "the model gets smarter from its own graded record. A lesson written tonight quietly shapes the Stable\u2019s thinking tomorrow. This is the loop closing on itself.");
 
-  h+='<h2>Reading the lamps</h2>';
+  h+='<h2>'+IC.compass+'Reading the lamps</h2>';
   h+='<div class="step"><p>The three lamps at the top are the room\u2019s vital signs, borrowed from the racecourse \u201cweighed in\u201d signal that means all is correct and the dividends are safe to pay.</p>'+
     '<div class="lamp-key"><div class="dot g"></div><div><b>Green</b> \u2014 all clear. Vault sealed, ledger clean, book settled.</div></div>'+
     '<div class="lamp-key"><div class="dot a"></div><div><b>Amber</b> \u2014 attention, not alarm. Usually open legs awaiting settlement, or a harmless data notice.</div></div>'+
     '<div class="lamp-key"><div class="dot r"></div><div><b>Red</b> \u2014 an objection. Something failed to balance; the flags below the lamps will say what.</div></div></div>';
 
-  h+='<h2>The tabs at a glance</h2>';
+  h+='<h2>'+IC.book+'The tabs at a glance</h2>';
   h+='<div class="step">'+
     '<p><b>Morning</b> \u2014 the pack and the Stable, where each day begins.</p>'+
     '<p><b>Ledger</b> \u2014 every leg ever placed, grouped by day, with reasons and receipts preserved.</p>'+
