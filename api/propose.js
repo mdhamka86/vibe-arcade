@@ -344,6 +344,255 @@ module.exports = async (req, res) => {
       return res.status(200).json(JSON.parse(raw));
     }
 
+    // ---- THE STEWARDS' NOTEBOOK: draft lessons from the settled day ----
+    // Reads a settled day's book, computes its honest shape, and asks Claude to
+    // draft proposed ledger entries. It PROPOSES only. Each drafted lesson is
+    // reviewed and approved by the user, then written to the ledger with the
+    // "approved" author badge through the normal ledgeradd path. Nothing here
+    // ever writes to the ledger itself.
+    if (action === "draftlessons") {
+      if (req.method !== "POST")
+        return res.status(405).json({ error: "POST required" });
+      if (!AK)
+        return res
+          .status(500)
+          .json({ error: "ANTHROPIC_API_KEY missing (the notebook needs it)" });
+      const body = parseBody(req);
+
+      const [logRaw, dRaw] = await redis([
+        ["GET", "stw:betlog"],
+        ["GET", "stw:daily"],
+      ]);
+      if (!logRaw) return res.status(404).json({ error: "Vault not seeded yet" });
+      const log = JSON.parse(logRaw);
+      const daily = dRaw ? JSON.parse(dRaw) : [];
+
+      // local numeric helpers, kept self-contained
+      const num = (v) => {
+        const n = parseFloat(v);
+        return isFinite(n) ? n : 0;
+      };
+      const r2 = (v) => Math.round(num(v) * 100) / 100;
+      const normResult = (v) => {
+        const s = String(v == null ? "" : v).trim().toLowerCase();
+        return s === "loss" ? "lose" : s;
+      };
+      const dkey = (d) => {
+        const p = String(d || "").split("/");
+        return p.length === 3 ? p[2] + p[1] + p[0] : "";
+      };
+
+      // pick the day: explicit date, else the most recent day that is fully settled
+      let date = body.date ? String(body.date).trim() : null;
+      if (!date) {
+        const dates = [...new Set(log.map((b) => b.date))].sort((a, b) =>
+          dkey(b).localeCompare(dkey(a))
+        );
+        for (const d of dates) {
+          const model = log.filter(
+            (b) =>
+              b.date === d &&
+              String(b.ledger || "").trim().toLowerCase() === "model"
+          );
+          if (!model.length) continue;
+          const anyPending = model.some((b) => normResult(b.result) === "pending");
+          if (!anyPending) {
+            date = d;
+            break;
+          }
+        }
+      }
+      if (!date)
+        return res.status(409).json({
+          error:
+            "No fully settled day found to draft from. Settle the book first, then draft.",
+        });
+
+      const dayLegs = log.filter((b) => b.date === date);
+      const model = dayLegs.filter(
+        (b) => String(b.ledger || "").trim().toLowerCase() === "model"
+      );
+      const pending = model.filter((b) => normResult(b.result) === "pending");
+      if (pending.length)
+        return res.status(409).json({
+          error:
+            date +
+            " still has " +
+            pending.length +
+            " pending legs. Settle the day fully before drafting lessons.",
+          date,
+        });
+
+      // compute the honest shape of the day
+      const settled = model.filter((b) =>
+        ["win", "place", "lose"].includes(normResult(b.result))
+      );
+      const shapeOf = (legs) => {
+        const staked = r2(legs.reduce((a, b) => a + num(b.stake), 0));
+        const payout = r2(legs.reduce((a, b) => a + num(b.payout), 0));
+        return {
+          bets: legs.length,
+          staked,
+          payout,
+          net: r2(payout - staked),
+          roi: staked ? Math.round(((payout - staked) / staked) * 1000) / 10 : 0,
+          cashed: legs.filter((b) => num(b.payout) > 0).length,
+        };
+      };
+      const winLegs = settled.filter((b) => String(b.betType).trim() === "WIN");
+      const plaLegs = settled.filter((b) => String(b.betType).trim() === "PLA");
+      const byMeet = {};
+      settled.forEach((b) => {
+        (byMeet[b.meet] = byMeet[b.meet] || []).push(b);
+      });
+      const meetLines = Object.keys(byMeet).map((m) => {
+        const s = shapeOf(byMeet[m]);
+        return m + ": " + s.bets + " legs, net $" + s.net + " (" + s.roi + "% ROI)";
+      });
+      const blankedWin = winLegs
+        .filter((b) => num(b.payout) === 0)
+        .map((b) => b.horseName + " (" + b.meet + " R" + b.raceNo + ")");
+      const landedWin = winLegs
+        .filter((b) => num(b.payout) > 0)
+        .map(
+          (b) =>
+            b.horseName +
+            " ($" +
+            num(b.stake) +
+            "->$" +
+            num(b.payout) +
+            ")"
+        );
+      const conf = {};
+      settled.forEach((b) => {
+        const c =
+          String(b.confidence).trim() === "Med-High"
+            ? "Medium-High"
+            : String(b.confidence).trim() || "(none)";
+        conf[c] = conf[c] || { bets: 0, staked: 0, payout: 0 };
+        conf[c].bets++;
+        conf[c].staked += num(b.stake);
+        conf[c].payout += num(b.payout);
+      });
+      const confLines = Object.keys(conf).map((c) => {
+        const x = conf[c];
+        const net = r2(x.payout - x.staked);
+        const roi = x.staked ? Math.round((net / x.staked) * 1000) / 10 : 0;
+        return c + ": " + x.bets + " legs, " + roi + "% ROI";
+      });
+      const dayRow = daily.find((d) => d.date === date) || {};
+      const overall = shapeOf(settled);
+
+      const ch = await getCharter();
+      const lessons = await recentLessons();
+
+      const brief = [
+        "SETTLED DAY: " + date,
+        dayRow.meets ? "Meets: " + dayRow.meets : "",
+        "Overall (model legs): " +
+          overall.bets +
+          " bets, staked $" +
+          overall.staked +
+          ", net $" +
+          overall.net +
+          " (" +
+          overall.roi +
+          "% ROI), " +
+          overall.cashed +
+          " legs cashed.",
+        "WIN book: " + JSON.stringify(shapeOf(winLegs)),
+        "PLA book: " + JSON.stringify(shapeOf(plaLegs)),
+        "By meet:\n  " + meetLines.join("\n  "),
+        "Confidence bands (this day):\n  " + confLines.join("\n  "),
+        landedWin.length ? "WIN legs that landed: " + landedWin.join(", ") : "No WIN legs landed.",
+        blankedWin.length ? "WIN legs that blanked: " + blankedWin.join(", ") : "No WIN legs blanked.",
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      const system =
+        "You are the notebook of The Outsider Method, a disciplined horse-racing staking model run by Hammy. " +
+        "At night, after the day's book has settled, you read the results and draft honest lessons for the permanent Model Ledger. " +
+        "You are rigorous and self-critical, never flattering. A lesson is worth recording only if it teaches something real: a pattern confirmed, a rule that held or failed, a genuine surprise. " +
+        "On an ordinary day where the method simply did its job, it is correct and honest to draft NO lessons rather than manufacture one. Do not pad. Draw only on the data given; never invent figures. " +
+        "The proven spine of the model is already known: flat staking, fading overbet WIN favourites, milking the place pool on Medium-High convergence. Only flag these if this day genuinely reinforces or challenges them.";
+
+      const prompt =
+        "THE CHARTER (the model's current law, for context):\n" +
+        charterText(ch) +
+        (lessons.length
+          ? "\n\nRECENT LESSONS ALREADY ON THE RECORD (do not repeat these):\n- " +
+            lessons.join("\n- ")
+          : "") +
+        "\n\nTONIGHT'S SETTLED DAY:\n" +
+        brief +
+        "\n\nDraft any lessons this day genuinely teaches. Respond with ONLY minified JSON, no markdown fences, exactly:\n" +
+        '{"daySummary":"1-2 sentence honest read of how the day went",' +
+        '"lessons":[{"kind":"observation|amendment|trial|rule","change":"the lesson, one clear sentence","why":"the evidence from THIS day supporting it"}],' +
+        '"noLessonReason":"if lessons is empty, one sentence on why the day taught nothing new"}';
+
+      const cr = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": AK,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 3000,
+          system,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      if (!cr.ok) {
+        const t = await cr.text();
+        return res
+          .status(502)
+          .json({ error: "Claude HTTP " + cr.status + ": " + t.slice(0, 200) });
+      }
+      const cj = await cr.json();
+      const text = (cj.content || [])
+        .map((c) => (c.type === "text" ? c.text : ""))
+        .join("");
+      let parsed;
+      try {
+        parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+      } catch (e) {
+        return res
+          .status(502)
+          .json({ error: "Notebook reply was not clean JSON: " + text.slice(0, 200) });
+      }
+      const drafted = (Array.isArray(parsed.lessons) ? parsed.lessons : [])
+        .filter((l) => l && String(l.change || "").trim())
+        .map((l) => ({
+          kind: ["observation", "amendment", "trial", "rule"].includes(String(l.kind))
+            ? String(l.kind)
+            : "observation",
+          change: String(l.change).trim().slice(0, 4000),
+          why: String(l.why || "").trim().slice(0, 4000),
+        }));
+
+      const result = {
+        ok: true,
+        date,
+        daySummary: parsed.daySummary || "",
+        shape: {
+          overall,
+          win: shapeOf(winLegs),
+          pla: shapeOf(plaLegs),
+          meets: meetLines,
+        },
+        drafted,
+        noLessonReason: drafted.length ? "" : parsed.noLessonReason || "The day taught nothing new.",
+        generatedAt: new Date().toISOString(),
+      };
+      await redis([
+        ["SET", "stw:draftlessons:latest", JSON.stringify(result)],
+      ]);
+      return res.status(200).json(result);
+    }
+
     return res.status(400).json({ error: "Unknown action" });
   } catch (e) {
     return res.status(500).json({ error: String(e.message || e) });
