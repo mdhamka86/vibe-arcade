@@ -309,7 +309,7 @@
 
     <footer>
       Raw rows are stored verbatim, exactly as the journal recorded them. All computed figures use the normalisation layer (Loss&rarr;Lose, Med-High&rarr;Medium-High) so the dashboards see the truth without rewriting history. Export rebuilds the four-sheet workbook from the vault as computed values.<br><br>
-      <span style="color:var(--brass);font-weight:600;" class="serif">The Stewards&rsquo; Room v1.9</span> &middot; The Model Ledger, folded into Notes &middot; hammyLabs &middot; 07/07/2026
+      <span style="color:var(--brass);font-weight:600;" class="serif">The Stewards&rsquo; Room v2.0</span> &middot; The Stewards’ Notebook: lessons drafted from results, approved by you &middot; hammyLabs &middot; 07/07/2026
     </footer>
   </div>
 
@@ -817,6 +817,12 @@ function renderQuill(){
     '<div class="qmsg" id="jsonMsg"></div></div>';
 
   // --- day wrap + model note ---
+  h+='<div class="card quill"><h3>'+IC.quillpen+'Stewards\u2019 Notebook'+tip("After the book is settled, the room reads the day\u2019s results and drafts honest lessons for your review. You approve the ones that ring true and they enter the Model Ledger with an approved badge; you discard the rest. The room drafts, you sign. On an ordinary day it may rightly draft nothing.")+'</h3>'+
+    '<div class="lesson">Settle the day first, then let the room read the results and draft any lessons worth keeping. Nothing is recorded until you approve it.</div>'+
+    '<button class="qbtn" id="draftBtn" type="button">Draft tonight\u2019s lessons from the results</button>'+
+    '<div class="qmsg" id="draftMsg"></div>'+
+    '<div id="draftHost"></div></div>';
+
   h+='<div class="card quill"><h3>'+IC.wrap+'Day wrap'+tip("Record the day\u2019s meets, best and worst bets, and any lessons. Append a model note if a real rule emerges. These feed straight into tomorrow\u2019s proposal, so the model learns from its own graded record.")+'</h3>'+
     '<div class="qgrid">'+
     '<div><label>Date</label><input id="d-date" value="'+todayDDMM()+'" /></div>'+
@@ -991,6 +997,92 @@ function wireQuill(){
       if(await afterWrite("noteMsg",r,"Note appended ("+(r.noteCount||"?")+" total).")) $("n-text").value="";
     }catch(e){ qmsg("noteMsg","Failed: "+e.message,"err"); }
     finally{ $("noteBtn").disabled=false; }
+  });
+
+  wireNotebook();
+}
+
+// ---- The Stewards' Notebook: draft lessons from the settled day, approve into the ledger ----
+let draftedLessons=null;
+function wireNotebook(){
+  const btn=$("draftBtn");
+  if(!btn) return;
+  btn.addEventListener("click",async()=>{
+    btn.disabled=true;
+    qmsg("draftMsg","The room is reading the settled results\u2026 drafting any lessons worth keeping.");
+    try{
+      const r=await proposeApi("action=draftlessons",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"},90000);
+      if(r.error){ qmsg("draftMsg",r.error,"err"); draftedLessons=null; renderDrafts(); }
+      else{
+        draftedLessons=r;
+        if(r.drafted.length) qmsg("draftMsg","Read "+esc(r.date)+": "+r.drafted.length+" lesson"+(r.drafted.length===1?"":"s")+" drafted for your review.","ok");
+        else qmsg("draftMsg","Read "+esc(r.date)+": nothing new to record. "+esc(r.noLessonReason||""),"ok");
+        renderDrafts();
+      }
+    }catch(e){ qmsg("draftMsg","Failed: "+e.message,"err"); }
+    finally{ const b=$("draftBtn"); if(b) b.disabled=false; }
+  });
+}
+function renderDrafts(){
+  const host=$("draftHost");
+  if(!host) return;
+  if(!draftedLessons){ host.innerHTML=""; return; }
+  const d=draftedLessons;
+  let h="";
+  // honest day shape header
+  if(d.shape&&d.shape.overall){
+    const o=d.shape.overall;
+    h+='<div class="legreason" style="margin-top:10px"><b style="color:var(--brass)">'+esc(d.date)+':</b> '+esc(d.daySummary||"")+
+      '<br><span class="mono">net $'+esc(o.net)+' \u00b7 '+esc(o.roi)+'% ROI \u00b7 '+esc(o.cashed)+'/'+esc(o.bets)+' cashed</span></div>';
+  }
+  if(!d.drafted.length){
+    h+='<div class="lesson" style="margin-top:8px">The room drafted no lesson tonight, which is itself an honest verdict: an ordinary day where the method simply did its job. Nothing to approve.</div>';
+    host.innerHTML=h;
+    return;
+  }
+  h+='<div class="lesson" style="margin-top:10px;margin-bottom:2px;color:var(--faint);text-transform:uppercase;letter-spacing:.09em;font-size:11px;font-weight:500;">Drafted for your approval</div>';
+  d.drafted.forEach((l,i)=>{
+    h+='<div class="card" style="margin-bottom:8px" id="draft-'+i+'">'+
+      '<div class="legtop"><span class="legname">'+esc(l.change)+'</span><span class="chip refund">'+esc(l.kind)+'</span></div>'+
+      (l.why?'<div class="lesson">'+esc(l.why)+'</div>':'')+
+      '<div style="display:flex;gap:8px;margin-top:10px">'+
+        '<button class="qbtn small approve-draft" data-i="'+i+'" type="button" style="margin-top:0">Approve into ledger</button>'+
+        '<button class="qbtn gold small discard-draft" data-i="'+i+'" type="button" style="margin-top:0">Discard</button>'+
+      '</div>'+
+      '<div class="qmsg" id="draftrow-'+i+'"></div></div>';
+  });
+  host.innerHTML=h;
+
+  host.querySelectorAll(".approve-draft").forEach(b=>{
+    b.addEventListener("click",async()=>{
+      const i=parseInt(b.dataset.i,10);
+      const l=draftedLessons.drafted[i];
+      if(!l) return;
+      b.disabled=true;
+      const rowMsg=(t,c)=>{ const el=$("draftrow-"+i); if(el){ el.className="qmsg"+(c?" "+c:""); el.textContent=t; } };
+      rowMsg("Recording to the ledger\u2026");
+      try{
+        const r=await postApi("ledgeradd",{change:l.change,why:l.why,kind:l.kind,author:"approved"});
+        if(r.error){ rowMsg(r.error,"err"); b.disabled=false; }
+        else{
+          rowMsg("Approved as ledger entry #"+r.entry.seq+", stamped as your decision.","ok");
+          const card=$("draft-"+i); if(card){ card.style.opacity="0.55"; }
+          const disc=host.querySelector('.discard-draft[data-i="'+i+'"]'); if(disc) disc.style.display="none";
+          const s=await api("action=state&slice=all"); if(!s.error){ vault=s; renderNotes(); }
+          await runAudit();
+        }
+      }catch(e){ rowMsg("Failed: "+e.message,"err"); b.disabled=false; }
+    });
+  });
+  host.querySelectorAll(".discard-draft").forEach(b=>{
+    b.addEventListener("click",()=>{
+      const i=parseInt(b.dataset.i,10);
+      const card=$("draft-"+i);
+      if(card){ card.style.opacity="0.4"; }
+      const el=$("draftrow-"+i); if(el){ el.className="qmsg"; el.textContent="Discarded. Nothing was written."; }
+      const ap=host.querySelector('.approve-draft[data-i="'+i+'"]'); if(ap) ap.disabled=true;
+      b.disabled=true;
+    });
   });
 }
 
