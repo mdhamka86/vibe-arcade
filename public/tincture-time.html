@@ -185,13 +185,45 @@
   .linkRow:active{opacity:.6;}
 
   /* cellar rows */
+  .cellarRow{display:flex;flex-direction:column;gap:0;}
+  .cellarRow.proven{border-color:var(--amber);}
   .row{display:flex;align-items:center;justify-content:space-between;gap:12px;}
-  .row.proven{border-color:var(--amber);}
   .rowName{font-weight:600;font-size:15px;color:var(--sageDeep);display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
   .rowMeta{font-size:12.5px;margin-top:3px;}
   .starBtn{background:transparent;border:none;color:var(--line2);padding:4px;display:flex;transition:transform .1s;}
   .starBtn:active{transform:scale(1.2);}
   .starBtn.on{color:var(--amber);}
+
+  /* rating chip in the name row */
+  .chip.rate{border:1px solid transparent;}
+  .chip.rate.off{background:#f2e3df;color:#a6543f;}
+  .chip.rate.good{background:#e7efe4;color:#40663f;}
+  .chip.rate.great{background:var(--amberSoft);color:#8a5a1f;}
+
+  /* quick rating capture */
+  .rateRow{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
+  .rateLbl{font-size:13px;color:var(--muted);font-weight:500;}
+  .rateBtns{display:flex;gap:6px;}
+  .rateBtn{border:1px solid var(--line2);background:var(--surface);border-radius:20px;padding:7px 14px;font-size:13px;font-weight:600;color:var(--muted);transition:border-color .15s,color .15s,background .15s;}
+  .rateBtn:active{transform:scale(.96);}
+  .rateBtn.off:hover,.rateBtn.off:focus{border-color:#c98a78;color:#a6543f;}
+  .rateBtn.good:hover,.rateBtn.good:focus{border-color:var(--sageSoft);color:#40663f;}
+  .rateBtn.great:hover,.rateBtn.great:focus{border-color:var(--amber);color:#8a5a1f;}
+
+  /* saved note */
+  .savedNote{display:flex;gap:8px;align-items:flex-start;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);font-size:13px;color:var(--ink-soft,#57544d);line-height:1.45;}
+  .savedNote .ic{color:var(--sageSoft);margin-top:2px;flex-shrink:0;}
+
+  /* note editor */
+  .noteEditor{display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
+  .noteEditor .inp{flex:1;}
+  .noteEditor .btn{flex-shrink:0;}
+
+  /* row actions: mini buttons */
+  .rowActions{display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line);}
+  .miniBtn{display:inline-flex;align-items:center;gap:6px;background:transparent;border:1px solid var(--line2);border-radius:var(--rs);padding:8px 12px;font-size:12.5px;font-weight:600;color:var(--sageDeep);transition:border-color .15s,background .15s;}
+  .miniBtn:active{transform:scale(.97);}
+  .miniBtn:hover{border-color:var(--sage);background:#fbfaf5;}
 
   /* guides */
   .guideCard{display:flex;flex-direction:column;gap:12px;}
@@ -488,6 +520,26 @@ function App() {
       if (e.id === id) { var c = {}; for (var k in e) c[k] = e[k]; c.proven = !c.proven; return c; } return e;
     }));
   }
+  function rateBatch(id, rating) {
+    setLogbook(logbook.map(function (e) {
+      if (e.id === id) { var c = {}; for (var k in e) c[k] = e[k]; c.rating = rating; return c; } return e;
+    }));
+  }
+  function noteBatch(id, note) {
+    setLogbook(logbook.map(function (e) {
+      if (e.id === id) { var c = {}; for (var k in e) c[k] = e[k]; c.note = note; return c; } return e;
+    }));
+  }
+  function repeatBatch(entry) {
+    var now = Date.now();
+    var b2 = {
+      id: "b" + now, botanicalName: entry.botanicalName, track: entry.track, form: entry.form,
+      cannabinoid: entry.cannabinoid || null, temp: entry.temp, runMins: entry.runMins,
+      startedAt: now, endsAt: now + entry.runMins * 60000,
+      menstruumMl: entry.menstruumMl || null, source: entry.source || "", status: "steeping"
+    };
+    setBatches(batches.concat([b2])); setView("bench");
+  }
   function toggleKit(name) { var c = {}; for (var k in kitChecks) c[k] = kitChecks[k]; c[name] = !c[name]; setKitChecks(c); }
 
   return React.createElement("div", { className: "app" },
@@ -498,7 +550,7 @@ function App() {
         onNew: function () { setView("new"); }
       }) : null,
       view === "new" ? React.createElement(Wizard, { start: startBatch, cancel: function () { setView("bench"); } }) : null,
-      view === "log" ? React.createElement(Logbook, { logbook: logbook, toggleProven: toggleProven }) : null,
+      view === "log" ? React.createElement(Logbook, { logbook: logbook, toggleProven: toggleProven, rateBatch: rateBatch, noteBatch: noteBatch, repeatBatch: repeatBatch }) : null,
       view === "guides" ? React.createElement(Guides, null) : null,
       view === "kit" ? React.createElement(Kit, { kitChecks: kitChecks, toggleKit: toggleKit }) : null
     ),
@@ -768,6 +820,16 @@ function DecarbNote(props) {
 }
 
 /* ---------- Cellar ---------- */
+var RATINGS = [
+  { id: "off", label: "Off", cls: "off" },
+  { id: "good", label: "Good", cls: "good" },
+  { id: "great", label: "Great", cls: "great" }
+];
+function ratingMeta(id) {
+  for (var i = 0; i < RATINGS.length; i++) { if (RATINGS[i].id === id) return RATINGS[i]; }
+  return null;
+}
+
 function Logbook(props) {
   var logbook = props.logbook;
   return React.createElement("section", { className: "screen" },
@@ -779,16 +841,55 @@ function Logbook(props) {
         React.createElement("p", { className: "muted" }, "Pressed batches land here.")) :
       React.createElement("div", { className: "list" },
         logbook.map(function (e) {
-          return React.createElement("div", { key: e.id, className: "card row" + (e.proven ? " proven" : "") },
-            React.createElement("div", { className: "rowMain" },
-              React.createElement("div", { className: "rowName" }, e.botanicalName,
-                e.cannabinoid ? React.createElement("span", { className: "chip test" }, "test") : null),
-              React.createElement("div", { className: "rowMeta muted" },
-                (e.track === "spirit" ? "Spirit" : "Oil") + " \u00b7 " + e.temp + "\u00b0C \u00b7 " + fmtMins(e.runMins) +
-                (e.yieldMl ? " \u00b7 ~" + e.yieldMl + "ml" : ""))),
-            React.createElement(ActionButton, { className: "starBtn" + (e.proven ? " on" : ""), onAct: function () { props.toggleProven(e.id); } },
-              React.createElement(Icon, { name: "star", size: 20, weight: e.proven ? 1.8 : 1.5 })));
+          return React.createElement(CellarRow, {
+            key: e.id, entry: e,
+            toggleProven: props.toggleProven, rateBatch: props.rateBatch,
+            noteBatch: props.noteBatch, repeatBatch: props.repeatBatch
+          });
         }))
+  );
+}
+
+function CellarRow(props) {
+  var e = props.entry;
+  var no = useState(false); var noteOpen = no[0]; var setNoteOpen = no[1];
+  var nt = useState(e.note || ""); var noteVal = nt[0]; var setNoteVal = nt[1];
+  var rated = e.rating ? ratingMeta(e.rating) : null;
+
+  function saveNote() { props.noteBatch(e.id, noteVal); setNoteOpen(false); }
+
+  return React.createElement("div", { className: "card cellarRow" + (e.proven ? " proven" : "") },
+    React.createElement("div", { className: "row" },
+      React.createElement("div", { className: "rowMain" },
+        React.createElement("div", { className: "rowName" }, e.botanicalName,
+          e.cannabinoid ? React.createElement("span", { className: "chip test" }, "test") : null,
+          rated ? React.createElement("span", { className: "chip rate " + rated.cls }, rated.label) : null),
+        React.createElement("div", { className: "rowMeta muted" },
+          (e.track === "spirit" ? "Spirit" : "Oil") + " \u00b7 " + e.temp + "\u00b0C \u00b7 " + fmtMins(e.runMins) +
+          (e.yieldMl ? " \u00b7 ~" + e.yieldMl + "ml" : ""))),
+      React.createElement(ActionButton, { className: "starBtn" + (e.proven ? " on" : ""), onAct: function () { props.toggleProven(e.id); } },
+        React.createElement(Icon, { name: "star", size: 20, weight: e.proven ? 1.8 : 1.5 }))),
+
+    !rated ? React.createElement("div", { className: "rateRow" },
+      React.createElement("span", { className: "rateLbl" }, "How did it turn out?"),
+      React.createElement("div", { className: "rateBtns" },
+        RATINGS.map(function (r) {
+          return React.createElement(ActionButton, { key: r.id, className: "rateBtn " + r.cls, onAct: function () { props.rateBatch(e.id, r.id); } }, r.label);
+        }))) : null,
+
+    e.note ? React.createElement("div", { className: "savedNote" },
+      React.createElement(Icon, { name: "book", size: 13, weight: 1.6 }),
+      React.createElement("span", null, e.note)) : null,
+
+    noteOpen ? React.createElement("div", { className: "noteEditor" },
+      React.createElement("input", { className: "inp", type: "text", value: noteVal, placeholder: "colour, smell, yield...", onChange: function (ev) { setNoteVal(ev.target.value); } }),
+      React.createElement(ActionButton, { className: "btn primary sm", onAct: saveNote }, "Save")) : null,
+
+    React.createElement("div", { className: "rowActions" },
+      React.createElement(ActionButton, { className: "miniBtn", onAct: function () { props.repeatBatch(e); } },
+        React.createElement(Icon, { name: "flame", size: 14, weight: 1.6 }), "Brew again"),
+      !noteOpen ? React.createElement(ActionButton, { className: "miniBtn", onAct: function () { setNoteOpen(true); } },
+        React.createElement(Icon, { name: "book", size: 14, weight: 1.6 }), e.note ? "Edit note" : "Add note") : null)
   );
 }
 
