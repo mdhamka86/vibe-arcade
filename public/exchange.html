@@ -182,8 +182,9 @@ function usMarketOpen(){
 const fmt=(n)=> (n==null||n==='')?'—':(typeof n==='number'?n.toLocaleString(undefined,{maximumFractionDigits:2}):n);
 
 // ---------- Gem idea card ----------
-function GemCard({idea,ledgerId,onPass,onFlag}){
+function GemCard({idea,ledgerId,onPass,onFlag,onTake}){
   const [busy,setBusy]=useState(false);
+  const [taken,setTaken]=useState(false);
   const conv=(idea.conviction||'').toUpperCase();
   const convCls='conv-'+conv.replace(/[^A-Z]/gi,'');
   const dirCls=idea.direction==='BUY'?'b-buy':'b-sell';
@@ -191,11 +192,15 @@ function GemCard({idea,ledgerId,onPass,onFlag}){
     <div className="card accent">
       <div className="between">
         <span className="hl">{idea.name} {idea.ticker&&<span className="dim mono" style={{fontSize:13}}>{idea.ticker}</span>}</span>
-        <span className={'badge '+dirCls}>{idea.direction}</span>
+        <div className="row" style={{gap:6}}>
+          {idea.instrument&&<span className={'badge '+(idea.instrument==='CFD'?'b-cfd':'b-eq')}>{idea.instrument}</span>}
+          <span className={'badge '+dirCls}>{idea.direction}</span>
+        </div>
       </div>
       <div className="meta">
         {idea.exchange&&<span>{idea.exchange}</span>}
         {idea.industry&&<span className="steel">{idea.industry}</span>}
+        {idea.horizon&&<span className="dim">{idea.horizon}</span>}
         <span className={convCls} style={{fontWeight:600}}>{conv}</span>
         {idea.rr!=null&&<span className={idea.rr>=1.5?'green':'ambr'}>R:R {idea.rr}</span>}
       </div>
@@ -210,10 +215,13 @@ function GemCard({idea,ledgerId,onPass,onFlag}){
       <div className="thesis">{idea.reason}</div>
       {idea.level_warning && <div className="alertbox a-amber" style={{marginTop:10,marginBottom:0}}>{idea.level_warning}</div>}
       <div className="note" style={{marginTop:10}}><Ic n="target"/> {idea.availability||'Confirm availability on your NOVA platform'}</div>
-      <div className="row" style={{marginTop:12}}>
-        <button className="ghost" disabled={busy} onClick={async()=>{setBusy(true); await onPass(ledgerId); setBusy(false);}}><Ic n="x"/> Pass &amp; track</button>
-        <button className="ghost" disabled={busy} onClick={async()=>{setBusy(true); await onFlag(idea.ticker||idea.name); setBusy(false);}}>Not on NOVA</button>
-      </div>
+      {taken
+        ? <div className="alertbox a-green" style={{marginTop:12,marginBottom:0}}><Ic n="check"/> Taken up. The desk will watch for {idea.ticker||idea.name} when you next sync your NOVA book, and carry its thesis and levels into the holding.</div>
+        : <div className="row" style={{marginTop:12}}>
+            <button className="pri" disabled={busy} onClick={async()=>{setBusy(true); await onTake(ledgerId); setTaken(true); setBusy(false);}}><Ic n="check"/> Take position</button>
+            <button className="ghost" disabled={busy} onClick={async()=>{setBusy(true); await onPass(ledgerId); setBusy(false);}}><Ic n="x"/> Pass &amp; track</button>
+            <button className="ghost" disabled={busy} onClick={async()=>{setBusy(true); await onFlag(idea.ticker||idea.name); setBusy(false);}}>Not on NOVA</button>
+          </div>}
     </div>
   );
 }
@@ -243,6 +251,7 @@ function Desk({state,refresh}){
     setSeeding(false);
   };
   const onPass=async(id)=>{ if(id) await eng('pass',{ideaLedgerId:id}); await refresh(); };
+  const onTake=async(id)=>{ if(id) await eng('takeup',{ideaLedgerId:id}); await refresh(); };
   const onFlag=async(name)=>{ if(name){ await eng('flag',{name,available:false}); await refresh(); } };
   const ledgerIdFor=(idea)=> (ledger.slice().reverse().find(r=>r.idea && (r.idea.ticker===idea.ticker||r.idea.name===idea.name) && r.status==='offered')||{}).id;
 
@@ -280,13 +289,13 @@ function Desk({state,refresh}){
               <div className="note" style={{marginTop:6}}>Nothing cleared the bar today. An honest empty hunt beats a forced one; the market does not owe you a gem every day. The desk looked hard and found nothing worth a week of your capital right now.</div>
             </div>
             {weak.length>0 && <div className="row"><button className="ghost" onClick={()=>setShowAll(v=>!v)}>{showAll?'Hide':'Show'} {weak.length} lower-conviction candidate{weak.length>1?'s':''}</button></div>}
-            {showAll && weak.map((idea,i)=><GemCard key={i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag}/>)}
+            {showAll && weak.map((idea,i)=><GemCard key={i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag} onTake={onTake}/>)}
           </>;
         }
         return <>
-          {strong.map((idea,i)=><GemCard key={i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag}/>)}
+          {strong.map((idea,i)=><GemCard key={i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag} onTake={onTake}/>)}
           {weak.length>0 && <div className="row"><button className="ghost" onClick={()=>setShowAll(v=>!v)}>{showAll?'Hide':'Show'} {weak.length} lower-conviction candidate{weak.length>1?'s':''}</button></div>}
-          {showAll && weak.map((idea,i)=><GemCard key={'w'+i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag}/>)}
+          {showAll && weak.map((idea,i)=><GemCard key={'w'+i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag} onTake={onTake}/>)}
         </>;
       })()}
 
@@ -310,6 +319,49 @@ function ShotButton({label,onImage,primary,disabled}){
 }
 
 // ---------- Book tab: the seeded NOVA portfolio ----------
+// ---------- Vitals: the interpretive read of the whole account ----------
+function Vitals({vitals}){
+  if(!vitals) return null;
+  const f=vitals.figures||{};
+  const reads=vitals.reads||[];
+  const trend=vitals.trend;
+  const sCls=(s)=> s==='RED'?'a-red':s==='AMBER'?'a-amber':'a-green';
+  const sText=(s)=> s==='RED'?'red':s==='AMBER'?'ambr':'green';
+
+  return (
+    <div className="card" style={{borderColor:'var(--steel-dim)'}}>
+      <div className="eyebrow"><Ic n="pulse"/>Vitals · the state of your book</div>
+
+      <div className="grid2" style={{marginTop:4}}>
+        {f.netLiq!=null&&<div className="kv"><div className="k">Net Liquidity</div><div className="v">{fmt(f.netLiq)}</div></div>}
+        {f.equityBalance!=null&&<div className="kv"><div className="k">Equity Balance</div><div className="v">{fmt(f.equityBalance)}</div></div>}
+        {f.unrealizedPL!=null&&<div className="kv"><div className="k">Open P/L</div><div className={'v '+(f.unrealizedPL>=0?'green':'red')}>{f.unrealizedPL>=0?'+':''}{fmt(f.unrealizedPL)}</div></div>}
+        {f.buyingPower!=null&&<div className="kv"><div className="k">Buying Power</div><div className="v">{fmt(f.buyingPower)}</div></div>}
+        {f.initialMargin!=null&&<div className="kv"><div className="k">Initial Margin</div><div className="v">{fmt(f.initialMargin)}</div></div>}
+        {f.ledgerBalance!=null&&<div className="kv"><div className="k">Ledger Balance</div><div className="v">{fmt(f.ledgerBalance)}</div></div>}
+      </div>
+
+      {trend && trend.points>=2 && <div className="note" style={{marginTop:8}}>
+        <span className="steel">NET LIQUIDITY TREND</span>{' '}
+        <span className={trend.pct>=0?'green':'red'} style={{fontWeight:600}}>{trend.pct>=0?'▲':'▼'} {Math.abs(trend.pct)}%</span>
+        {' '}across {trend.points} check{trend.points>1?'s':''}, from {fmt(trend.from)} to {fmt(trend.to)}.
+      </div>}
+
+      {reads.map((r,i)=>(
+        <div key={i} className={'alertbox '+sCls(r.status)} style={{marginTop:i===0?12:8,marginBottom:0}}>
+          <div className="between" style={{marginBottom:4}}>
+            <span style={{fontWeight:700,letterSpacing:'.04em',fontSize:11,textTransform:'uppercase'}}>{r.label}</span>
+            <span className={sText(r.status)} style={{fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>{r.value}</span>
+          </div>
+          <div style={{lineHeight:1.55}}>{r.note}</div>
+        </div>
+      ))}
+
+      {vitals.lastSync && <div className="meta" style={{marginTop:10}}><span>last synced {ago(Date.parse(vitals.lastSync))}</span></div>}
+    </div>
+  );
+}
+
 function Portfolio({state,refresh}){
   const [posImg,setPosImg]=useState(null);
   const [syncing,setSyncing]=useState(false);
@@ -348,6 +400,8 @@ function Portfolio({state,refresh}){
         {book.account?.equityBalance!=null&&<div className="kv"><div className="k">Equity Balance</div><div className="v">{fmt(book.account.equityBalance)}</div></div>}
         {book.account?.buyingPowerETD!=null&&<div className="kv"><div className="k">Buying Power</div><div className="v">{fmt(book.account.buyingPowerETD)}</div></div>}
       </div>}
+
+      {state?.vitals && <Vitals vitals={state.vitals}/>}
 
       {holdings.length===0 && <div className="note" style={{marginTop:8}}>No holdings yet. Seed your book from the Hunt tab, or upload a positions screenshot above.</div>}
 
