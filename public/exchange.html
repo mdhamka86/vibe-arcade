@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>THE EXCHANGE — hammyLabs</title>
 <script>
-/* ---- DIAGNOSTIC CONSOLE — paints errors on screen so no failure is silent ---- */
+/* ---- DIAGNOSTIC CONSOLE — stays hidden unless a genuine error occurs ---- */
 (function(){
   var logs=[];
   function paint(){
@@ -17,25 +17,26 @@
     }
     el.textContent=logs.join('\n');
   }
-  window.__diag=function(m){
+  // isError=false logs quietly (to the browser console only); isError=true paints the bar.
+  window.__diag=function(m,isError){
     logs.push(m);
-    if(document.body) paint();
-    else document.addEventListener('DOMContentLoaded',paint);
+    try{ console.log('[diag] '+m); }catch(e){}
+    if(isError){ if(document.body) paint(); else document.addEventListener('DOMContentLoaded',paint); }
   };
   window.addEventListener('error',function(e){
-    if(e.target && e.target.tagName==='SCRIPT'){ __diag('SCRIPT FAILED TO LOAD: '+(e.target.src||'inline')); }
-    else { __diag('ERROR: '+(e.message||e.type)+(e.filename?' @ '+e.filename.split('/').pop()+':'+e.lineno:'')); }
+    if(e.target && e.target.tagName==='SCRIPT'){ __diag('SCRIPT FAILED TO LOAD: '+(e.target.src||'inline'),true); }
+    else { __diag('ERROR: '+(e.message||e.type)+(e.filename?' @ '+e.filename.split('/').pop()+':'+e.lineno:''),true); }
   },true);
   window.addEventListener('unhandledrejection',function(e){
-    __diag('PROMISE ERROR: '+((e.reason&&e.reason.message)||e.reason));
+    __diag('PROMISE ERROR: '+((e.reason&&e.reason.message)||e.reason),true);
   });
-  __diag('THE EXCHANGE v1.0 · boot '+new Date().toTimeString().slice(0,8)+' · if you can read this, the new file arrived');
+  __diag('THE EXCHANGE v1.0 · boot '+new Date().toTimeString().slice(0,8));
   setTimeout(function(){
     if(window.__exchangeMounted) return;
-    __diag('MOUNT FAILED after 6s. Library check — React: '+(!!window.React)+' · ReactDOM: '+(!!window.ReactDOM)+' · Babel: '+(!!window.Babel));
+    __diag('MOUNT FAILED after 6s. Library check — React: '+(!!window.React)+' · ReactDOM: '+(!!window.ReactDOM)+' · Babel: '+(!!window.Babel),true);
     __diag(!window.React||!window.Babel
       ? 'VERDICT: the CDN scripts did not load. Connection or unpkg issue, not a code issue.'
-      : 'VERDICT: libraries loaded but the app did not mount. Screenshot this box and send it to the mechanic.');
+      : 'VERDICT: libraries loaded but the app did not mount. Screenshot this box and send it to the mechanic.',true);
   },6000);
 })();
 </script>
@@ -389,6 +390,7 @@ function Reviews({state,refresh}){
     setBusy(null);
   };
   const vCls=(v)=> v==='HOLD'?'b-ok':v==='CLOSE'?'b-red':'b-note';
+  const vTextCls=(v)=> v==='HOLD'?'green':v==='CLOSE'?'red':'ambr';
 
   return (
     <div className="wrap">
@@ -399,6 +401,8 @@ function Reviews({state,refresh}){
       {holdings.length===0 && <div className="note">No holdings to review yet. Seed or sync your book first.</div>}
       {holdings.map(h=>{
         const rv=h.lastReview;
+        const hist=h.reviewHistory||[];
+        const priorCount=Math.max(0,hist.length-1);
         return (
           <div key={h.id} className="card">
             <div className="between">
@@ -411,13 +415,30 @@ function Reviews({state,refresh}){
               <span className={(h.unrealised||0)>=0?'green':'red'}>{(h.unrealised||0)>=0?'+':''}{fmt(h.unrealised)}</span>
             </div>
             {rv && <>
+              {rv.level_note && <div className="alertbox a-amber" style={{marginTop:10,marginBottom:0}}><Ic n="target"/> {rv.level_note}</div>}
               <div className="thesis">{rv.reason}</div>
+              {rv.change_note && <div className="note" style={{marginTop:8}}><span className="steel">SINCE LAST REVIEW</span> {rv.change_note}</div>}
               {(rv.proposed_sl||rv.proposed_tp)&&<div className="levels">
                 <div className="lvl"><div className="lk">Proposed Stop</div><div className="lv red">{fmt(rv.proposed_sl)}</div></div>
                 <div className="lvl"><div className="lk">Proposed Target</div><div className="lv green">{fmt(rv.proposed_tp)}</div></div>
               </div>}
               {rv.hold_guidance&&<div className="note" style={{marginTop:8}}><span className="steel">HOLD GUIDANCE</span> {rv.hold_guidance}</div>}
-              <div className="meta"><span>reviewed {rv.at?ago(Date.parse(rv.at)):''}</span></div>
+              <div className="meta">
+                <span>reviewed {rv.at?ago(Date.parse(rv.at)):''}</span>
+                {priorCount>0 && <span className="dim">· {priorCount} earlier review{priorCount>1?'s':''} remembered</span>}
+              </div>
+              {priorCount>0 && <details style={{marginTop:8}}>
+                <summary style={{fontSize:11,color:'var(--steel-soft)',cursor:'pointer',fontWeight:600,letterSpacing:'.04em'}}>Review history</summary>
+                <div style={{marginTop:8}}>
+                  {hist.slice(0,-1).slice().reverse().map((r,i)=>(
+                    <div key={i} className="lesson" style={{borderLeftColor:'var(--line2)'}}>
+                      <div className="between"><span className={vTextCls(r.verdict)} style={{fontWeight:600,fontSize:12}}>{r.verdict}</span><span className="dim" style={{fontSize:10}}>{r.at?r.at.slice(0,10):''}</span></div>
+                      <div style={{marginTop:4}}>{r.reason}</div>
+                      {(r.proposed_sl||r.proposed_tp)&&<div className="meta"><span className="red">SL {fmt(r.proposed_sl)}</span><span className="green">TP {fmt(r.proposed_tp)}</span></div>}
+                    </div>
+                  ))}
+                </div>
+              </details>}
             </>}
             <div className="row" style={{marginTop:12}}>
               <button className="ghost" disabled={busy===h.id} onClick={()=>runReview(h.id)}>{busy===h.id?<span className="spin">◐</span>:(rv?'Review again':'Review this holding')}</button>
