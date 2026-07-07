@@ -309,7 +309,7 @@
 
     <footer>
       Raw rows are stored verbatim, exactly as the journal recorded them. All computed figures use the normalisation layer (Loss&rarr;Lose, Med-High&rarr;Medium-High) so the dashboards see the truth without rewriting history. Export rebuilds the four-sheet workbook from the vault as computed values.<br><br>
-      <span style="color:var(--brass);font-weight:600;" class="serif">The Stewards&rsquo; Room v2.1</span> &middot; The Intake Clerk: pending legs read from your receipts, mistakes caught at the door &middot; hammyLabs &middot; 07/07/2026
+      <span style="color:var(--brass);font-weight:600;" class="serif">The Stewards&rsquo; Room v2.2</span> &middot; 7:15am trawl once cards are up, and a standing reminder to upload your confirmations &middot; hammyLabs &middot; 07/07/2026
     </footer>
   </div>
 
@@ -1238,8 +1238,22 @@ function srcChip(s){
 
 function renderMorning(msg){
   let h="";
-  h+='<div class="card quill"><h3>'+IC.tout+'The Tout'+tip("The morning trawl. Runs automatically around 8am, or by hand here. It triages meets with the data-edge gate, deep-reads SGPools PDFs, gathers regional pundits, and pulls track weather, caching the whole pack so the room opens instantly.")+'</h3>'+
-    '<div class="lesson">The morning trawl: triage with the data-edge gate applied in code, SGPools tipster PDFs deep-read, the scout manifest\u2019s pundit sources harvested per region, and weather pulled at every track. Runs by cron at 8am, or by hand right here. The pack below feeds our convergence session.</div>'+
+
+  // persistent reminder: a betlist was proposed for today but nothing is logged yet.
+  // Lingers until today's legs are actually in the book, so a forgotten upload cannot slip by.
+  try{
+    if(proposal && proposal.date){
+      const today=proposal.date;
+      const logged=(vault.betlog||[]).some(b=>b.date===today);
+      if(!logged){
+        h+='<div class="legreason" style="border:1px solid var(--amber);margin-bottom:12px"><b style="color:var(--amber)">Reminder \u00b7 '+esc(today)+'</b><br>'+
+          'A betlist was proposed for today but no legs are in the book yet. Once you have placed your bets on SGPools, upload the confirmation screenshots to the Intake Clerk in the Quill so they log as pending and receipt-backed. Until then, today is unrecorded.</div>';
+      }
+    }
+  }catch(e){}
+
+  h+='<div class="card quill"><h3>'+IC.tout+'The Tout'+tip("The morning trawl. Runs automatically around 7:15am Phuket, once SGPools has published the day\u2019s cards, or by hand here. It triages meets with the data-edge gate, deep-reads SGPools PDFs, gathers regional pundits, and pulls track weather, caching the whole pack so the room opens instantly.")+'</h3>'+
+    '<div class="lesson">The morning trawl: triage with the data-edge gate applied in code, SGPools tipster PDFs deep-read, the scout manifest\u2019s pundit sources harvested per region, and weather pulled at every track. Runs by cron at 7:15am Phuket, once the day\u2019s cards are up, or by hand right here. The pack below feeds our convergence session.</div>'+
     '<button class="qbtn" id="toutRun">Run the morning trawl now (60-120s)</button>'+
     '<div class="qmsg" id="toutMsg">'+(msg?esc(msg):"")+'</div></div>';
 
@@ -1277,7 +1291,7 @@ function renderMorning(msg){
         '</details></div>';
     });
   } else if(!msg){
-    h+='<div class="card"><div class="lesson">No morning pack yet today. Run the Tout, or wait for the 8am cron.</div></div>';
+    h+='<div class="card"><div class="lesson">No morning pack yet today. Run the Tout, or wait for the 7:15am cron.</div></div>';
   }
   $("pane-morning").innerHTML=h;
 
@@ -1393,10 +1407,27 @@ function renderProposalInto(host){
       Object.keys(src).map(m=>'<b>'+esc(m)+':</b> '+(src[m]||[]).map(esc).join(", ")).join("<br>")+'</div></details>';
   }
 
-  h+='<button class="qbtn" id="propToQuill" style="margin-top:12px">Send betlist to the Quill</button>'+
+  h+='<div class="legreason" style="margin-top:12px;border:1px solid var(--brass)"><b style="color:var(--brass)">Next step, so nothing is forgotten:</b><br>'+
+    '1. Place these bets on the SGPools app.<br>'+
+    '2. Come straight back and upload your bet confirmation screenshots to the <b>Intake Clerk</b> at the top of the Quill.<br>'+
+    'That logs each leg as pending and receipt-backed, and checks what you placed against this plan so any slip is caught now. Until you upload, today\u2019s legs are not yet in the book.</div>';
+
+  h+='<button class="qbtn" id="propToIntake" style="margin-top:12px">I\u2019ve placed them \u2014 take me to the Intake Clerk</button>'+
+     '<button class="qbtn gold small" id="propToQuill">Or send the plan straight to the Quill</button>'+
      '<button class="qbtn gold small" id="propCopy">Copy vault-ready JSON</button>'+
      '<div class="qmsg" id="propMsg"></div></div>';
   host.innerHTML=h;
+
+  const goIntake=$("propToIntake");
+  if(goIntake) goIntake.addEventListener("click",()=>{
+    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("on"));
+    document.querySelectorAll(".pane").forEach(x=>x.classList.remove("on"));
+    document.querySelector('.tab[data-pane="quill"]').classList.add("on");
+    $("pane-quill").classList.add("on");
+    const f=$("intakeFiles");
+    if(f){ const card=f.closest(".card"); if(card) card.scrollIntoView({behavior:"smooth",block:"start"}); }
+    qmsg("propMsg","Upload your SGPools confirmation screenshots in the Intake Clerk. It will check them against this plan.","ok");
+  });
 
   $("propToQuill").addEventListener("click",()=>{
     // hand the payload to the Quill's paste lane and jump there
@@ -1406,7 +1437,7 @@ function renderProposalInto(host){
     $("pane-quill").classList.add("on");
     const box=$("q-json");
     if(box){ box.value=JSON.stringify(p.quillPayload,null,1); box.scrollIntoView({behavior:"smooth",block:"center"});
-      qmsg("jsonMsg","Betlist loaded from the Stable. Review, then Validate & commit.","ok"); }
+      qmsg("jsonMsg","Betlist loaded from the Stable. This records the plan, not your receipts. Prefer the Intake Clerk if you can, so any mis-key is caught.","ok"); }
   });
   $("propCopy").addEventListener("click",async()=>{
     try{ await navigator.clipboard.writeText(JSON.stringify(p.quillPayload)); $("propCopy").textContent="Copied!"; }
@@ -1451,10 +1482,10 @@ function renderGuide(){
     'your own thumb is always the hand that places and the signature that commits. Every write shows you what it did and proves it afterward.</div>';
 
   h+='<h2>'+IC.clock+'The morning</h2>';
-  h+='<div class="clock">~8:00am \u00b7 automatic</div>';
+  h+='<div class="clock">~7:15am \u00b7 automatic</div>';
   h+=step("The Tout rides out",["nothing to do"],
-    "While you are still asleep, a scheduled job wakes at eight and sends the touts to the gallops. It ranks every meet on Singapore Pools, applies the data-edge gate in code so blind meets are set aside, deep-reads the SGPools tipster PDFs, gathers the regional pundit sources, and pulls the weather at every track. All of it lands in the vault as the morning pack.",
-    "the sharp money has always known which horses worked well at dawn. Having the gathering done before you rise means the thinking starts from a full table, not a blank one.");
+    "While you are still waking, a scheduled job fires at 7:15am Phuket and sends the touts to the gallops. It ranks every meet on Singapore Pools, applies the data-edge gate in code so blind meets are set aside, deep-reads the SGPools tipster PDFs, gathers the regional pundit sources, and pulls the weather at every track. All of it lands in the vault as the morning pack.",
+    "7:15am is chosen deliberately: by then SGPools has published the day\u2019s race cards and opened them for betting, so the runner maps the Stable reasons over are the confirmed ones, not a preliminary version. And with the trawl finished before you sit down around eight, you can spend those first minutes uploading yesterday\u2019s settled races while today\u2019s pack sits waiting. The gathering is done before you rise, so the thinking starts from a full table.");
   h+=step("Read the pack",["Morning tab"],
     "Open the room and the Morning tab greets you with the pack already built. Each surviving meet shows its score, its weather, source-health chips (green when a pundit answered, red when one did not), and an expandable Read the intel section with the actual tipster and pundit text.",
     "the gate deselects meets where we have no edge. Seeing which meets survived, and why the others did not, is the first honest read of the day.");
@@ -1515,7 +1546,7 @@ function renderGuide(){
     'Rather fitting that the name was right all along.</div>';
 
   h+='<div class="step" style="border-color:var(--gold)"><h3>The whole loop in one breath</h3>'+
-    '<p>8am the touts gather and the Stable drafts. You place at SGPools, then send the slip to the Quill to log it as pending. '+
+    '<p>At 7:15am the touts gather and the Stable drafts. You place at SGPools, then upload your confirmations to the Intake Clerk to log them as pending and receipt-backed. '+
     'At night, or by your 7:30am backstop, the Clerk reads your receipts and settles. '+
     'You wrap the day with a lesson. Tomorrow the room is a little wiser. That is the Outsider Method, running as a living stable.</p></div>';
 
