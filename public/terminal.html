@@ -92,6 +92,18 @@
   .note{font-size:11px;color:var(--dim);line-height:1.55}
   .thesis{font-size:12px;line-height:1.6;color:#CFCABB;margin-top:8px;border-left:2px solid var(--amber-dim);padding-left:10px}
   .lesson{font-size:12px;line-height:1.5;padding:8px 10px;border-left:2px solid var(--cyan);background:var(--panel2);border-radius:0 4px 4px 0;margin-bottom:8px}
+  .tip{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid var(--amber-dim);color:var(--amber-dim);font-size:10px;line-height:1;margin-left:6px;cursor:pointer;vertical-align:middle;flex:0 0 auto;font-weight:700}
+  .tip:active{background:var(--amber-dim);color:#141005}
+  .tipbox{background:var(--panel2);border:1px solid var(--amber-dim);border-radius:6px;padding:9px 11px;margin:6px 0 2px;font-size:11.5px;line-height:1.55;color:#D8D3C4}
+  .guide-step{display:flex;gap:11px;margin-bottom:14px}
+  .guide-num{flex:0 0 26px;height:26px;border-radius:50%;background:var(--panel2);border:1px solid var(--amber-dim);color:var(--amber);font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center}
+  .guide-body{flex:1}
+  .guide-body .gt{font-weight:600;color:var(--ink);font-size:13px;margin-bottom:3px}
+  .guide-body .gw{font-size:11.5px;color:var(--dim);line-height:1.55}
+  .guide-body .gy{font-size:11.5px;color:#B0AB9C;line-height:1.55;margin-top:3px}
+  .guide-act{border-left:2px solid var(--amber);padding-left:12px;margin:8px 0 20px}
+  .guide-act-h{font-family:'Barlow Condensed',sans-serif;font-size:17px;letter-spacing:.06em;color:var(--amber);text-transform:uppercase;margin-bottom:2px}
+  .guide-act-sub{font-size:11px;color:var(--dim);margin-bottom:14px}
   .paste{font-size:10px;background:#0E0D09;border:1px dashed var(--line);border-radius:4px;padding:8px;overflow-x:auto;white-space:pre;margin-top:8px;color:#BDB8A8}
   .spin{display:inline-block;animation:sp 1s steps(8) infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
@@ -230,7 +242,7 @@ function Desk({state,refresh}){
   const [slip,setSlip]=useState(null);
   useEffect(()=>{ setIdeas(state?.ideasToday||null); },[state]);
   const clock=state?.clock;
-  const readyHour = clock && (clock.hour>20 || (clock.hour===20 && clock.minute>=30));
+  const readyHour = clock && (clock.hour>20 || (clock.hour===20 && clock.minute>=15));
   const gen=async(force)=>{
     setBusy(true);
     try{
@@ -252,14 +264,14 @@ function Desk({state,refresh}){
     <div className="wrap">
       <div className="card">
         <div className="eyebrow">Night Desk — 21:20 BKK session</div>
-        <div className="note">Ideas generate once daily from the forex wire, your live book, account vitals and the lessons archive. Best generated from 20:30 Bangkok, after New York data has settled.</div>
+        <div className="note">Ideas generate once daily from the forex wire, your live book, account vitals and the lessons archive. Night desk opens 20:15 BKK for admin; hold off checking ideas until after 20:30, once New York data has settled.</div>
         <div className="row" style={{marginTop:10}}>
           <button className="pri" disabled={busy} onClick={()=>gen(false)}>
             {busy? <span className="spin">◐</span> : (ideas? 'Refetch tonight\u2019s ideas' : 'Generate tonight\u2019s ideas')}
           </button>
           {!readyHour && !ideas && <button className="ghost" disabled={busy} onClick={()=>gen(true)}>Force early</button>}
         </div>
-        {!readyHour && !ideas && <div className="note" style={{marginTop:8}}>It is before 20:30 BKK. An early generation will miss the settled read on US data. Force only if you must.</div>}
+        {!readyHour && !ideas && <div className="note" style={{marginTop:8}}>It is before 20:15 BKK, ahead of your night desk window. An early generation will miss the settled read on US data. Force only if you must.</div>}
       </div>
       {weekend && <div className="alertbox a-green">Market is shut for the weekend. The desk stands down; the wire and AAR archive remain open. See you at the Monday morning sync.</div>}
       {slip!=null && <div className="alertbox a-amber">Fill logged. Slippage vs idea entry: {slip>0?'+':''}{slip}. Real levels now govern the book.</div>}
