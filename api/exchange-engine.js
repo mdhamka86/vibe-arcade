@@ -47,6 +47,39 @@ function bkk() {
 }
 const daysHeld = (openedAt) => Math.max(0, Math.floor((Date.now() - openedAt) / 86400000));
 
+// ---------- Live stock prices (Finnhub free tier, real-time US quotes) ----------
+// Gives the desk genuine eyes onto the market so ideas anchor to real prices and the
+// validator can catch a mispriced idea. Degrades gracefully: no key, an unreachable
+// feed, or an unknown ticker simply returns null and the desk carries on honestly.
+const FINNHUB_KEY = process.env.FINNHUB_API_KEY || process.env.FINNHUB_KEY || '';
+
+async function livePrice(ticker) {
+  if (!FINNHUB_KEY || !ticker) return null;
+  const sym = String(ticker).toUpperCase().replace(/[^A-Z.]/g, '');
+  if (!sym) return null;
+  try {
+    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`);
+    if (!r.ok) return null;
+    const j = await r.json();
+    // Finnhub returns c = current price. 0 means the symbol was not recognised.
+    const c = typeof j.c === 'number' ? j.c : null;
+    return c && c > 0 ? +c.toFixed(2) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Fetch many tickers at once, returning a map keyed by uppercased ticker.
+async function livePrices(tickers) {
+  const list = [...new Set((tickers || []).map((t) => String(t || '').toUpperCase()).filter(Boolean))];
+  const out = {};
+  await Promise.all(list.map(async (t) => {
+    const p = await livePrice(t);
+    if (p != null) out[t] = p;
+  }));
+  return out;
+}
+
 // ---------- Claude ----------
 async function claude(userContent, maxTokens = 2000) {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -80,16 +113,28 @@ function num(v) {
   const m = String(v).match(/-?\d+(\.\d+)?/);
   return m ? parseFloat(m[0]) : null;
 }
-function checkLevels(idea) {
+function checkLevels(idea, realPrice) {
   const dir = (idea.direction || '').toUpperCase();
   const entry = num(idea.entry);
-  const cur = num(idea.current_price);
+  let cur = num(idea.current_price);
   const tp = num(idea.tp);
   const sl = num(idea.sl);
   if (entry == null || tp == null || sl == null) return { ok: false, reason: 'missing a numeric entry, TP or SL' };
   if (dir !== 'BUY' && dir !== 'SELL') return { ok: false, reason: 'direction not BUY/SELL' };
 
-  // 1) entry should sit within ~8% of the quoted current price. A week-long swing
+  // 0) REALITY CHECK: if a genuine live price is supplied, the idea's stated current
+  // price must match it closely. This catches a gem anchored to a stale/hallucinated
+  // price (e.g. claiming 58 when the market is 94). A >6% gap fails outright.
+  if (realPrice != null && realPrice > 0) {
+    if (cur != null) {
+      const gap = Math.abs(cur - realPrice) / realPrice;
+      if (gap > 0.06) return { ok: false, reason: `stated price ${cur} is ${(gap * 100).toFixed(1)}% off the live price ${realPrice} — levels are anchored to a wrong price`, realPrice };
+    }
+    // trust the live price as the reference for the entry-proximity check below
+    cur = realPrice;
+  }
+
+  // 1) entry should sit within ~8% of the current price. A week-long swing
   // entry further out than that is really a limit order that may never fill.
   if (cur != null && cur > 0) {
     const drift = Math.abs(entry - cur) / cur;
@@ -110,7 +155,7 @@ function checkLevels(idea) {
   // 4) reward should beat risk
   const rr = slPct ? +(tpPct / slPct).toFixed(2) : null;
   if (rr != null && rr < 1) return { ok: false, reason: `reward:risk ${rr} below 1 — target closer than stop` };
-  return { ok: true, rr, slPct: +slPct.toFixed(1), tpPct: +tpPct.toFixed(1) };
+  return { ok: true, rr, slPct: +slPct.toFixed(1), tpPct: +tpPct.toFixed(1), realPrice: realPrice ?? null };
 }
 
 // ---------- State ----------
@@ -214,30 +259,50 @@ Respond ONLY with JSON, no markdown:
 
   let ideas = await claude(prompt, 2600);
 
+  // fetch genuine live prices for whatever the model proposed, so the validator can
+  // check each idea against reality and the cards show the true market price.
+  const proposedTickers = (ideas.ideas || []).map((i) => i.ticker || i.name).filter(Boolean);
+  let priceMap = await livePrices(proposedTickers);
+  const realFor = (i) => priceMap[(i.ticker || i.name || '').toUpperCase()] ?? null;
+
   // validation + no-dupe + tradeability gate, with one retry, mirroring The Terminal
   const isBanned = (i) => {
     const nm = (i.ticker || i.name || '').toUpperCase();
     return bannedList.map((b) => b.toUpperCase()).includes(nm) || unavailable.has(nm) || heldNames.has(nm);
   };
-  const badLevels = (i) => !checkLevels(i).ok;
+  const badLevels = (i) => !checkLevels(i, realFor(i)).ok;
   const isBad = (i) => isBanned(i) || badLevels(i);
 
   if ((ideas.ideas || []).some(isBad)) {
     const dupes = (ideas.ideas || []).filter(isBanned).map((i) => i.ticker || i.name);
-    const lvl = (ideas.ideas || []).filter((i) => !isBanned(i) && badLevels(i)).map((i) => `${i.ticker || i.name}: ${checkLevels(i).reason}`);
+    const lvl = (ideas.ideas || []).filter((i) => !isBanned(i) && badLevels(i)).map((i) => `${i.ticker || i.name}: ${checkLevels(i, realFor(i)).reason}`);
+    // tell the model the true live prices so its retry is anchored to reality
+    const priceHints = Object.entries(priceMap).map(([k, v]) => `${k} is really trading at ~$${v}`).join('; ');
     try {
       const second = await claude(prompt +
-        `\n\nREJECTED, fix and resubmit two clean ideas:\n${dupes.length ? 'Duplicate/held/unavailable: ' + dupes.join(', ') + '\n' : ''}${lvl.length ? 'Broken levels: ' + lvl.join('; ') : ''}`, 2600);
-      if (second.ideas && !second.ideas.some(isBad)) ideas = second;
+        `\n\nREJECTED, fix and resubmit two clean ideas:\n${dupes.length ? 'Duplicate/held/unavailable: ' + dupes.join(', ') + '\n' : ''}${lvl.length ? 'Broken levels: ' + lvl.join('; ') + '\n' : ''}${priceHints ? 'LIVE PRICES (anchor to these exactly): ' + priceHints : ''}`, 2600);
+      if (second.ideas) {
+        // price the fresh names too before accepting
+        const secondTickers = second.ideas.map((i) => i.ticker || i.name).filter(Boolean);
+        priceMap = { ...priceMap, ...(await livePrices(secondTickers)) };
+        if (!second.ideas.some(isBad)) ideas = second;
+      }
     } catch { /* fall through to flagging */ }
     (ideas.ideas || []).forEach((i) => {
       if (isBanned(i)) i.reason = ((i.reason || '') + ' [DUPLICATE/HELD WARNING]').trim();
-      const lc = checkLevels(i);
+      const real = realFor(i);
+      const lc = checkLevels(i, real);
+      if (real != null) i.current_price = String(real); // show the true market price
       if (!lc.ok) { i.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; i.conviction = 'LOW'; }
       else { i.rr = lc.rr; i.slPct = lc.slPct; i.tpPct = lc.tpPct; }
     });
   } else {
-    (ideas.ideas || []).forEach((i) => { const lc = checkLevels(i); i.rr = lc.rr; i.slPct = lc.slPct; i.tpPct = lc.tpPct; });
+    (ideas.ideas || []).forEach((i) => {
+      const real = realFor(i);
+      const lc = checkLevels(i, real);
+      if (real != null) i.current_price = String(real);
+      i.rr = lc.rr; i.slPct = lc.slPct; i.tpPct = lc.tpPct;
+    });
   }
 
   ideas.generatedAt = t.iso;
@@ -565,7 +630,14 @@ async function actFlagUnavailable(name, available) {
 async function actLearn(priceMap) {
   const t = bkk();
   const s = await loadAll();
-  const graded = resolveShadow(s, t, priceMap || {});
+  // fetch live prices for any passed gems still being tracked, so the shadow book
+  // resolves against the real market. Caller-supplied prices take precedence.
+  const trackedTickers = s.ledger
+    .filter((r) => r.status === 'passed' && !r.shadowResolved)
+    .map((r) => r.idea.ticker || r.idea.name).filter(Boolean);
+  const livePriceMap = trackedTickers.length ? await livePrices(trackedTickers) : {};
+  const merged = { ...livePriceMap, ...(priceMap || {}) };
+  const graded = resolveShadow(s, t, merged);
   await rSet('exchange:ledger', s.ledger.slice(-400));
   let reflection = null;
   const alreadyReflectedToday = s.guidanceMeta && s.guidanceMeta.at && s.guidanceMeta.at.slice(0, 10) === t.iso.slice(0, 10);
@@ -596,8 +668,3 @@ export default async function handler(req, res) {
     res.status(500).json({ error: String(e.message || e) });
   }
 }
-
-
-
-
-
