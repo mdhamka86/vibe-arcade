@@ -417,16 +417,44 @@ async function actReview(holdingId) {
   const news = await getNews('holdings', query);
   const priorLessons = (s.lessons || []).slice(-8).map((l) => `- ${l.text}`).join('\n') || '- none yet';
 
+  // fetch the genuine live price so proposed levels can be checked against reality
+  const live = await livePrice(h.ticker);
+  const priceNow = live != null ? live : num(h.lastPrice);
+
   // profit/loss posture against average cost, for honest framing
-  const pl = (h.lastPrice != null && h.avgCost != null)
-    ? `currently ${h.lastPrice >= h.avgCost ? 'above' : 'below'} cost: paid ${h.avgCost}, now ${h.lastPrice} (${(((h.lastPrice - h.avgCost) / h.avgCost) * 100).toFixed(1)}%)`
+  const pl = (priceNow != null && h.avgCost != null)
+    ? `currently ${priceNow >= h.avgCost ? 'above' : 'below'} cost: paid ${h.avgCost}, now ${priceNow} (${(((priceNow - h.avgCost) / h.avgCost) * 100).toFixed(1)}%)`
     : 'cost basis unclear';
+
+  // ---- the running history of prior reviews, so each review builds on the last ----
+  const history = h.reviewHistory || [];
+  const priorReviewsBlock = history.length
+    ? history.slice(-4).map((r, i) => `Review ${history.length - Math.min(4, history.length) + i + 1} (${r.at ? r.at.slice(0, 10) : '?'}): ${r.verdict} — ${r.reason} [proposed SL ${r.proposed_sl || 'none'}, TP ${r.proposed_tp || 'none'}]`).join('\n')
+    : 'No prior reviews. This is the first review of this holding.';
+
+  // ---- has a previously proposed level actually been hit since last time? ----
+  let levelEvent = 'No previously proposed levels to check.';
+  const last = history.length ? history[history.length - 1] : null;
+  if (last && priceNow != null) {
+    const psl = num(last.proposed_sl), ptp = num(last.proposed_tp);
+    const events = [];
+    if (ptp != null && priceNow >= ptp) events.push(`the take-profit of ${ptp} proposed on ${last.at ? last.at.slice(0, 10) : 'the last review'} has been REACHED (live ${priceNow})`);
+    if (psl != null && priceNow <= psl) events.push(`the stop-loss of ${psl} proposed on ${last.at ? last.at.slice(0, 10) : 'the last review'} has been BREACHED (live ${priceNow})`);
+    if (events.length) levelEvent = 'IMPORTANT — ' + events.join('; ') + '. Address this head-on: given the level was hit, advise clearly whether to hold on regardless or to close/trim now, with your reasoning.';
+    else levelEvent = `Neither previously proposed level has been hit yet (last proposed SL ${last.proposed_sl || 'none'}, TP ${last.proposed_tp || 'none'}; live ${priceNow}).`;
+  }
 
   const verdict = await claude(`You are THE EXCHANGE's position analyst, reviewing ONE long-term equity holding in a Phuket investor's Phillip Nova (NOVA) portfolio. These are his considered long-term convictions, NOT week-long swings, so judge with patience, like a seasoned analyst rather than a jumpy trader. Run a zero-based review (Peter Lynch's test: if he held none of this today, would buying it right now at this price be justified?).
 
 HOLDING UNDER REVIEW:
-${h.name}${h.ticker ? ' (' + h.ticker + ')' : ''}, ${h.qty} shares @ avg cost ${h.avgCost}, last price ${h.lastPrice ?? '?'}, unrealised P/L ${h.unrealised ?? '?'}.
-Posture: ${pl}. Held roughly ${held} day(s) since first tracked${h.mentalTP || h.mentalSL ? `. Existing levels: TP ${h.mentalTP || 'none'}, SL ${h.mentalSL || 'none'}` : '. No stop or target set yet.'}
+${h.name}${h.ticker ? ' (' + h.ticker + ')' : ''}, ${h.qty} shares @ avg cost ${h.avgCost}, live price ${priceNow ?? '?'}, unrealised P/L ${h.unrealised ?? '?'}.
+Posture: ${pl}. Held roughly ${held} day(s) since first tracked${h.mentalTP || h.mentalSL ? `. Current working levels: TP ${h.mentalTP || 'none'}, SL ${h.mentalSL || 'none'}` : '. No stop or target set yet.'}
+
+YOUR OWN PRIOR REVIEWS OF THIS HOLDING (build on these; note what has changed, whether your prior call played out, and evolve the view rather than starting fresh):
+${priorReviewsBlock}
+
+LEVEL CHECK SINCE LAST REVIEW:
+${levelEvent}
 
 FRESH COMPANY & MARKET NEWS:
 ${digest(news, 16)}
@@ -434,24 +462,32 @@ ${digest(news, 16)}
 LESSONS ARCHIVE:
 ${priorLessons}
 
-Your job, four honest judgements:
-1. HOLD or CLOSE: is the original reason for owning this still intact? A holding being down is NOT itself a reason to close; a broken thesis is. A holding being up is not itself a reason to sell; a spent thesis or a better use of the capital might be. Default to patience for a long-term conviction, but be honest if the story has genuinely broken.
-2. PROPOSED LEVELS: suggest a sensible stop loss and take profit for this holding grounded in the current price and situation, since he often has none set. Give real price levels.
-3. HOLDING HORIZON: given it is a long-term conviction, offer a sensible sense of how long to keep holding or what milestone/catalyst to hold toward.
-4. REASON: ground every judgement in the current news and the company's actual situation, not generic platitudes.
+Your job, honest judgements that CONTINUE the story from your prior reviews:
+1. HOLD, TRIM or CLOSE: is the original reason for owning this still intact? A holding being down is NOT itself a reason to close; a broken thesis is. A holding being up is not itself a reason to sell; a spent thesis, a hit target, or a better use of the capital might be. If a proposed level was hit (see the level check above), give a direct hold-or-close call on that basis. Default to patience for a long-term conviction, but be honest if the story has genuinely broken or evolved since your last review.
+2. PROPOSED LEVELS: suggest a sensible stop loss and take profit grounded in the CURRENT live price. If your prior levels still make sense, you may keep them; if the situation has moved, adjust them and say why. Give real price levels.
+3. WHAT'S CHANGED: explicitly note how your view has shifted (or held firm) since the last review, referencing it.
+4. HOLDING HORIZON: given it is a long-term conviction, offer a sensible sense of how long to keep holding or what milestone/catalyst to hold toward.
 
 Respond ONLY with JSON, no markdown:
-{"verdict":"HOLD|CLOSE|TRIM","reason":"2-3 sentences grounded in current facts","proposed_sl":"price level","proposed_tp":"price level","hold_guidance":"how long / toward what, one sentence","conviction":"how sure you are, one short phrase"}`, 1400);
+{"verdict":"HOLD|CLOSE|TRIM","reason":"2-3 sentences grounded in current facts, referencing how the view has evolved since the last review","proposed_sl":"price level","proposed_tp":"price level","level_note":"one sentence on whether a prior proposed level was hit and what to do, or empty if none","change_note":"one sentence on what has changed since the last review","hold_guidance":"how long / toward what, one sentence","conviction":"how sure you are, one short phrase"}`, 1500);
 
-  // persist the review and the proposed levels onto the holding
-  h.lastReview = {
+  // build this review record
+  const record = {
     verdict: verdict.verdict, reason: verdict.reason,
     proposed_sl: verdict.proposed_sl || null, proposed_tp: verdict.proposed_tp || null,
-    hold_guidance: verdict.hold_guidance || null, at: t.iso,
+    level_note: verdict.level_note || null, change_note: verdict.change_note || null,
+    hold_guidance: verdict.hold_guidance || null,
+    priceAtReview: priceNow ?? null, at: t.iso,
   };
-  // if he had no levels set, gently adopt the proposals as the working mental levels
-  if (!h.mentalSL && verdict.proposed_sl) h.mentalSL = verdict.proposed_sl;
-  if (!h.mentalTP && verdict.proposed_tp) h.mentalTP = verdict.proposed_tp;
+
+  // append to the running history (cap to keep the record tidy), and keep lastReview
+  // as the single most recent one so the existing front end continues to work.
+  h.reviewHistory = [...history, record].slice(-12);
+  h.lastReview = record;
+  // adopt the freshly proposed levels as the working mental levels so the next
+  // review can check them; a review supersedes older proposals.
+  if (verdict.proposed_sl) h.mentalSL = verdict.proposed_sl;
+  if (verdict.proposed_tp) h.mentalTP = verdict.proposed_tp;
   await rSet('exchange:book', s.book);
 
   return { clock: t, verdict, holding: h };
