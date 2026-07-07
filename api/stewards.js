@@ -289,6 +289,7 @@ const SLICES = {
   notes: "stw:notes",
   running: "stw:running",
   formulas: "stw:formulas",
+  ledger: "stw:ledger",
 };
 
 function parseBody(req) {
@@ -666,6 +667,117 @@ module.exports = async (req, res) => {
         text.slice(0, 60)
       );
       return res.status(200).json({ ok: allMatch, verify, rev: meta.rev, noteCount: notes.length });
+    }
+
+    // -------------------- THE MODEL LEDGER (append-only bench-book) --------------------
+    // Records every change to the model, newest-first when read. There is deliberately
+    // NO erase or restore path: a mistake is corrected by appending a correcting entry
+    // that references the one it amends (the Pacioli principle), never by scrubbing.
+    if (action === "ledger") {
+      const [raw] = await redis([["GET", "stw:ledger"]]);
+      const entries = raw ? JSON.parse(raw) : [];
+      return res.status(200).json({ entries, count: entries.length });
+    }
+
+    if (action === "ledgeradd") {
+      if (req.method !== "POST")
+        return res.status(405).json({ error: "POST required" });
+      const body = parseBody(req);
+      const change = String(body.change || "").trim();
+      const why = String(body.why || "").trim();
+      if (!change)
+        return res.status(422).json({ error: "change is required (what changed)" });
+      if (change.length > 4000 || why.length > 4000)
+        return res.status(422).json({ error: "entry too long" });
+      const author = body.author === "approved" ? "approved" : "you";
+      const before = body.before == null ? "" : String(body.before).slice(0, 2000);
+      const after = body.after == null ? "" : String(body.after).slice(0, 2000);
+      const kind = ["rule", "amendment", "trial", "observation", "correction"].includes(
+        String(body.kind)
+      )
+        ? String(body.kind)
+        : "amendment";
+
+      const [raw] = await redis([["GET", "stw:ledger"]]);
+      const entries = raw ? JSON.parse(raw) : [];
+      const seq = entries.reduce((m, e) => Math.max(m, e.seq || 0), 0) + 1;
+      const entry = {
+        seq,
+        at: new Date().toISOString(),
+        kind,
+        change,
+        why,
+        before,
+        after,
+        author,
+        correctsSeq: null,
+      };
+      entries.push(entry);
+      const str = JSON.stringify(entries);
+      const { verify, allMatch } = await writeVerified({ "stw:ledger": str });
+      const meta = await bumpMeta(
+        { "stw:ledger": sha(str) },
+        "ledgeradd",
+        "#" + seq + " " + kind + ": " + change.slice(0, 50)
+      );
+      return res.status(200).json({
+        ok: allMatch,
+        entry,
+        verify,
+        rev: meta.rev,
+        count: entries.length,
+      });
+    }
+
+    if (action === "ledgercorrect") {
+      if (req.method !== "POST")
+        return res.status(405).json({ error: "POST required" });
+      const body = parseBody(req);
+      const correctsSeq = parseInt(body.correctsSeq, 10);
+      const change = String(body.change || "").trim();
+      const why = String(body.why || "").trim();
+      if (!isFinite(correctsSeq))
+        return res.status(422).json({ error: "correctsSeq is required" });
+      if (!change)
+        return res
+          .status(422)
+          .json({ error: "change is required (the correction text)" });
+      if (change.length > 4000 || why.length > 4000)
+        return res.status(422).json({ error: "entry too long" });
+      const [raw] = await redis([["GET", "stw:ledger"]]);
+      const entries = raw ? JSON.parse(raw) : [];
+      const target = entries.find((e) => e.seq === correctsSeq);
+      if (!target)
+        return res
+          .status(404)
+          .json({ error: "No ledger entry #" + correctsSeq + " to correct" });
+      const seq = entries.reduce((m, e) => Math.max(m, e.seq || 0), 0) + 1;
+      const entry = {
+        seq,
+        at: new Date().toISOString(),
+        kind: "correction",
+        change,
+        why: why || "Correction to entry #" + correctsSeq,
+        before: "",
+        after: "",
+        author: "you",
+        correctsSeq,
+      };
+      entries.push(entry);
+      const str = JSON.stringify(entries);
+      const { verify, allMatch } = await writeVerified({ "stw:ledger": str });
+      const meta = await bumpMeta(
+        { "stw:ledger": sha(str) },
+        "ledgercorrect",
+        "#" + seq + " corrects #" + correctsSeq
+      );
+      return res.status(200).json({
+        ok: allMatch,
+        entry,
+        verify,
+        rev: meta.rev,
+        count: entries.length,
+      });
     }
 
     if (action === "restore") {
