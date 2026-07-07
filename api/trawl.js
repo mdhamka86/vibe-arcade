@@ -143,6 +143,18 @@ async function savePack(pack) {
 }
 
 // ---- stage 1: triage via the proven engine, with the data-edge gate in code ----
+// ---- today's date in Phuket time (UTC+7, no daylight saving all year) ----
+// The 8am cron is anchored to Phuket, so "today" must be computed in that zone,
+// never left to a downstream default. Returns DD/MM/YYYY as triage2 expects.
+function phuketToday() {
+  const now = new Date();
+  const phuket = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  const dd = String(phuket.getUTCDate()).padStart(2, "0");
+  const mm = String(phuket.getUTCMonth() + 1).padStart(2, "0");
+  const yyyy = phuket.getUTCFullYear();
+  return dd + "/" + mm + "/" + yyyy;
+}
+
 async function stageTriage(dateParam) {
   const url =
     BASE + "/api/triage2" + (dateParam ? "?date=" + encodeURIComponent(dateParam) : "");
@@ -328,7 +340,9 @@ module.exports = async (req, res) => {
 
     if (action === "run") {
       const stage = (req.query.stage || "all").toString();
-      const dateParam = req.query.date ? String(req.query.date) : null;
+      // Default to today in Phuket, computed here, never left to a downstream
+      // default. An explicit ?date= still wins, for backfills.
+      const dateParam = req.query.date ? String(req.query.date) : phuketToday();
       const t0 = Date.now();
 
       let pack;
