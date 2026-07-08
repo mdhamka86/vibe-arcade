@@ -287,7 +287,9 @@ function bookView(book) {
     positions: (book.positions || []).map((p) => {
       const base = p.ageResetAt || p.openedAt;
       const d = daysHeld(base);
-      return { ...p, daysHeld: daysHeld(p.openedAt), ageDays: d, ageFlag: ageFlag(d) };
+      const isLongTerm = !!p.longTerm || /long/i.test(p.proposedHorizon || '');
+      // long-term holds live on a different clock; the one-day aging ladder does not apply.
+      return { ...p, daysHeld: daysHeld(p.openedAt), ageDays: d, ageFlag: isLongTerm ? 'OK' : ageFlag(d), longTerm: isLongTerm };
     }),
   };
 }
@@ -636,7 +638,13 @@ async function actSync(positionsImg, historyImg) {
     const [news, rates, cal] = await Promise.all([getNews('forex'), refRates(), getCalendar()]);
     const posDetail = bookView(s.book).positions.map((p) => {
       const ref = refFor(p.pair, rates);
-      return `${p.pair} ${p.direction} ${p.lots} @ ${p.entry}, now ~${ref ?? '?'}, floating ${p.floating ?? '?'}, held ${p.ageDays}d. ${p.thesis && p.thesis !== 'Off-book entry, no engine thesis on record.' ? 'Thesis on record: ' + p.thesis : 'NO thesis on record (off-book entry): infer the most likely reason a trader took this direction here, then judge it.'}`;
+      const hoursOpen = p.openedAt ? Math.max(0, (Date.now() - p.openedAt) / 3600e3) : null;
+      const fromDesk = !!p.ideaId;
+      const isLongTerm = !!p.longTerm || /long/i.test(p.proposedHorizon || '');
+      let tag = '';
+      if (isLongTerm) tag = ' [LONG-TERM HOLD: judge on the durable multi-week thesis and higher-timeframe trend, NOT one-day noise; only mark BROKEN on a real structural break].';
+      else if (fromDesk && hoursOpen != null && hoursOpen < 20) tag = ` [FRESH DESK-PROPOSED TRADE, opened ${hoursOpen < 1 ? Math.round(hoursOpen * 60) + 'min' : hoursOpen.toFixed(1) + 'h'} ago, well within its ${p.proposedHorizon || 'one-day'} horizon: the desk proposed this itself, so do NOT flip to BROKEN on ordinary intraday noise or a modest adverse move; mark BROKEN only if the specific catalyst it was built on has genuinely reversed or a written invalidation level has actually triggered].`;
+      return `${p.pair} ${p.direction} ${p.lots} @ ${p.entry}, now ~${ref ?? '?'}, floating ${p.floating ?? '?'}, held ${p.ageDays}d.${tag} ${p.thesis && p.thesis !== 'Off-book entry, no engine thesis on record.' ? 'Thesis on record: ' + p.thesis : 'NO thesis on record (off-book entry): infer the most likely reason a trader took this direction here, then judge it.'}`;
     }).join('\n');
 
     morningNote = await claude(`You are THE TERMINAL's morning desk analyst. Your most important job is to re-examine every open position against CURRENT conditions and judge, honestly, whether its thesis still holds or whether it is time to think about closing. Do not rubber-stamp; a position being green does not mean the thesis is intact, and a position being red does not mean it is broken.
@@ -651,7 +659,7 @@ TODAY'S ECONOMIC CALENDAR, High/Medium impact, Bangkok times (validated Forex Fa
 ${calLines(cal)}
 Fresh wire:\n${digest(news, 14)}
 
-For EACH open position, decide a thesis status: HOLDING (original reasoning intact, stay the course), WOBBLING (thesis under strain, watch closely, be ready to act), or BROKEN (the reason for the trade no longer applies, actively consider closing). Ground the verdict in the fresh news, the calendar and the price move since entry. For off-book positions, first infer the likely thesis in one clause, then judge it the same way.
+For EACH open position, decide a thesis status: HOLDING (original reasoning intact, stay the course), WOBBLING (thesis under strain, watch closely, be ready to act), or BROKEN (the reason for the trade no longer applies, actively consider closing). Ground the verdict in the fresh news, the calendar and the price move since entry. CALIBRATE TO HORIZON: a position tagged FRESH DESK-PROPOSED must not be flipped to BROKEN on ordinary noise minutes after the desk itself proposed it, and a LONG-TERM HOLD must be judged on its durable multi-week thesis, not a one-day wobble. For off-book positions, first infer the likely thesis in one clause, then judge it the same way.
 
 Write TIGHT, telegram style. HARD LIMITS: headline max 8 words; each position read max 22 words including the status reason; pick only the 3-4 calendar events that matter, each "what" max 8 words and "why" max 10 words; overall max 30 words naming the single priority.
 JSON only: {"headline":"...","lines":[{"pair":"EURUSD","status":"HOLDING|WOBBLING|BROKEN","read":"the reason, grounded in current conditions"}],"calendar":[{"when":"Mon 21:00 BKK","what":"USD ISM Services (fc 54.2)","why":"beat = USD bid, hits the long"}],"overall":"..."}`, 1400);
@@ -771,28 +779,49 @@ async function actRedFlag(positionId) {
   if (!p) throw new Error('Position not found.');
   const [news, rates, cal] = await Promise.all([getNews('forex'), refRates(), getCalendar()]);
   const held = daysHeld(p.openedAt);
+  const hoursOpen = p.openedAt ? Math.max(0, (Date.now() - p.openedAt) / 3600e3) : null;
+  const fromDesk = !!p.ideaId; // this position was opened from one of the desk's own ideas
+  const isLongTerm = !!p.longTerm || /long/i.test(p.proposedHorizon || '');
   const pp = normPair(p.pair);
   const pairCal = calLines(cal, [pp.slice(0, 3), pp.slice(3, 6)]);
   const marginShare = s.book.vitals?.margin && s.book.vitals?.equity
     ? `this book uses ${s.book.vitals.margin} margin of ${s.book.vitals.equity} equity`
     : 'margin share unknown';
 
-  const verdict = await claude(`You are THE TERMINAL's red flag reviewer, running a zero-based position review (Peter Lynch test: if flat today, would you open THIS trade right now?).
+  // ---- horizon-aware, self-aware framing (the fix) ----
+  // A one-day trade overstays after ~1 day; a long-term hold does not overstay for weeks.
+  // A trade the desk itself just proposed must NOT be reviewed as if it were stale.
+  let lifeFrame, ruleFrame;
+  if (isLongTerm) {
+    lifeFrame = `This is a LONG-TERM position (horizon: ${p.proposedHorizon || 'long-term hold'}), held ${held} day(s). It is NOT exempt from scrutiny; it needs a genuine review, just conducted through a LONG-TERM lens rather than a one-day scalp's twitchiness. Do real work here: (a) PATTERN: read the higher-timeframe price action and trend (weekly/daily structure, key support/resistance, whether the broader move is still intact or turning). (b) NEWS: weigh the durable, structural developments that bear on a multi-week/multi-month thesis, not a fleeting intraday risk-off spike. (c) LEVELS: check whether the current SL (${p.sl || 'none'}) and TP (${p.tp || 'none'}) still make sense at the present price, or should be revised for a long-term hold. (d) DURATION: if keeping, say concretely HOW MUCH LONGER to hold and toward what (a level, a catalyst, a timeframe).`;
+    ruleFrame = `RULES: Judge on the durable long-term thesis and the higher-timeframe pattern, not one-day noise. Default to KEEP unless that long-term thesis has genuinely broken (a structural macro shift, a higher-timeframe trend reversal, a fundamental change) OR the levels/pattern now argue the position no longer makes sense. A temporary drawdown or a short-lived news spike is not itself a close signal. But DO give an honest, substantive verdict: if the long-term picture has soured, say CLOSE plainly. When you KEEP, you MUST provide a revised thesis, sensible revised or confirmed SL/TP levels, and a concrete answer on how much longer to hold.`;
+  } else if (fromDesk && hoursOpen != null && hoursOpen < 20) {
+    lifeFrame = `IMPORTANT: THE DESK ITSELF PROPOSED THIS TRADE and it was opened only ${hoursOpen < 1 ? Math.round(hoursOpen * 60) + ' minutes' : hoursOpen.toFixed(1) + ' hours'} ago, well inside its proposed ${p.proposedHorizon || 'one-day'} horizon. It has NOT overstayed; it has barely begun. Do NOT contradict the desk's own fresh proposal on ordinary intraday noise or a modest adverse move. Give the trade the room its horizon allows.`;
+    ruleFrame = `RULES: Because this is a fresh, desk-proposed trade still inside its horizon, the burden of proof sits firmly on CLOSE. Default to KEEP. Recommend CLOSE ONLY if a genuine, specific, checkable event has BROKEN the original thesis since entry (e.g. the exact catalyst the trade was built on has now reversed, or a hard invalidation level written into the thesis has actually triggered). A small floating loss, general risk-off tone, or "might drift" is NOT grounds to close a trade the desk proposed minutes ago. If the thesis is intact, KEEP and simply restate it.`;
+  } else {
+    const overstayed = hoursOpen != null && hoursOpen > 26;
+    lifeFrame = `Position held ${held} day(s) (proposed horizon was: ${p.proposedHorizon || 'one-day, close within 24h'}${overstayed ? ', so this position HAS overstayed its intended one-day life' : ', still within or near its intended life'}).`;
+    ruleFrame = `RULES: The burden of proof sits on KEEP. A KEEP requires specific, current, checkable evidence the thesis is alive, plus a brand-new present-tense thesis, revised horizon and levels. "Price might come back" is a prayer, not a thesis; for an overstayed one-day trade, default to CLOSE. Weigh margin real estate: a not-quite-wrong position can still deserve closing on opportunity-cost grounds.`;
+  }
+
+  const verdict = await claude(`You are THE TERMINAL's red flag reviewer, running a zero-based position review (Peter Lynch test: if flat today, would you open THIS trade right now?), BUT calibrated to this position's actual horizon and origin.
 
 ${deskContext(t, s.book, s.lessons, s.book.vitals, rates)}
 
-Position under review: ${p.pair} ${p.direction} ${p.lots} lots @ ${p.entry}, SL ${p.sl || 'none'}, TP ${p.tp || 'none'}, floating ${p.floating ?? '?'}, held ${held} days (proposed horizon was: ${p.proposedHorizon || 'one-day, close within 24h'}, so this position has overstayed its intended life).
+Position under review: ${p.pair} ${p.direction} ${p.lots} lots @ ${p.entry}, SL ${p.sl || 'none'}, TP ${p.tp || 'none'}, floating ${p.floating ?? '?'}.
+${lifeFrame}
 Original thesis: ${p.thesis || 'none on record'}
-Opportunity cost: ${marginShare}; a stale position blocks proper sizing of fresh ideas.
+Opportunity cost: ${marginShare}; a stale position blocks proper sizing of fresh ideas (weigh this ONLY if the position is genuinely stale or broken, not if it is a fresh or long-term hold doing its job).
 UPCOMING CALENDAR for this pair's currencies, Bangkok times (validated Forex Factory data):
 ${pairCal}
 Fresh wire:\n${digest(news, 16)}
 
-RULES: The burden of proof sits on KEEP. A KEEP requires specific, current, checkable evidence the thesis is alive, plus a brand-new present-tense thesis, revised horizon and levels. "Price might come back" is a prayer, not a thesis; default to CLOSE. Weigh margin real estate: a not-quite-wrong position can still deserve closing on opportunity-cost grounds. BREVITY: reason max 40 words, telegram style.
+${ruleFrame}
+For a LONG-TERM KEEP you MUST fill "hold_duration" (how much longer and toward what) and "levels_check" (whether SL/TP still make sense, revised if needed). BREVITY: reason max 40 words, telegram style.
 
-JSON only: {"verdict":"KEEP|CLOSE","reason":"...","evidence":["specific current evidence items"],"new_thesis":"required if KEEP","new_horizon":"required if KEEP","suggested_levels":"optional revised SL/TP","margin_note":"..."}`, 1600);
+JSON only: {"verdict":"KEEP|CLOSE","reason":"...","evidence":["specific current evidence items"],"new_thesis":"required if KEEP","new_horizon":"required if KEEP","hold_duration":"for a long-term KEEP: how much longer to hold and toward what level/catalyst","levels_check":"do current SL/TP still make sense? revised levels if not","suggested_levels":"optional revised SL/TP","margin_note":"..."}`, 1600);
 
-  p.lastReview = { verdict: verdict.verdict, reason: verdict.reason, new_thesis: verdict.new_thesis || null, at: t.iso };
+  p.lastReview = { verdict: verdict.verdict, reason: verdict.reason, new_thesis: verdict.new_thesis || null, hold_duration: verdict.hold_duration || null, levels_check: verdict.levels_check || null, at: t.iso };
 
   if (verdict.verdict === 'KEEP') {
     p.ageResetAt = Date.now();
@@ -803,6 +832,19 @@ JSON only: {"verdict":"KEEP|CLOSE","reason":"...","evidence":["specific current 
   }
   await rSet('terminal:book', s.book);
   return { clock: t, verdict, position: p };
+}
+
+// ---------- Mark a position long-term (or back to short-term) ----------
+// A long-term hold is judged on its durable thesis and exempted from the one-day
+// aging ladder and the close-biased fresh-trade review.
+async function actSetHorizon(positionId, longTerm) {
+  const s = await loadAll();
+  const p = s.book.positions.find((x) => x.id === positionId);
+  if (!p) throw new Error('Position not found.');
+  p.longTerm = !!longTerm;
+  if (longTerm) { p.proposedHorizon = 'long-term hold'; p.ageResetAt = Date.now(); }
+  await rSet('terminal:book', s.book);
+  return { ok: true, position: p };
 }
 
 // ---------- Router ----------
@@ -819,6 +861,7 @@ export default async function handler(req, res) {
     else if (action === 'pass') out = await actPass(p.ideaLedgerId);
     else if (action === 'aar') out = await actAAR(p.closureId, p.historyImage);
     else if (action === 'redflag') out = await actRedFlag(p.positionId);
+    else if (action === 'horizon') out = await actSetHorizon(p.positionId, p.longTerm);
     else throw new Error(`Unknown action: ${action}`);
     res.status(200).json(out);
   } catch (e) {
