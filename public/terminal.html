@@ -446,6 +446,7 @@ function Book({state,refresh}){
   const [aarOut,setAarOut]=useState(null);
   const [rfBusy,setRfBusy]=useState(null);
   const [rfOut,setRfOut]=useState(null);
+  const [horBusy,setHorBusy]=useState(null);
   const [msg,setMsg]=useState('');
   const book=state?.book;
 
@@ -472,6 +473,12 @@ function Book({state,refresh}){
     try{ const r=await eng('redflag',{positionId}); setRfOut(r); refresh(); }
     catch(e){ alert(e.message); }
     setRfBusy(null);
+  };
+  const toggleHorizon=async(positionId,longTerm)=>{
+    setHorBusy(positionId);
+    try{ await eng('horizon',{positionId,longTerm}); refresh(); }
+    catch(e){ alert(e.message); }
+    setHorBusy(null);
   };
   const flagCls={OK:'b-ok',NOTE:'b-note',AMBER:'b-amber',RED:'b-red'};
 
@@ -570,22 +577,31 @@ function Book({state,refresh}){
         <div key={p.id} className="card">
           <div className="row" style={{justifyContent:'space-between'}}>
             <span className="hl">{p.pair} <span className="dim">{p.direction} {p.lots} @ {p.entry}</span></span>
-            <span className={'badge '+flagCls[p.ageFlag]}>{p.ageDays}D {p.ageFlag!=='OK'?p.ageFlag:''}</span>
+            {p.longTerm
+              ? <span className="badge b-etf">LONG-TERM</span>
+              : <span className={'badge '+flagCls[p.ageFlag]}>{p.ageDays}D {p.ageFlag!=='OK'?p.ageFlag:''}</span>}
           </div>
           <div className="meta">
             <span>SL {p.sl??'—'}</span><span>TP {p.tp??'—'}</span>
             <span className={p.floating>=0?'green':'red'}>float {p.floating??'?'}</span>
             {p.orphan && <span className="ambr">OFF-BOOK</span>}
-            {p.ageResetAt && <span className="dim">re-underwritten</span>}
+            {p.ageResetAt && !p.longTerm && <span className="dim">re-underwritten</span>}
           </div>
-          {p.proposedHorizon && <div className="note" style={{marginTop:6}}><span className="dim">HORIZON</span> proposed {p.proposedHorizon}, held {p.ageDays} day{p.ageDays===1?'':'s'}{p.ageDays>=1?<span className="ambr"> · past its intended life</span>:''}</div>}
+          {p.longTerm
+            ? <div className="note" style={{marginTop:6}}><span className="dim">HORIZON</span> long-term hold, held {p.ageDays} day{p.ageDays===1?'':'s'} <span className="steel">· judged on the long-term thesis, not the one-day clock</span></div>
+            : p.proposedHorizon && <div className="note" style={{marginTop:6}}><span className="dim">HORIZON</span> proposed {p.proposedHorizon}, held {p.ageDays} day{p.ageDays===1?'':'s'}{p.ageDays>=1?<span className="ambr"> · past its intended life</span>:''}</div>}
           {p.thesis && <div className="thesis">{p.thesis}</div>}
-          {p.lastReview && <div className="note" style={{marginTop:6}}><span className={p.lastReview.verdict==='CLOSE'?'red':'green'}>REVIEW {p.lastReview.verdict}</span> {p.lastReview.reason} <span className="dim">· {ago(Date.parse(p.lastReview.at))}</span></div>}
-          {p.ageFlag==='RED' &&
-            <div className="row" style={{marginTop:10}}>
-              <button className="pri" disabled={rfBusy===p.id} onClick={()=>runRF(p.id)}>{rfBusy===p.id? <span className="spin">◐</span>:'RED FLAG — keep or close?'}</button>
-            </div>}
-          {p.ageFlag==='AMBER' && <div className="note" style={{marginTop:8,color:'var(--amber)'}}>Day {p.ageDays}: is the original thesis alive, or are you holding hope? Red flag review unlocks at day 3.</div>}
+          {p.lastReview && <>
+            <div className="note" style={{marginTop:6}}><span className={p.lastReview.verdict==='CLOSE'?'red':'green'}>REVIEW {p.lastReview.verdict}</span> {p.lastReview.reason} <span className="dim">· {ago(Date.parse(p.lastReview.at))}</span></div>
+            {p.lastReview.levels_check && <div className="note" style={{marginTop:4}}><span className="dim">LEVELS</span> {p.lastReview.levels_check}</div>}
+            {p.lastReview.hold_duration && <div className="note" style={{marginTop:4}}><span className="steel">HOLD</span> {p.lastReview.hold_duration}</div>}
+          </>}
+          <div className="row" style={{marginTop:10,gap:8}}>
+            {(p.ageFlag==='RED' || p.longTerm) &&
+              <button className="pri" disabled={rfBusy===p.id} onClick={()=>runRF(p.id)}>{rfBusy===p.id? <span className="spin">◐</span>:(p.longTerm?'Review this hold':'RED FLAG — keep or close?')}</button>}
+            <button className="ghost" disabled={horBusy===p.id} onClick={()=>toggleHorizon(p.id,!p.longTerm)}>{horBusy===p.id?<span className="spin">◐</span>:(p.longTerm?'Make short-term':'Mark long-term')}</button>
+          </div>
+          {p.ageFlag==='AMBER' && !p.longTerm && <div className="note" style={{marginTop:8,color:'var(--amber)'}}>Day {p.ageDays}: is the original thesis alive, or are you holding hope? Red flag review unlocks at day 3.</div>}
         </div>
       ))}
 
