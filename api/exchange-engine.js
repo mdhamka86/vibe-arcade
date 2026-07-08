@@ -97,10 +97,20 @@ async function claude(userContent, maxTokens = 2000) {
   });
   const j = await r.json();
   if (j.error) throw new Error(j.error.message || 'Claude API error');
+  // if the model hit the token ceiling, the JSON will be truncated; say so clearly
+  if (j.stop_reason === 'max_tokens') {
+    throw new Error('The desk had more to say than the response could hold (hit the token limit). Try again; if it persists this analysis needs a bigger allowance.');
+  }
   const text = (j.content || []).map((c) => c.text || '').join('\n');
   const clean = text.replace(/```json|```/g, '').trim();
   const m = clean.match(/\{[\s\S]*\}/);
-  return JSON.parse(m ? m[0] : clean);
+  try {
+    return JSON.parse(m ? m[0] : clean);
+  } catch (e) {
+    // a parse failure here almost always means a truncated or malformed response;
+    // give a human message rather than a raw "position 7955" JSON error.
+    throw new Error('The desk returned an incomplete response and could not be read. Please try again in a moment.');
+  }
 }
 
 // ---------- Equity level validator ----------
@@ -609,10 +619,10 @@ YOUR TASK, in two parts:
 
 PART 1 — TARGET BALANCE: Decide and EXPLAIN the best target shape for his book. Give sensible target weights by sector and by geography that meaningfully cut the chip concentration and add daytime-tradeable regional exposure, following sound diversification principles (no single stock dominating, no single sector above ~25-30%, genuine geographic spread). Explain WHY in plain, warm language.
 
-PART 2 — PER-HOLDING VERDICT: For EACH current holding, judge HOLD, TRIM, or CLOSE in service of that target. For any TRIM or CLOSE, give ONE sensible exit price (a single clean number) and a one-line reason. Base the exit price on the real current level and a sensible technical/valuation judgement; where he is underwater but the story is intact, it is fine to suggest holding or waiting for a better level rather than crystallising a loss, and where a name is a genuine winner or a broken story, say so. Ground verdicts in the concentration problem: over-weight chip names are prime trim/close candidates; genuine diversifiers and winners are keepers.
+PART 2 — PER-HOLDING VERDICT: For EACH current holding, judge HOLD, TRIM, or CLOSE in service of that target. For any TRIM or CLOSE, give ONE sensible exit price (a single clean number) and a SHORT one-line reason (max 18 words, telegram style). Base the exit price on the real current level and a sensible technical/valuation judgement; where he is underwater but the story is intact, it is fine to suggest holding or waiting for a better level rather than crystallising a loss, and where a name is a genuine winner or a broken story, say so. Ground verdicts in the concentration problem: over-weight chip names are prime trim/close candidates; genuine diversifiers and winners are keepers. Keep every field tight; brevity matters.
 
 Respond ONLY with JSON, no markdown:
-{"target":{"summary":"2-3 sentence plain explanation of the target shape and why","sectors":[{"name":"Semiconductors","current":"X%","target":"Y%"}],"geography":[{"name":"US","current":"X%","target":"Y%"}]},"verdicts":[{"ticker":"TICK","name":"Company","verdict":"HOLD|TRIM|CLOSE","exit_price":"single number or null for HOLD","reason":"one line","sector":"...","weight":"X%"}],"headline":"one honest sentence on the book's biggest imbalance","next_step":"what to do first, one line"}`, 2600);
+{"target":{"summary":"2-3 sentence plain explanation of the target shape and why","sectors":[{"name":"Semiconductors","current":"X%","target":"Y%"}],"geography":[{"name":"US","current":"X%","target":"Y%"}]},"verdicts":[{"ticker":"TICK","name":"Company","verdict":"HOLD|TRIM|CLOSE","exit_price":"single number or null for HOLD","reason":"one line","sector":"...","weight":"X%"}],"headline":"one honest sentence on the book's biggest imbalance","next_step":"what to do first, one line"}`, 8000);
 
   const result = {
     clock: t,
