@@ -271,10 +271,42 @@
   .infoPop:before{content:"";position:absolute;top:-5px;left:50%;transform:translateX(-50%) rotate(45deg);width:10px;height:10px;background:var(--sageDeep);}
 
   /* bottom tab bar */
-  .tabbar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:520px;display:flex;background:var(--surface);border-top:1px solid var(--line);padding:8px 8px calc(8px + env(safe-area-inset-bottom));z-index:30;}
-  .tab{flex:1;background:transparent;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0;color:var(--muted);font-size:11px;font-weight:500;transition:color .15s;}
+  .tabbar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:520px;display:flex;background:var(--surface);border-top:1px solid var(--line);padding:8px 4px calc(8px + env(safe-area-inset-bottom));z-index:30;}
+  .tab{flex:1;background:transparent;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0;color:var(--muted);font-size:10.5px;font-weight:500;transition:color .15s;}
   .tab.on{color:var(--sage);}
-  .tab span{letter-spacing:.2px;}
+  .tab span{letter-spacing:.1px;white-space:nowrap;}
+
+  /* sous weed topic cards */
+  .testBanner{display:flex;align-items:center;gap:7px;background:#faf1ee;border:1px solid #e2c4bb;color:#a6543f;border-radius:var(--rs);padding:9px 13px;font-size:12.5px;font-weight:500;margin-bottom:14px;}
+  .topicCard{padding:0;overflow:hidden;}
+  .topicHd{width:100%;display:flex;align-items:center;gap:11px;background:transparent;border:none;padding:15px var(--pad);color:var(--sageDeep);font-size:14.5px;font-weight:600;text-align:left;}
+  .topicHd:active{background:var(--surface2);}
+  .topicIc{color:var(--sage);flex-shrink:0;}
+  .topicTitle{flex:1;}
+  .topicHd .rot{transform:rotate(90deg);}
+  .topicBody{padding:2px var(--pad) 16px;border-top:1px solid var(--line);}
+  .topicIntro{font-size:13px;line-height:1.5;margin:12px 0 12px;}
+
+  .sourceRow{display:flex;flex-direction:column;gap:4px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line);}
+
+  /* potency calculator */
+  .calc{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:var(--pad);margin-bottom:14px;}
+  .calc.embedded{background:var(--surface2);margin-bottom:16px;}
+  .calcHd{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--sageDeep);margin-bottom:13px;}
+  .calcIc{color:var(--sage);}
+  .calcInputs{display:flex;gap:8px;}
+  .calcField{flex:1;min-width:0;}
+  .calcField label{display:block;font-size:11px;font-weight:600;letter-spacing:.3px;text-transform:uppercase;color:var(--muted);margin-bottom:6px;}
+  .calcField .inp{padding:10px 10px;font-size:15px;text-align:center;}
+  .calcResult{display:flex;gap:8px;margin-top:14px;}
+  .calcStat{flex:1;background:var(--surface2);border-radius:var(--rs);padding:12px 8px;text-align:center;}
+  .calc.embedded .calcStat{background:var(--surface);}
+  .calcStat.big{background:var(--amberSoft);}
+  .calcNum{display:block;font-size:20px;font-weight:700;color:var(--sageDeep);font-variant-numeric:tabular-nums;letter-spacing:-.3px;}
+  .calcStat.big .calcNum{color:#8a5a1f;}
+  .calcLbl{display:block;font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-top:3px;line-height:1.3;}
+  .calcHint{margin-top:14px;font-size:13px;text-align:center;padding:10px;}
+  .calcNote{margin-top:12px;font-size:11.5px;line-height:1.45;}
 
   #err{display:none;margin:20px;padding:16px;background:#faf1ee;border:1px solid var(--danger);border-radius:10px;color:#8a4231;font-family:monospace;font-size:12px;white-space:pre-wrap;}
 </style>
@@ -444,7 +476,95 @@ var THC_TIPS = [
       "Bin any batch that smells off, turns cloudy, or shows mould."
     ] }
 ];
-var THC_COMMUNITY = { label: "Browse maker discussions", url: "https://www.reddit.com/search/?q=cannabis%20tincture%20sous%20vide%20tips" };
+var THC_COMMUNITY = { label: "Browse maker discussions", url: "https://www.reddit.com/r/SousWeed/" };
+
+/* ---------- Sous Weed knowledge base (verified, paraphrased, evergreen) ----------
+   The full sous-vide cannabis reference. Collapsible topics, ADHD-friendly.
+   Drawn from Monica Lo's published Sous Weed method + consistent maker consensus.
+*/
+var SOUSWEED = [
+  { icon: "leaf", title: "What it is & why bother",
+    intro: "Sous vide means cooking sealed in a bag or jar in a precisely held water bath. For cannabis it is a quiet superpower.",
+    points: [
+      "Precise heat means predictable potency and protected flavour, no scorching, no guesswork.",
+      "It is almost completely smell-free while it runs, since everything stays sealed. The reason Sous Weed was born in a strict apartment.",
+      "Set it and walk away. No babysitting a stovetop, no stirring, no burning.",
+      "One bath fits several jars, so she can run multiple infusions at once."
+    ] },
+  { icon: "flame", title: "Start here: the two-stage bath",
+    intro: "The classic Sous Weed flow does everything in the bath. No oven needed at any point.",
+    points: [
+      "Stage 1, decarb: seal ground flower in a bag, bath at 95\u00b0C for 90 minutes to activate the THC.",
+      "Stage 2, infuse: add the fat or alcohol, reseal, drop the bath to 85\u00b0C, run 4 hours (up to 8 for a fuller extraction).",
+      "That is it. Cool, strain, bottle. The whole thing happens in one machine.",
+      "A one-step shortcut exists (bath the flower and fat together low and slow), but the two-stage way is more predictable, so start there."
+    ] },
+  { icon: "info", title: "Yes, you can skip the oven",
+    intro: "This is the big one people ask. You do not need an oven at all with sous vide.",
+    points: [
+      "Decarb happens right in the 95\u00b0C bath, sealed in the bag. No tray, no oven smell, no scorching.",
+      "It is gentler and more even than an oven, which runs hot and cool spots and often lies about its temperature.",
+      "Keep it below roughly 140\u00b0C always (the bath never goes near that anyway), since too hot vaporises the good compounds.",
+      "One caveat for Naddy's kit: the SV130 tops out near 95\u00b0C, which is exactly the decarb sweet spot, so it can just about do it, but it is working at its ceiling. Watch it holds temp."
+    ] },
+  { icon: "drop", title: "Jar vs bag",
+    intro: "Both work in the bath. Each has a knack worth knowing.",
+    points: [
+      "Vacuum bag: best odour control and full submersion. Seal out all the air. Naddy's sealer shines here.",
+      "Zipper bag (water displacement): seal it 90% shut, lower slowly so the water pressure pushes air out, then seal fully just before it goes under.",
+      "Mason jar: only ever finger-tight so pressure can escape, and use proper heat-tempered canning jars, never a repurposed mayo jar.",
+      "Whichever you pick, keep it weighted and stable on the rack so it cannot float over and flood."
+    ] },
+  { icon: "jar", title: "Ratios & starting amounts",
+    intro: "Loose rules of thumb, then adjust to taste and potency.",
+    points: [
+      "A gentle starting ratio for oil is around 7g of flower per cup (240ml) of oil. More flower, stronger oil.",
+      "For a punchy infusion some go as high as 1 part cannabis to 8 or 16 parts fat, depending how strong they want it.",
+      "Grind coarse, never to powder. Fine dust clouds the oil and drags bitter plant taste through the strainer.",
+      "Avocado or olive oil both work beautifully as the carrier, which suits Naddy's kit perfectly."
+    ] },
+  { icon: "book", title: "Potency maths (rough)",
+    intro: "You cannot know exactly without a lab, but this gets you a sensible estimate. Buy lab-tested flower so you know the starting THC %.",
+    points: [
+      "Simple version: (grams \u00d7 THC% \u00d7 1000) \u00d7 0.6 \u00f7 total ml = mg THC per ml.",
+      "Example: 10g at 20% THC is 2000mg total. Sous vide pulls roughly 90%, so about 1800mg lands in the finished oil.",
+      "Spread across the batch volume, that tells her the strength of each ml or teaspoon.",
+      "Real potency always varies, so treat the number as a guide, not gospel. The dropper still starts low."
+    ] },
+  { icon: "warn", title: "Dose low, go slow",
+    intro: "The single most important habit. Homemade strength is unpredictable.",
+    points: [
+      "Start with one small portion, a teaspoon of oil or a fraction of a dropper, then wait one to two full hours.",
+      "Only then decide whether to take more. Easy to add next time, impossible to undo once taken.",
+      "5mg THC is a common gentle starting point for a beginner, even for a seasoned smoker, since edibles hit differently.",
+      "Never drive after taking it, and keep it well away from anyone it is not meant for."
+    ] },
+  { icon: "check", title: "Cool, strain & store",
+    intro: "The finish matters as much as the bath.",
+    points: [
+      "Chill the sealed bag in an ice bath before opening so the volatile aromatics settle back in rather than escaping.",
+      "Strain through cheesecloth or fine mesh, then bottle in dark amber glass.",
+      "Heat, light, and air degrade it. Keep it cool, dark, and tightly capped.",
+      "Oil infusions keep best refrigerated, roughly 6 to 12 months. Bin any batch that smells rancid, turns cloudy, or shows mould."
+    ] }
+];
+var SOUSWEED_SOURCE = { label: "Sous Weed (Monica Lo's method)", url: "https://www.sousweed.com/blog/howtosousweed" };
+
+/* ---------- potency estimate ----------
+   Standard maker-consensus efficiency: some THCA is lost in decarb,
+   more is lost transferring into the solvent. Combined ~0.6 is the
+   widely-used rule of thumb. Result is an estimate, never lab-exact.
+*/
+var DECARB_EFF = 0.85;   /* fraction surviving activation */
+var INFUSE_EFF = 0.80;   /* fraction transferring to solvent */
+function estimatePotency(thcPct, grams, ml) {
+  var pct = parseFloat(thcPct); var g = parseFloat(grams); var v = parseFloat(ml);
+  if (isNaN(pct) || isNaN(g) || isNaN(v) || pct <= 0 || g <= 0 || v <= 0) return null;
+  var rawMg = g * (pct / 100) * 1000;          /* mg THC in the raw flower */
+  var usableMg = rawMg * DECARB_EFF * INFUSE_EFF;
+  var perMl = usableMg / v;
+  return { totalMg: Math.round(usableMg), perMl: Math.round(perMl * 10) / 10, perDropper: Math.round(perMl * 10) / 10 };
+}
 var STEP_LINK = {
   seal: { label: "How tight should the seal be?", url: "https://www.amazingfoodmadeeasy.com/sous-vide-times-temperatures/sous-vide-infusions" },
   decarb: { label: "Decarb science", url: "https://projectcbd.org/science/decarboxylating-cannabis/" },
@@ -610,6 +730,7 @@ function App() {
       view === "new" ? React.createElement(Wizard, { start: startBatch, cancel: function () { setView("bench"); } }) : null,
       view === "log" ? React.createElement(Logbook, { logbook: logbook, toggleProven: toggleProven, rateBatch: rateBatch, noteBatch: noteBatch, repeatBatch: repeatBatch }) : null,
       view === "guides" ? React.createElement(Guides, null) : null,
+      view === "sousweed" ? React.createElement(SousWeed, null) : null,
       view === "kit" ? React.createElement(Kit, { kitChecks: kitChecks, toggleKit: toggleKit }) : null
     ),
     view !== "new" ? React.createElement(TabBar, { view: view, setView: setView }) : null
@@ -629,6 +750,7 @@ function TabBar(props) {
   var tabs = [
     { id: "bench", label: "Bench", icon: "flame" },
     { id: "log", label: "Cellar", icon: "jar" },
+    { id: "sousweed", label: "Sous Weed", icon: "leaf" },
     { id: "guides", label: "Guides", icon: "book" },
     { id: "kit", label: "Kit", icon: "box" }
   ];
@@ -825,6 +947,8 @@ function StepDetails(props) {
 
     isThc ? React.createElement(ThcTips, null) : null,
 
+    isCanna ? React.createElement(PotencyCalc, { title: "Estimate strength", embedded: true }) : null,
+
     isCanna && !f.rawMaterial ? React.createElement("div", { className: "okRow" },
       React.createElement(Icon, { name: "check", size: 15 }), "Already decarbed. Straight to the warm infuse.") : null,
     isCanna && f.rawMaterial ? React.createElement(DecarbNote, { cannabinoid: f.botanical.cannabinoid }) : null,
@@ -999,6 +1123,77 @@ function Guides() {
                 l.label);
             })));
       }))
+  );
+}
+
+/* ---------- Potency calculator (reusable) ---------- */
+function PotencyCalc(props) {
+  var s = useState({ thc: "", grams: "", ml: "" });
+  var f = s[0]; var setF = s[1];
+  function upd(key, val) { var c = {}; for (var k in f) c[k] = f[k]; c[key] = val; setF(c); }
+  var result = estimatePotency(f.thc, f.grams, f.ml);
+  return React.createElement("div", { className: "calc" + (props.embedded ? " embedded" : "") },
+    props.title ? React.createElement("div", { className: "calcHd" },
+      React.createElement(Icon, { name: "info", size: 15, weight: 1.7, className: "calcIc" }),
+      React.createElement("span", null, props.title)) : null,
+    React.createElement("div", { className: "calcInputs" },
+      React.createElement("div", { className: "calcField" },
+        React.createElement("label", null, "THC %"),
+        React.createElement("input", { className: "inp", type: "number", value: f.thc, placeholder: "20", onChange: function (e) { upd("thc", e.target.value); } })),
+      React.createElement("div", { className: "calcField" },
+        React.createElement("label", null, "Flower (g)"),
+        React.createElement("input", { className: "inp", type: "number", value: f.grams, placeholder: "7", onChange: function (e) { upd("grams", e.target.value); } })),
+      React.createElement("div", { className: "calcField" },
+        React.createElement("label", null, "Liquid (ml)"),
+        React.createElement("input", { className: "inp", type: "number", value: f.ml, placeholder: "240", onChange: function (e) { upd("ml", e.target.value); } }))),
+    result ? React.createElement("div", { className: "calcResult" },
+      React.createElement("div", { className: "calcStat big" },
+        React.createElement("span", { className: "calcNum" }, result.perMl),
+        React.createElement("span", { className: "calcLbl" }, "mg THC per ml")),
+      React.createElement("div", { className: "calcStat" },
+        React.createElement("span", { className: "calcNum" }, result.perDropper),
+        React.createElement("span", { className: "calcLbl" }, "per 1ml dropper")),
+      React.createElement("div", { className: "calcStat" },
+        React.createElement("span", { className: "calcNum" }, result.totalMg),
+        React.createElement("span", { className: "calcLbl" }, "mg in batch"))) :
+      React.createElement("div", { className: "calcHint muted" }, "Fill all three for an estimate."),
+    React.createElement("p", { className: "calcNote muted" }, "An estimate, not lab-exact. Real strength varies, so the dropper still starts low.")
+  );
+}
+function TopicCard(props) {
+  var t = props.topic;
+  var o = useState(false); var open = o[0]; var setOpen = o[1];
+  return React.createElement("div", { className: "card topicCard" },
+    React.createElement("button", { className: "topicHd", type: "button", onClick: function () { setOpen(!open); } },
+      React.createElement(Icon, { name: t.icon, size: 18, weight: 1.6, className: "topicIc" }),
+      React.createElement("span", { className: "topicTitle" }, t.title),
+      React.createElement(Icon, { name: open ? "back" : "arrow", size: 15, weight: 1.7, className: open ? "rot" : "" })),
+    open ? React.createElement("div", { className: "topicBody" },
+      React.createElement("p", { className: "topicIntro muted" }, t.intro),
+      React.createElement("ul", { className: "tipList" },
+        t.points.map(function (p, j) {
+          return React.createElement("li", { key: j }, p);
+        }))) : null
+  );
+}
+
+function SousWeed() {
+  return React.createElement("section", { className: "screen" },
+    React.createElement("div", { className: "screenHead" }, React.createElement("h1", null, "Sous Weed")),
+    React.createElement("p", { className: "lead" }, "The full sous vide cannabis playbook. Tap any topic to open it."),
+    React.createElement("div", { className: "testBanner" },
+      React.createElement(Icon, { name: "warn", size: 14, weight: 1.7 }),
+      React.createElement("span", null, "Personal testing only. Not for sale.")),
+    React.createElement(PotencyCalc, { title: "Potency estimator" }),
+    React.createElement("div", { className: "list" },
+      SOUSWEED.map(function (t, i) {
+        return React.createElement(TopicCard, { key: i, topic: t });
+      })),
+    React.createElement("div", { className: "sourceRow" },
+      React.createElement("a", { className: "linkRow", href: SOUSWEED_SOURCE.url, target: "_blank", rel: "noopener" },
+        React.createElement(Icon, { name: "read", size: 14 }), SOUSWEED_SOURCE.label),
+      React.createElement("a", { className: "linkRow", href: THC_COMMUNITY.url, target: "_blank", rel: "noopener" },
+        React.createElement(Icon, { name: "arrow", size: 14 }), THC_COMMUNITY.label))
   );
 }
 
