@@ -97,24 +97,9 @@ function computeAudit(betLog) {
         " model legs have an unrecognised result value"
     );
 
-  const lossSpelled = betLog.filter(
-    (b) => String(b.result).trim() === "Loss"
-  ).length;
-  if (lossSpelled)
-    flags.push(
-      "NOTICE: " +
-        lossSpelled +
-        ' legs spelled "Loss" — normalised to Lose in all computed figures'
-    );
-  const medHigh = betLog.filter(
-    (b) => String(b.confidence).trim() === "Med-High"
-  ).length;
-  if (medHigh)
-    flags.push(
-      "NOTICE: " +
-        medHigh +
-        ' legs tagged "Med-High" — folded into Medium-High for calibration'
-    );
+  // Note: "Loss"->"Lose" and "Med-High"->"Medium-High" are still normalised silently
+  // in all computed figures below. They were once surfaced as notices, but they describe
+  // permanent, actionless quirks of the original journal, so they no longer clutter the panel.
 
   const pendingNoReceipt = pending.filter(
     (b) => !/receipt\s+[0-9A-F-]{6,}/i.test(String(b.notes || ""))
