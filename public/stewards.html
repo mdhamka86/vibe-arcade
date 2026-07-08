@@ -278,7 +278,6 @@
     <button class="go" id="seedBtn" style="display:none">Seed the vault (import v52 journal)</button>
     <button class="gold" id="auditBtn" style="display:none">Run stewards&rsquo; inquiry (full audit)</button>
     <button class="gold" id="exportBtn" style="display:none">Export workbook (.xlsx)</button>
-    <button class="ghost" id="reseedBtn" style="display:none">Reseed from bundled v52 (overwrites vault)</button>
     <div class="status" id="status"></div>
 
     <div class="flags" id="flags"></div>
@@ -309,7 +308,7 @@
 
     <footer>
       Raw rows are stored verbatim, exactly as the journal recorded them. All computed figures use the normalisation layer (Loss&rarr;Lose, Med-High&rarr;Medium-High) so the dashboards see the truth without rewriting history. Export rebuilds the four-sheet workbook from the vault as computed values.<br><br>
-      <span style="color:var(--brass);font-weight:600;" class="serif">The Stewards&rsquo; Room v2.3</span> &middot; Clerk now matches by race/horse when no receipt is stored, and settlement feeds the model’s triage learning &middot; hammyLabs &middot; 07/07/2026
+      <span style="color:var(--brass);font-weight:600;" class="serif">The Stewards&rsquo; Room v2.4</span> &middot; A living Charter: the room advocates promotions and repeals from proven patterns, you sign each into law &middot; hammyLabs &middot; 07/07/2026
     </footer>
   </div>
 
@@ -473,7 +472,6 @@ async function boot(){
     setStatus("Vault seeded "+new Date(st.meta.importedAt).toLocaleString()+" ("+st.meta.seedVersion+"). Running inquiry\u2026");
     $("auditBtn").style.display="block";
     $("exportBtn").style.display="block";
-    $("reseedBtn").style.display="block";
     await runAudit();
     await loadState();
     trace("boot: complete");
@@ -502,13 +500,13 @@ async function loadState(){
   loadMorning();
 }
 
-// ---- seed / reseed ----
-async function doSeed(force){
-  $("seedBtn").disabled=true; $("reseedBtn").disabled=true;
-  setStatus(force?"Reseeding vault from bundled v52\u2026":"Seeding vault\u2026");
+// ---- seed (only reachable when the vault is genuinely empty) ----
+async function doSeed(){
+  $("seedBtn").disabled=true;
+  setStatus("Seeding vault\u2026");
   try{
     const r=await api("action=import",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(force?{force:true}:{})});
+      body:JSON.stringify({})});
     if(r.error){ setStatus("Import blocked: "+r.error); return; }
     const checks=Object.values(r.verify);
     const okN=checks.filter(v=>v.match).length;
@@ -518,15 +516,11 @@ async function doSeed(force){
     $("seedBtn").style.display="none";
     $("auditBtn").style.display="block";
     $("exportBtn").style.display="block";
-    $("reseedBtn").style.display="block";
     await runAudit(); await loadState();
   }catch(e){ setStatus("Import failed: "+e.message); }
-  finally{ $("seedBtn").disabled=false; $("reseedBtn").disabled=false; }
+  finally{ $("seedBtn").disabled=false; }
 }
-$("seedBtn").addEventListener("click",()=>doSeed(false));
-$("reseedBtn").addEventListener("click",()=>{
-  if(confirm("Overwrite the vault with the bundled v52 seed? Anything written after Phase 1 seeding would be lost.")) doSeed(true);
-});
+$("seedBtn").addEventListener("click",()=>doSeed());
 $("auditBtn").addEventListener("click",runAudit);
 
 // ---- tabs ----
@@ -626,6 +620,15 @@ function renderNotes(){
   const notes=(vault.notes||[]).slice().reverse();
   let h="";
 
+  // ---- The Charter: the binding laws, founding + promoted ----
+  h+='<div class="card quill"><h3>'+IC.scales+'The Charter'+tip("The binding laws every betlist must obey. The ten founding laws were themselves lessons that proved themselves over time. The Charter is alive: a ledger entry below that proves important enough can be PROMOTED into a new law, where it binds every future proposal with full weight, like a precedent signed into common law. The founding ten are permanent; promoted laws can be repealed if they overfit.")+'</h3>'+
+    '<div class="lesson">The laws the Stable is bound by when it proposes. Founding laws sit permanent; promoted laws carry your enacted precedents. Open a ledger entry below to promote it here.</div>'+
+    '<button class="qbtn gold small" id="charterView" type="button">View the enacted laws</button>'+
+    '<button class="qbtn small" id="charterReview" type="button">Ask the room to review the Charter</button>'+
+    '<div class="qmsg" id="charterMsg"></div>'+
+    '<div id="charterRecHost"></div>'+
+    '<div id="charterHost"></div></div>';
+
   // ---- The Model Ledger: append-only bench-book, newest first ----
   h+='<div class="card quill"><h3>'+IC.ledger+'Model Ledger'+tip("The permanent bench-book of how the model has changed over time. Every entry is dated and kept forever. Nothing here can be erased, in the honest tradition of double-entry bookkeeping; a mistake is fixed by adding a correcting entry, never by scrubbing the record. Below this history sits the Model Notes, the rules as they currently stand.")+'</h3>'+
     '<div class="lesson">Record a change to the model: what changed and why. It lands permanently, stamped with today\u2019s date, and cannot be undone. Eyeball each entry as it appears.</div>'+
@@ -655,6 +658,12 @@ function renderNotes(){
           '<div class="lesson" style="margin-bottom:6px">Corrections never erase. This adds a new dated entry that references #'+esc(e.seq)+', leaving both visible.</div>'+
           '<textarea class="lg-corr-text" data-seq="'+esc(e.seq)+'" placeholder="The correction" style="width:100%;font-size:14px;border-radius:10px;border:1px solid var(--line);background:var(--card2);color:var(--ink);padding:10px 11px;min-height:52px"></textarea>'+
           '<button class="qbtn gold small lg-corr-btn" data-seq="'+esc(e.seq)+'" type="button">Add correction</button>'+
+        '</details>'+
+        '<details class="more"><summary>Promote to Charter law</summary>'+
+          '<div class="lesson" style="margin-bottom:6px">If this lesson has proven important enough to bind every future betlist with full weight, enact it as Charter law. Like a precedent signed into common law. Give it a short title and the binding rule; the change text is pre-filled as a starting point.</div>'+
+          '<input class="lg-prom-title" data-seq="'+esc(e.seq)+'" placeholder="Short law title, e.g. Fade UK all-weather WIN legs" style="width:100%;font-size:14px;border-radius:10px;border:1px solid var(--line);background:var(--card2);color:var(--ink);padding:10px 11px;margin-bottom:6px" />'+
+          '<textarea class="lg-prom-rule" data-seq="'+esc(e.seq)+'" placeholder="The binding rule, in full" style="width:100%;font-size:14px;border-radius:10px;border:1px solid var(--line);background:var(--card2);color:var(--ink);padding:10px 11px;min-height:60px">'+esc(e.change)+(e.why?" "+esc(e.why):"")+'</textarea>'+
+          '<button class="qbtn small lg-prom-btn" data-seq="'+esc(e.seq)+'" type="button">Enact as Charter law</button>'+
         '</details></div>';
     });
   }
@@ -717,6 +726,189 @@ function wireLedger(){
         }
       }catch(e){ qmsgLg("Failed: "+e.message,"err"); }
       finally{ const b=btn; if(b) b.disabled=false; }
+    });
+  });
+
+  // ---- promote a ledger entry to Charter law ----
+  document.querySelectorAll(".lg-prom-btn").forEach(btn=>{
+    btn.addEventListener("click",async()=>{
+      const seq=parseInt(btn.dataset.seq,10);
+      const title=(document.querySelector('.lg-prom-title[data-seq="'+seq+'"]')||{}).value||"";
+      const rule=(document.querySelector('.lg-prom-rule[data-seq="'+seq+'"]')||{}).value||"";
+      if(!title.trim()||!rule.trim()){ qmsgLg("A law needs both a title and a rule.","err"); return; }
+      if(!confirm("Enact this as a binding Charter law? It will govern every future betlist until you repeal it.")) return;
+      btn.disabled=true; qmsgLg("Enacting Charter law\u2026");
+      try{
+        const r=await proposeApi("action=charterpromote",{method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({title:title.trim(),rule:rule.trim(),fromLedgerSeq:seq})},30000);
+        if(r.error){ qmsgLg(r.error,"err"); btn.disabled=false; }
+        else{
+          qmsgLg("Enacted as Charter law "+r.law.id+". It now binds every proposal. The Charter has "+r.totalLaws+" laws.","ok");
+          charterCache=null;
+          const s=await api("action=state&slice=all");
+          if(!s.error){ vault=s; renderNotes(); }
+        }
+      }catch(e){ qmsgLg("Failed: "+e.message,"err"); btn.disabled=false; }
+    });
+  });
+
+  // ---- the Charter viewer + repeal ----
+  const cv=$("charterView");
+  if(cv) cv.addEventListener("click",async()=>{
+    const host=$("charterHost");
+    if(charterCache){ renderCharter(charterCache); return; }
+    cv.disabled=true; qmsgCh("Reading the Charter\u2026");
+    try{
+      const r=await proposeApi("action=charterlaws",{},20000);
+      if(r.error){ qmsgCh(r.error,"err"); }
+      else{ charterCache=r; qmsgCh(""); renderCharter(r); }
+    }catch(e){ qmsgCh("Failed: "+e.message,"err"); }
+    finally{ const b=$("charterView"); if(b) b.disabled=false; }
+  });
+
+  // ---- the Charter advocate: ask the room to review ----
+  const crv=$("charterReview");
+  if(crv) crv.addEventListener("click",async()=>{
+    crv.disabled=true; qmsgCh("The room is reviewing the Charter against recent evidence\u2026 (~20-40s)");
+    try{
+      const r=await proposeApi("action=charterrecommend",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"},90000);
+      if(r.error){ qmsgCh(r.error,"err"); }
+      else{ qmsgCh(""); renderCharterRecs(r); }
+    }catch(e){ qmsgCh("Failed: "+e.message,"err"); }
+    finally{ const b=$("charterReview"); if(b) b.disabled=false; }
+  });
+}
+function renderCharterRecs(r){
+  const host=$("charterRecHost");
+  if(!host) return;
+  let h='<div class="legreason" style="margin-top:10px;border:1px solid var(--brass-soft)"><b style="color:var(--brass)">Charter review</b> \u00b7 <span class="mono">'+esc(r.daysReviewed)+' days, '+esc(r.legsReviewed)+' legs</span><br>'+esc(r.summary||"")+'</div>';
+  if(r.nothingToDo){
+    h+='<div class="lesson" style="margin-top:8px">The room recommends no change: the standing laws are holding. That restraint is the Charter working as it should.</div>';
+    host.innerHTML=h; return;
+  }
+  if((r.promotions||[]).length){
+    h+='<div class="lesson" style="margin-top:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.09em;font-size:11px;font-weight:500;">Recommended for promotion to law</div>';
+    r.promotions.forEach((p,i)=>{
+      h+='<div class="card" style="margin-bottom:8px" id="rec-prom-'+i+'">'+
+        '<div class="legtop"><span class="legname">'+esc(p.title)+'</span><span class="chip place">promote</span></div>'+
+        '<div class="lesson">'+esc(p.rule)+'</div>'+
+        (p.why?'<div class="legreason" style="margin-top:6px"><b style="color:var(--brass)">Evidence:</b> '+esc(p.why)+'</div>':'')+
+        '<div style="display:flex;gap:8px;margin-top:10px">'+
+          '<button class="qbtn small rec-enact" data-i="'+i+'" type="button" style="margin-top:0">Enact as law</button>'+
+          '<button class="qbtn gold small rec-dismiss" data-t="prom" data-i="'+i+'" type="button" style="margin-top:0">Dismiss</button>'+
+        '</div><div class="qmsg" id="rec-prom-msg-'+i+'"></div></div>';
+    });
+  }
+  if((r.repeals||[]).length){
+    h+='<div class="lesson" style="margin-top:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.09em;font-size:11px;font-weight:500;">Recommended for repeal</div>';
+    r.repeals.forEach((p,i)=>{
+      h+='<div class="card" style="margin-bottom:8px" id="rec-rep-'+i+'">'+
+        '<div class="legtop"><span class="legname">'+esc(p.title||p.id)+'</span><span class="chip lose">repeal '+esc(p.id)+'</span></div>'+
+        (p.why?'<div class="legreason" style="margin-top:6px"><b style="color:var(--red)">Why:</b> '+esc(p.why)+'</div>':'')+
+        '<div style="display:flex;gap:8px;margin-top:10px">'+
+          '<button class="qbtn gold small rec-repeal" data-i="'+i+'" data-id="'+esc(p.id)+'" type="button" style="margin-top:0">Repeal this law</button>'+
+          '<button class="qbtn gold small rec-dismiss" data-t="rep" data-i="'+i+'" type="button" style="margin-top:0">Dismiss</button>'+
+        '</div><div class="qmsg" id="rec-rep-msg-'+i+'"></div></div>';
+    });
+  }
+  host.innerHTML=h;
+
+  host.querySelectorAll(".rec-enact").forEach(btn=>{
+    btn.addEventListener("click",async()=>{
+      const i=parseInt(btn.dataset.i,10);
+      const p=r.promotions[i];
+      if(!confirm("Enact \u201c"+p.title+"\u201d as binding Charter law?")) return;
+      btn.disabled=true;
+      const m=(t,c)=>{const el=$("rec-prom-msg-"+i);if(el){el.className="qmsg"+(c?" "+c:"");el.textContent=t;}};
+      m("Enacting\u2026");
+      try{
+        const rr=await proposeApi("action=charterpromote",{method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({title:p.title,rule:p.rule,why:p.why,fromLedgerSeq:p.fromLedgerSeq})},30000);
+        if(rr.error){ m(rr.error,"err"); btn.disabled=false; }
+        else{ m("Enacted as "+rr.law.id+". It now binds every proposal.","ok");
+          charterCache=null;
+          const card=$("rec-prom-"+i); if(card) card.style.opacity="0.6";
+          const s=await api("action=state&slice=all"); if(!s.error){ vault=s; }
+        }
+      }catch(e){ m("Failed: "+e.message,"err"); btn.disabled=false; }
+    });
+  });
+  host.querySelectorAll(".rec-repeal").forEach(btn=>{
+    btn.addEventListener("click",async()=>{
+      const i=parseInt(btn.dataset.i,10);
+      const id=btn.dataset.id;
+      const p=r.repeals[i];
+      if(!confirm("Repeal Charter law "+id+"?")) return;
+      btn.disabled=true;
+      const m=(t,c)=>{const el=$("rec-rep-msg-"+i);if(el){el.className="qmsg"+(c?" "+c:"");el.textContent=t;}};
+      m("Repealing\u2026");
+      try{
+        const rr=await proposeApi("action=charterrepeal",{method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({id:id,why:p.why})},20000);
+        if(rr.error){ m(rr.error,"err"); btn.disabled=false; }
+        else{ m("Repealed "+id+". It no longer binds proposals.","ok");
+          charterCache=null;
+          const card=$("rec-rep-"+i); if(card) card.style.opacity="0.6";
+        }
+      }catch(e){ m("Failed: "+e.message,"err"); btn.disabled=false; }
+    });
+  });
+  host.querySelectorAll(".rec-dismiss").forEach(btn=>{
+    btn.addEventListener("click",()=>{
+      const t=btn.dataset.t, i=parseInt(btn.dataset.i,10);
+      const card=$("rec-"+(t==="prom"?"prom":"rep")+"-"+i);
+      if(card){ card.style.opacity="0.4"; }
+      const m=$("rec-"+(t==="prom"?"prom":"rep")+"-msg-"+i);
+      if(m){ m.className="qmsg"; m.textContent="Dismissed. The Charter is unchanged."; }
+      btn.disabled=true;
+      const sib=card?card.querySelector(t==="prom"?".rec-enact":".rec-repeal"):null;
+      if(sib) sib.disabled=true;
+    });
+  });
+}
+let charterCache=null;
+function qmsgCh(text,cls){ const el=$("charterMsg"); if(el){ el.className="qmsg"+(cls?" "+cls:""); el.textContent=text||""; } }
+function renderCharter(r){
+  const host=$("charterHost");
+  if(!host) return;
+  const active=r.laws.filter(l=>!l.repealed);
+  const founding=active.filter(l=>!l.custom);
+  const promoted=active.filter(l=>l.custom);
+  const repealed=r.laws.filter(l=>l.repealed);
+  let h='<div class="lesson" style="margin-top:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.09em;font-size:11px;font-weight:500;">'+founding.length+' founding \u00b7 '+promoted.length+' promoted'+(repealed.length?' \u00b7 '+repealed.length+' repealed':'')+'</div>';
+  active.forEach((l,i)=>{
+    const chip=l.custom?'<span class="chip place">promoted</span>':'<span class="chip refund">founding</span>';
+    h+='<div class="card" style="margin-bottom:8px">'+
+      '<div class="legtop"><span class="legname">'+(i+1)+'. '+esc(l.title)+'</span>'+chip+'</div>'+
+      '<div class="lesson">'+esc(l.rule)+'</div>'+
+      (l.origin?'<div class="legsub" style="margin-top:5px">'+esc(l.origin)+'</div>':'')+
+      (l.custom?'<details class="more"><summary style="color:var(--red)">Repeal this law</summary>'+
+        '<div class="lesson" style="margin-bottom:6px">Repeal retires a promoted law that has stopped earning its place. The founding ten cannot be repealed. The record of the enactment stays in the ledger.</div>'+
+        '<input class="ch-rep-why" data-id="'+esc(l.id)+'" placeholder="Why repeal (optional)" style="width:100%;font-size:14px;border-radius:10px;border:1px solid var(--line);background:var(--card2);color:var(--ink);padding:10px 11px;margin-bottom:6px" />'+
+        '<button class="qbtn gold small ch-rep-btn" data-id="'+esc(l.id)+'" type="button">Repeal '+esc(l.id)+'</button>'+
+      '</details>':'')+
+      '</div>';
+  });
+  if(repealed.length){
+    h+='<div class="lesson" style="margin-top:8px;color:var(--faint)">Repealed: '+repealed.map(l=>esc(l.title)).join("; ")+'</div>';
+  }
+  host.innerHTML=h;
+  host.querySelectorAll(".ch-rep-btn").forEach(btn=>{
+    btn.addEventListener("click",async()=>{
+      const id=btn.dataset.id;
+      const why=(host.querySelector('.ch-rep-why[data-id="'+id+'"]')||{}).value||"";
+      if(!confirm("Repeal Charter law "+id+"? It will stop binding future betlists.")) return;
+      btn.disabled=true; qmsgCh("Repealing "+id+"\u2026");
+      try{
+        const r=await proposeApi("action=charterrepeal",{method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({id:id,why:why.trim()})},20000);
+        if(r.error){ qmsgCh(r.error,"err"); btn.disabled=false; }
+        else{ qmsgCh("Repealed "+id+". It no longer binds proposals.","ok");
+          charterCache=null;
+          const cr=await proposeApi("action=charterlaws",{},20000);
+          if(!cr.error){ charterCache=cr; renderCharter(cr); }
+        }
+      }catch(e){ qmsgCh("Failed: "+e.message,"err"); btn.disabled=false; }
     });
   });
 }
