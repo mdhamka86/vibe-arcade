@@ -341,9 +341,10 @@ async function parseShot(image, kind) {
     positions: `This is a screenshot of a Phillip Nova (NOVA) equities account showing stock holdings and an account summary bar.
 Extract EVERY holding, note whether each is Leveraged (CFD) or Non-Leveraged (EQ/ETF), and read the account summary figures along the bottom.
 JSON: {"holdings":[{"name":"Company Name","ticker":"TICK or null","qty":5,"avgCost":192.02,"lastPrice":195.02,"unrealised":11.59,"assetClass":"CFD|EQ|ETF","leveraged":true,"status":"Open"}],"netLiq":3864.04,"account":{"ledgerBalance":null,"equityBalance":null,"unrealizedPL":null,"initialMargin":null,"buyingPowerETD":null,"netLiquidityValue":null}}
+CRITICAL — SIGN OF UNREALISED P/L: the platform shows profit and loss BY COLOUR, often without a printed + or - sign. A figure shown in GREEN (or any up/positive tint) is a PROFIT and MUST be a POSITIVE number. A figure shown in RED is a LOSS and MUST be a NEGATIVE number. Read the colour carefully and set the sign accordingly; never drop or invert it. As a cross-check, if lastPrice is above avgCost on a normal long holding the unrealised is usually positive, and if below it is usually negative (leveraged/CFD and currency effects can shift the magnitude but rarely flip a clear move). When colour and this cross-check disagree, trust the colour but it is worth a second look.
 Use null for anything not visible. Numbers as numbers, not strings. Fractional qty is allowed (e.g. 0.1). leveraged is true only for CFD/Leveraged rows.`,
     history: `This is a screenshot of Phillip Nova (NOVA) trade history / closed positions.
-Extract EVERY closed deal visible.
+Extract EVERY closed deal visible. For realised P/L, GREEN means a positive profit and RED means a negative loss; preserve the sign faithfully.
 JSON: {"closes":[{"name":"Company Name","ticker":"TICK or null","qty":5,"avgCost":192.02,"exit":198.10,"realised":30.40,"closeDate":"2026.07.02"}]}`,
   }[kind];
 
@@ -372,13 +373,34 @@ async function actSync(positionsImg, historyImg) {
   const report = { closedDetected: [], newAdded: [], updated: 0, netLiq: posParse.netLiq ?? null };
 
   // 1) reconcile: holdings in the book but absent on screen => sold; match to history
+  // Sign sanity check: on a normal long, price above cost should mean a POSITIVE unrealised
+  // and below cost a NEGATIVE one. A clear contradiction likely means a misread sign.
+  const signLooksWrong = (h) => {
+    const q = num(h.qty), avg = num(h.avgCost), last = num(h.lastPrice), upl = num(h.unrealised);
+    if (q == null || avg == null || last == null || upl == null || avg === 0) return false;
+    if (Math.abs(upl) < 0.01) return false;
+    const priceUp = last > avg;
+    // only flag a clear, meaningful contradiction (ignore tiny gaps and leverage/fx noise)
+    const gapPct = Math.abs(last - avg) / avg;
+    if (gapPct < 0.02) return false;
+    return (priceUp && upl < 0) || (!priceUp && upl > 0);
+  };
+
   const still = [];
+  report.signFlags = [];
   for (const h of (s.book.holdings || [])) {
     const onScreen = seen.find((x) => sameHolding(x, h));
     if (onScreen) {
       h.lastPrice = onScreen.lastPrice ?? h.lastPrice;
       h.unrealised = onScreen.unrealised ?? h.unrealised;
       h.qty = onScreen.qty ?? h.qty;
+      // if the freshly-read sign contradicts the price move, correct it to match the
+      // price direction and record the correction so it is transparent, not silent.
+      if (signLooksWrong(h)) {
+        const corrected = -num(h.unrealised);
+        report.signFlags.push({ name: h.name, ticker: h.ticker, was: h.unrealised, nowIs: corrected, note: `${h.ticker || h.name}: price ${num(h.lastPrice) > num(h.avgCost) ? 'above' : 'below'} cost but P/L sign disagreed; corrected ${h.unrealised} to ${corrected}` });
+        h.unrealised = corrected;
+      }
       report.updated++;
       still.push(h);
     } else {
