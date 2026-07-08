@@ -612,12 +612,22 @@ async function actRebalance() {
   const geoLines = Object.entries(byGeo).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: ${pct(v)}%`).join(', ');
   const chipPct = pct(chipValue);
 
-  // 3) per-holding lines with live price, weight, and P/L posture
+  // classify each holding's tradeable WINDOW from its exchange, so the plan never asks him
+  // to trade a US name during his daytime (US only trades in his late night).
+  const tradeWindow = (h) => {
+    const ex = (h.exchange || '').toUpperCase();
+    if (/SGX/.test(ex)) return 'DAYTIME (SGX, Phuket daytime)';
+    if (/HK|HONG/.test(ex)) return 'DAYTIME (HKEX, Phuket daytime)';
+    if (/NASDAQ|NYSE|US|NQ/.test(ex) || !ex) return 'NIGHT ONLY (US market, his late night)';
+    return 'check platform hours';
+  };
+
+  // 3) per-holding lines with live price, weight, P/L posture, and tradeable window
   const holdingLines = live.map((h) => {
     const w = pct(h._value);
     const pl = h._plPct != null ? `${h._plPct >= 0 ? '+' : ''}${h._plPct.toFixed(1)}% vs cost` : 'cost unclear';
     const src = h._feedRejected ? ' (platform price; live feed gave an implausible value and was rejected)' : h._hasLive ? '' : ' (platform price, no live feed)';
-    return `${h.name}${h.ticker ? ' (' + h.ticker + ')' : ''} [${h._sector}, ${h.exchange || '?'}]: ${h.qty} @ cost ${h.avgCost}, price ${h.lastPrice ?? '?'}${src}, weight ${w}%, ${pl}`;
+    return `${h.name}${h.ticker ? ' (' + h.ticker + ')' : ''} [${h._sector}, ${h.exchange || '?'}] — tradeable: ${tradeWindow(h)}: ${h.qty} @ cost ${h.avgCost}, price ${h.lastPrice ?? '?'}${src}, weight ${w}%, ${pl}`;
   }).join('\n');
 
   const acc = s.book.account || {};
@@ -629,9 +639,14 @@ async function actRebalance() {
   const newsQuery = live.map((h) => h.ticker ? `${h.ticker}|${h.name}` : h.name).filter(Boolean).join(',');
   const news = await getNews('holdings', newsQuery);
 
-  const plan = await claude(`You are THE EXCHANGE's rebalancing strategist for a retail investor in Phuket trading via Phillip Nova (NOVA). His book is heavily concentrated in US semiconductors and you are helping him rebalance toward a healthier, more diversified portfolio, spread across sectors AND geographies. NOVA lets him trade US, Singapore, Hong Kong, Japan, Malaysia and China names, but he can only trade US stocks when the US market is open (his late night); SG/HK/regional names trade during his Phuket daytime, so those are especially valuable for daytime activity.
+  const plan = await claude(`You are THE EXCHANGE's rebalancing strategist for a retail investor in Phuket trading via Phillip Nova (NOVA). His book is heavily concentrated in US semiconductors and you are helping him rebalance toward a healthier, more diversified portfolio, spread across sectors AND geographies. NOVA lets him trade US, Singapore, Hong Kong, Japan, Malaysia and China names.
 
-CURRENT BOOK (live prices pulled just now where available):
+CRITICAL TRADING-HOURS CONSTRAINT (get this right, it is a hard rule): he can ONLY trade a US-listed name (NASDAQ/NYSE) when the US market is open, which is his LATE NIGHT in Phuket. He can ONLY trade SG (SGX) and HK (HKEX) names during his Phuket DAYTIME. Every holding above is tagged with its tradeable window. So:
+- To close or trim a US name (e.g. MBLY/Mobileye, CAMT/Camtek, MRVL, TSLA, COHR, AMD, most of his book) he must do it AT NIGHT during US hours. NEVER tell him to close a US name during SGX/daytime hours — that is impossible.
+- To close or trim an SGX name (e.g. C6L/Singapore Airlines, ES3) or an HK name, he does it during his Phuket DAYTIME.
+- When you write the next_step, CHECK each ticker's tagged window and only pair an action with a window that ticker can actually trade in. Getting a market wrong makes the whole plan untrustworthy.
+
+CURRENT BOOK (live prices pulled just now where available; each tagged with its tradeable window):
 ${holdingLines}
 
 CONCENTRATION RIGHT NOW:
@@ -650,7 +665,7 @@ PART 1 — TARGET BALANCE: Decide and EXPLAIN the best target shape for his book
 PART 2 — PER-HOLDING VERDICT: For EACH current holding, judge HOLD, TRIM, or CLOSE in service of that target. For any TRIM or CLOSE, give ONE sensible exit price (a single clean number) and a SHORT one-line reason (max 18 words, telegram style). Base the exit price on the real current level and a sensible technical/valuation judgement; where he is underwater but the story is intact, it is fine to suggest holding or waiting for a better level rather than crystallising a loss, and where a name is a genuine winner or a broken story, say so. Ground verdicts in the concentration problem: over-weight chip names are prime trim/close candidates; genuine diversifiers and winners are keepers. Keep every field tight; brevity matters.
 
 Respond ONLY with JSON, no markdown:
-{"target":{"summary":"2-3 sentence plain explanation of the target shape and why","sectors":[{"name":"Semiconductors","current":"X%","target":"Y%"}],"geography":[{"name":"US","current":"X%","target":"Y%"}]},"verdicts":[{"ticker":"TICK","name":"Company","verdict":"HOLD|TRIM|CLOSE","exit_price":"single number or null for HOLD","reason":"one line","sector":"...","weight":"X%"}],"headline":"one honest sentence on the book's biggest imbalance","next_step":"what to do first, one line"}`, 8000);
+{"target":{"summary":"2-3 sentence plain explanation of the target shape and why","sectors":[{"name":"Semiconductors","current":"X%","target":"Y%"}],"geography":[{"name":"US","current":"X%","target":"Y%"}]},"verdicts":[{"ticker":"TICK","name":"Company","verdict":"HOLD|TRIM|CLOSE","exit_price":"single number or null for HOLD","reason":"one line","sector":"...","weight":"X%"}],"headline":"one honest sentence on the book's biggest imbalance","next_step":"what to do first, one line — and it MUST pair each named action with a window that ticker can actually trade in (US names at night, SGX/HK names in daytime); double-check every ticker's tagged window before writing this"}`, 8000);
 
   const result = {
     clock: t,
@@ -1240,3 +1255,8 @@ export default async function handler(req, res) {
     res.status(500).json({ error: String(e.message || e) });
   }
 }
+
+
+
+
+
