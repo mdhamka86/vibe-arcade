@@ -393,6 +393,11 @@ function Portfolio({state,refresh}){
       </div>
 
       {report && <div className="alertbox a-green">Synced. {report.updated} updated, {report.newAdded?.length||0} newly adopted, {report.closedDetected?.length||0} closure(s) detected.</div>}
+      {report?.signFlags?.length>0 && <div className="alertbox a-amber">
+        <div style={{fontWeight:700,marginBottom:4}}>Corrected {report.signFlags.length} P/L sign{report.signFlags.length>1?'s':''} that disagreed with the price move:</div>
+        {report.signFlags.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}
+        <div style={{marginTop:5}} className="dim">If any of these looks wrong, re-sync a clearer screenshot.</div>
+      </div>}
 
       {book?.netLiq!=null && <div className="grid2">
         <div className="kv"><div className="k">Net Liquidity</div><div className="v">{fmt(book.netLiq)}</div></div>
