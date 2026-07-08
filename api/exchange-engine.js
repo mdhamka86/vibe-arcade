@@ -148,9 +148,14 @@ function checkLevels(idea, realPrice) {
   // 0) REALITY CHECK: if a genuine live price is supplied, the idea's stated current
   // price must match it closely. This catches a gem anchored to a stale/hallucinated
   // price (e.g. claiming 58 when the market is 94). A >6% gap fails outright.
+  // It ALSO catches a wrong-instrument feed hit: if the model's stated price and the feed
+  // price disagree by a huge margin (e.g. a regional ticker colliding with a US listing),
+  // we cannot trust EITHER blindly, so we fail and ask for manual confirmation rather than
+  // display a figure we cannot stand behind.
   if (realPrice != null && realPrice > 0) {
     if (cur != null) {
       const gap = Math.abs(cur - realPrice) / realPrice;
+      if (gap > 0.6) return { ok: false, reason: `the live feed (${realPrice}) and the stated price (${cur}) disagree wildly — likely a wrong-instrument feed hit for this ticker; confirm the real price on your platform`, realPrice, feedSuspect: true };
       if (gap > 0.06) return { ok: false, reason: `stated price ${cur} is ${(gap * 100).toFixed(1)}% off the live price ${realPrice} — levels are anchored to a wrong price`, realPrice };
     }
     // trust the live price as the reference for the entry-proximity check below
@@ -330,7 +335,8 @@ Respond ONLY with JSON, no markdown:
       if (isBanned(i)) i.reason = ((i.reason || '') + ' [DUPLICATE/HELD WARNING]').trim();
       const real = realFor(i);
       const lc = checkLevels(i, real);
-      if (real != null) i.current_price = String(real); // show the true market price
+      // only trust the feed price for display when it is NOT flagged as a wrong-instrument hit
+      if (real != null && !lc.feedSuspect) i.current_price = String(real); // show the true market price
       if (!lc.ok) { i.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; i.conviction = 'LOW'; }
       else { i.rr = lc.rr; i.slPct = lc.slPct; i.tpPct = lc.tpPct; }
     });
@@ -338,7 +344,8 @@ Respond ONLY with JSON, no markdown:
     (ideas.ideas || []).forEach((i) => {
       const real = realFor(i);
       const lc = checkLevels(i, real);
-      if (real != null) i.current_price = String(real);
+      if (real != null && !lc.feedSuspect) i.current_price = String(real);
+      if (!lc.ok) { i.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; i.conviction = 'LOW'; }
       i.rr = lc.rr; i.slPct = lc.slPct; i.tpPct = lc.tpPct;
     });
   }
@@ -547,7 +554,7 @@ Respond ONLY with JSON, no markdown:
     if (prop && prop.ticker) {
       const real = (await livePrices([prop.ticker]))[prop.ticker.toUpperCase()] ?? null;
       const lc = checkLevels(prop, real);
-      if (real != null) prop.current_price = String(real);
+      if (real != null && !lc.feedSuspect) prop.current_price = String(real);
       if (!lc.ok) { prop.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; }
       else { prop.rr = lc.rr; prop.slPct = lc.slPct; prop.tpPct = lc.tpPct; }
     }
