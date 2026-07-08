@@ -80,6 +80,19 @@ async function livePrices(tickers) {
   return out;
 }
 
+// Guard against a US-focused feed returning a bogus price for a regional ticker (e.g. an
+// SGX symbol colliding with a different US listing). Given a feed price and a trusted
+// reference (the platform's last price, or avg cost), return the feed price only if it is
+// plausibly close; otherwise return the reference. tol is the max fractional disagreement.
+function sanePrice(feed, reference, tol = 0.6) {
+  const f = num(feed), r = num(reference);
+  if (f == null) return { price: r, usedFeed: false, rejected: false };
+  if (r == null || r <= 0) return { price: f, usedFeed: true, rejected: false };
+  const disagreement = Math.abs(f - r) / r;
+  if (disagreement > tol) return { price: r, usedFeed: false, rejected: true };
+  return { price: f, usedFeed: true, rejected: false };
+}
+
 // ---------- Claude ----------
 async function claude(userContent, maxTokens = 2000) {
   const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -559,14 +572,21 @@ async function actRebalance() {
   // 1) pull genuine live prices for every held name, so every judgement is current
   const tickers = holdings.map((h) => h.ticker || h.name).filter(Boolean);
   const priceMap = await livePrices(tickers);
-  // fold live prices into a working copy so weights and P/L reflect the real market
+  // fold live prices into a working copy so weights and P/L reflect the real market.
+  // SANITY GUARD: the feed (Finnhub) is US-focused and can return a bogus price for a
+  // regional ticker (e.g. an SGX symbol like C6L that collides with a different US listing).
+  // If the "live" price wildly disagrees with the platform's last synced price, DISTRUST the
+  // feed and keep the platform price — the platform is the truth for what he actually holds.
   const live = holdings.map((h) => {
-    const real = priceMap[(h.ticker || h.name || '').toUpperCase()];
-    const lastPrice = real != null ? real : num(h.lastPrice);
+    const feed = priceMap[(h.ticker || h.name || '').toUpperCase()];
+    const synced = num(h.lastPrice);
     const avg = num(h.avgCost);
+    // reference is the platform's last price, or failing that avg cost
+    const sp = sanePrice(feed, synced != null ? synced : avg);
+    const lastPrice = sp.price;
     const qty = num(h.qty) || 0;
     const plPct = (avg && lastPrice) ? ((lastPrice - avg) / avg) * 100 : null;
-    return { ...h, lastPrice, _sector: sectorOf(h), _value: Math.abs(qty * (lastPrice || avg || 0)), _plPct: plPct, _hasLive: real != null };
+    return { ...h, lastPrice, _sector: sectorOf(h), _value: Math.abs(qty * (lastPrice || avg || 0)), _plPct: plPct, _hasLive: sp.usedFeed, _feedRejected: sp.rejected };
   });
 
   // 2) measure concentration: by sector, by chip-exposure, by geography (exchange)
@@ -589,7 +609,8 @@ async function actRebalance() {
   const holdingLines = live.map((h) => {
     const w = pct(h._value);
     const pl = h._plPct != null ? `${h._plPct >= 0 ? '+' : ''}${h._plPct.toFixed(1)}% vs cost` : 'cost unclear';
-    return `${h.name}${h.ticker ? ' (' + h.ticker + ')' : ''} [${h._sector}, ${h.exchange || '?'}]: ${h.qty} @ cost ${h.avgCost}, live ${h.lastPrice ?? '?'}${h._hasLive ? '' : ' (no live feed, last synced)'}, weight ${w}%, ${pl}`;
+    const src = h._feedRejected ? ' (platform price; live feed gave an implausible value and was rejected)' : h._hasLive ? '' : ' (platform price, no live feed)';
+    return `${h.name}${h.ticker ? ' (' + h.ticker + ')' : ''} [${h._sector}, ${h.exchange || '?'}]: ${h.qty} @ cost ${h.avgCost}, price ${h.lastPrice ?? '?'}${src}, weight ${w}%, ${pl}`;
   }).join('\n');
 
   const acc = s.book.account || {};
@@ -655,7 +676,9 @@ async function actReview(holdingId) {
 
   // fetch the genuine live price so proposed levels can be checked against reality
   const live = await livePrice(h.ticker);
-  const priceNow = live != null ? live : num(h.lastPrice);
+  // guard against a bogus feed price for a regional ticker; the platform price is the truth
+  const sp = sanePrice(live, num(h.lastPrice) != null ? num(h.lastPrice) : num(h.avgCost));
+  const priceNow = sp.price != null ? sp.price : num(h.lastPrice);
 
   // profit/loss posture against average cost, for honest framing
   const pl = (priceNow != null && h.avgCost != null)
