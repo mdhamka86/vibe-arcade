@@ -201,6 +201,7 @@ function GemCard({idea,ledgerId,onPass,onFlag,onTake}){
         {idea.exchange&&<span>{idea.exchange}</span>}
         {idea.industry&&<span className="steel">{idea.industry}</span>}
         {idea.horizon&&<span className="dim">{idea.horizon}</span>}
+        {idea.daytime_tradeable && <span className="badge b-etf">DAYTIME</span>}
         <span className={convCls} style={{fontWeight:600}}>{conv}</span>
         {idea.rr!=null&&<span className={idea.rr>=1.5?'green':'ambr'}>R:R {idea.rr}</span>}
       </div>
@@ -213,6 +214,7 @@ function GemCard({idea,ledgerId,onPass,onFlag,onTake}){
       {Array.isArray(idea.signals)&&idea.signals.length>0&&
         <div className="signal-row">{idea.signals.map((s,i)=><span key={i} className="sig">{s}</span>)}</div>}
       <div className="thesis">{idea.reason}</div>
+      {idea.diversifies && <div className="note" style={{marginTop:8}}><span className="steel">REBALANCES</span> {idea.diversifies}</div>}
       {idea.level_warning && <div className="alertbox a-amber" style={{marginTop:10,marginBottom:0}}>{idea.level_warning}</div>}
       <div className="note" style={{marginTop:10}}><Ic n="target"/> {idea.availability||'Confirm availability on your NOVA platform'}</div>
       {taken
@@ -319,45 +321,110 @@ function ShotButton({label,onImage,primary,disabled}){
 }
 
 // ---------- Book tab: the seeded NOVA portfolio ----------
-// ---------- Vitals: the interpretive read of the whole account ----------
-function Vitals({vitals}){
-  if(!vitals) return null;
+// ---------- Vitals: the full interpretive read of the whole account ----------
+function Vitals({state}){
+  const vitals=state?.vitals;
+  const coaching=state?.coaching;
+  if(!vitals) return <div className="wrap"><div className="note">Sync your book on the Book tab to see your vitals.</div></div>;
   const f=vitals.figures||{};
   const reads=vitals.reads||[];
   const trend=vitals.trend;
+  const a=vitals.analytics||{};
   const sCls=(s)=> s==='RED'?'a-red':s==='AMBER'?'a-amber':'a-green';
   const sText=(s)=> s==='RED'?'red':s==='AMBER'?'ambr':'green';
+  const barCol=(pct,warn)=> pct>warn?'var(--red)':pct>warn*0.7?'var(--amber)':'var(--steel)';
 
   return (
-    <div className="card" style={{borderColor:'var(--steel-dim)'}}>
-      <div className="eyebrow"><Ic n="pulse"/>Vitals · the state of your book</div>
-
-      <div className="grid2" style={{marginTop:4}}>
-        {f.netLiq!=null&&<div className="kv"><div className="k">Net Liquidity</div><div className="v">{fmt(f.netLiq)}</div></div>}
-        {f.equityBalance!=null&&<div className="kv"><div className="k">Equity Balance</div><div className="v">{fmt(f.equityBalance)}</div></div>}
-        {f.unrealizedPL!=null&&<div className="kv"><div className="k">Open P/L</div><div className={'v '+(f.unrealizedPL>=0?'green':'red')}>{f.unrealizedPL>=0?'+':''}{fmt(f.unrealizedPL)}</div></div>}
-        {f.buyingPower!=null&&<div className="kv"><div className="k">Buying Power</div><div className="v">{fmt(f.buyingPower)}</div></div>}
-        {f.initialMargin!=null&&<div className="kv"><div className="k">Initial Margin</div><div className="v">{fmt(f.initialMargin)}</div></div>}
-        {f.ledgerBalance!=null&&<div className="kv"><div className="k">Ledger Balance</div><div className="v">{fmt(f.ledgerBalance)}</div></div>}
-      </div>
-
-      {trend && trend.points>=2 && <div className="note" style={{marginTop:8}}>
-        <span className="steel">NET LIQUIDITY TREND</span>{' '}
-        <span className={trend.pct>=0?'green':'red'} style={{fontWeight:600}}>{trend.pct>=0?'▲':'▼'} {Math.abs(trend.pct)}%</span>
-        {' '}across {trend.points} check{trend.points>1?'s':''}, from {fmt(trend.from)} to {fmt(trend.to)}.
+    <div className="wrap">
+      {/* coaching progression */}
+      {coaching && coaching.total>0 && <div className="card accent">
+        <div className="eyebrow"><Ic n="target"/>Book health · {coaching.metCount} of {coaching.total} on track</div>
+        {coaching.justAchieved?.length>0 && <div className="alertbox a-green" style={{marginTop:8}}>
+          <span style={{fontWeight:700}}>Nice work.</span> You've just hit: {coaching.justAchieved.join('; ')}. That's real progress toward a healthier book.
+        </div>}
+        <div style={{marginTop:10}}>
+          {coaching.goals.map((g,i)=>(
+            <div key={i} className="meta" style={{justifyContent:'space-between',padding:'5px 0',borderBottom:i<coaching.goals.length-1?'1px solid var(--line)':'none'}}>
+              <span><span className={g.met?'green':'dim'} style={{fontWeight:700,marginRight:6}}>{g.met?'✓':'○'}</span>{g.label}</span>
+              <span className={'mono dim'} style={{fontSize:12}}>{g.detail}</span>
+            </div>
+          ))}
+        </div>
+        {coaching.allMet
+          ? <div className="note" style={{marginTop:10}}><span className="green" style={{fontWeight:600}}>Your book is well balanced across every health check.</span> Keep it here, and let the Hunt bring only genuine steals.</div>
+          : coaching.nextFocus && <div className="note" style={{marginTop:10}}><span className="steel">NEXT FOCUS</span> {coaching.nextFocus.label} — currently {coaching.nextFocus.detail}, aim for {coaching.nextFocus.target}. The Balance tab is built to help you get there.</div>}
       </div>}
 
-      {reads.map((r,i)=>(
-        <div key={i} className={'alertbox '+sCls(r.status)} style={{marginTop:i===0?12:8,marginBottom:0}}>
-          <div className="between" style={{marginBottom:4}}>
-            <span style={{fontWeight:700,letterSpacing:'.04em',fontSize:11,textTransform:'uppercase'}}>{r.label}</span>
-            <span className={sText(r.status)} style={{fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>{r.value}</span>
-          </div>
-          <div style={{lineHeight:1.55}}>{r.note}</div>
+      {/* headline figures */}
+      <div className="card">
+        <div className="eyebrow"><Ic n="pulse"/>Vitals · the state of your book</div>
+        <div className="grid2" style={{marginTop:4}}>
+          {f.netLiq!=null&&<div className="kv"><div className="k">Net Liquidity</div><div className="v">{fmt(f.netLiq)}</div></div>}
+          {f.equityBalance!=null&&<div className="kv"><div className="k">Equity Balance</div><div className="v">{fmt(f.equityBalance)}</div></div>}
+          {f.unrealizedPL!=null&&<div className="kv"><div className="k">Open P/L</div><div className={'v '+(f.unrealizedPL>=0?'green':'red')}>{f.unrealizedPL>=0?'+':''}{fmt(f.unrealizedPL)}</div></div>}
+          {f.buyingPower!=null&&<div className="kv"><div className="k">Buying Power</div><div className="v">{fmt(f.buyingPower)}</div></div>}
+          {f.initialMargin!=null&&<div className="kv"><div className="k">Initial Margin</div><div className="v">{fmt(f.initialMargin)}</div></div>}
+          {f.ledgerBalance!=null&&<div className="kv"><div className="k">Ledger Balance</div><div className="v">{fmt(f.ledgerBalance)}</div></div>}
         </div>
-      ))}
+        {trend && trend.points>=2 && <div className="note" style={{marginTop:10}}>
+          <span className="steel">NET LIQUIDITY TREND</span>{' '}
+          <span className={trend.pct>=0?'green':'red'} style={{fontWeight:600}}>{trend.pct>=0?'▲':'▼'} {Math.abs(trend.pct)}%</span>
+          {' '}across {trend.points} check{trend.points>1?'s':''}, from {fmt(trend.from)} to {fmt(trend.to)}.
+        </div>}
+        {vitals.lastSync && <div className="meta" style={{marginTop:8}}><span>last synced {ago(Date.parse(vitals.lastSync))}</span></div>}
+      </div>
 
-      {vitals.lastSync && <div className="meta" style={{marginTop:10}}><span>last synced {ago(Date.parse(vitals.lastSync))}</span></div>}
+      {/* sector concentration bars */}
+      {Array.isArray(a.sectors)&&a.sectors.length>0 && <div className="card">
+        <div className="eyebrow">Sector concentration</div>
+        {a.chipPct>0 && <div className="note" style={{marginBottom:10}}>Chip-exposed (through ETFs and separate names): <span className={a.chipPct>45?'red':a.chipPct>30?'ambr':'green'} style={{fontWeight:700}}>{a.chipPct}%</span></div>}
+        {a.sectors.map((s,i)=>(
+          <div key={i} style={{marginTop:8}}>
+            <div className="meta" style={{justifyContent:'space-between',marginBottom:3}}><span className="steel">{s.name}</span><span className="mono dim" style={{fontSize:12}}>{s.pct}%</span></div>
+            <div style={{height:6,background:'var(--line)',borderRadius:3,overflow:'hidden'}}><div style={{width:Math.min(100,s.pct)+'%',height:'100%',background:barCol(s.pct,30)}}/></div>
+          </div>
+        ))}
+      </div>}
+
+      {/* geographic spread */}
+      {Array.isArray(a.geography)&&a.geography.length>0 && <div className="card">
+        <div className="eyebrow">Geographic spread</div>
+        {a.geography.map((g,i)=>(
+          <div key={i} style={{marginTop:8}}>
+            <div className="meta" style={{justifyContent:'space-between',marginBottom:3}}><span className="steel">{g.name}{g.name!=='US'?' · daytime':' · night only'}</span><span className="mono dim" style={{fontSize:12}}>{g.pct}%</span></div>
+            <div style={{height:6,background:'var(--line)',borderRadius:3,overflow:'hidden'}}><div style={{width:Math.min(100,g.pct)+'%',height:'100%',background:g.name==='US'?'var(--amber)':'var(--steel)'}}/></div>
+          </div>
+        ))}
+      </div>}
+
+      {/* winner / laggard attribution */}
+      {(a.topWinners?.length>0||a.topLaggards?.length>0) && <div className="card">
+        <div className="eyebrow">What's driving your book</div>
+        {a.topWinners?.length>0 && <div style={{marginTop:6}}>
+          <div className="dim" style={{fontSize:11,textTransform:'uppercase',letterSpacing:'.05em',marginBottom:4}}>Top winners</div>
+          {a.topWinners.map((w,i)=><div key={i} className="meta" style={{justifyContent:'space-between'}}><span>{w.name}</span><span className="green mono" style={{fontSize:12,fontWeight:600}}>+{fmt(w.pl)}</span></div>)}
+        </div>}
+        {a.topLaggards?.length>0 && <div style={{marginTop:10}}>
+          <div className="dim" style={{fontSize:11,textTransform:'uppercase',letterSpacing:'.05em',marginBottom:4}}>Biggest laggards</div>
+          {a.topLaggards.map((w,i)=><div key={i} className="meta" style={{justifyContent:'space-between'}}><span>{w.name}</span><span className="red mono" style={{fontSize:12,fontWeight:600}}>{fmt(w.pl)}</span></div>)}
+        </div>}
+      </div>}
+
+      {/* interpretive reads */}
+      {reads.length>0 && <div className="card">
+        <div className="eyebrow">Reads</div>
+        {reads.map((r,i)=>(
+          <div key={i} className={'alertbox '+sCls(r.status)} style={{marginTop:i===0?4:8,marginBottom:0}}>
+            <div className="between" style={{marginBottom:4}}>
+              <span style={{fontWeight:700,letterSpacing:'.04em',fontSize:11,textTransform:'uppercase'}}>{r.label}</span>
+              <span className={sText(r.status)} style={{fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>{r.value}</span>
+            </div>
+            <div style={{lineHeight:1.55}}>{r.note}</div>
+          </div>
+        ))}
+      </div>}
+
+      <Learn state={state}/>
     </div>
   );
 }
@@ -402,11 +469,7 @@ function Portfolio({state,refresh}){
       {book?.netLiq!=null && <div className="grid2">
         <div className="kv"><div className="k">Net Liquidity</div><div className="v">{fmt(book.netLiq)}</div></div>
         <div className="kv"><div className="k">Holdings</div><div className="v">{holdings.length}</div></div>
-        {book.account?.equityBalance!=null&&<div className="kv"><div className="k">Equity Balance</div><div className="v">{fmt(book.account.equityBalance)}</div></div>}
-        {book.account?.buyingPowerETD!=null&&<div className="kv"><div className="k">Buying Power</div><div className="v">{fmt(book.account.buyingPowerETD)}</div></div>}
       </div>}
-
-      {state?.vitals && <Vitals vitals={state.vitals}/>}
 
       {holdings.length===0 && <div className="note" style={{marginTop:8}}>No holdings yet. Seed your book from the Hunt tab, or upload a positions screenshot above.</div>}
 
@@ -550,6 +613,105 @@ function Learn({state}){
   );
 }
 
+// ---------- Rebalance: the guided rebalancing cockpit ----------
+function Rebalance({state,refresh}){
+  const [busy,setBusy]=useState(false);
+  const [plan,setPlan]=useState(null);
+  const [proofBusy,setProofBusy]=useState(false);
+  const [proofOut,setProofOut]=useState(null);
+
+  const run=async()=>{
+    setBusy(true);
+    try{ const r=await eng('rebalance'); setPlan(r); }
+    catch(e){ alert(e.message); }
+    setBusy(false);
+  };
+  const submitProof=async(b64)=>{
+    setProofBusy(true);
+    try{ const r=await eng('proofofclose',{positionsImage:b64}); setProofOut(r); await refresh(); }
+    catch(e){ alert(e.message); }
+    setProofBusy(false);
+  };
+
+  const vCls=(v)=> v==='CLOSE'?'b-red':v==='TRIM'?'b-amber':'b-ok';
+  const p=plan?.plan;
+
+  return (
+    <div className="wrap">
+      <div className="card">
+        <div className="eyebrow"><Ic n="pulse"/>Rebalance · the guided cockpit</div>
+        <div className="note">One tap pulls live prices for every holding, measures your real concentration, and judges each position hold, trim or close toward a more balanced, less chip-heavy, more geographically spread book. Grounded in fresh market news.</div>
+        <div className="row" style={{marginTop:12}}>
+          <button className="pri" disabled={busy} onClick={run}>{busy?<span className="spin">◐</span>:'Pull prices & rebalance'}</button>
+        </div>
+      </div>
+
+      {plan?.empty && <div className="note">{plan.note}</div>}
+
+      {p && <>
+        {p.headline && <div className="alertbox a-amber"><Ic n="target"/> {p.headline}</div>}
+
+        {plan.concentration && <div className="card">
+          <div className="eyebrow">Concentration now</div>
+          <div className="note"><span className="red" style={{fontWeight:600}}>{plan.concentration.chipPct}%</span> of your book is chip-exposed. By sector: {Object.entries(plan.concentration.bySector||{}).map(([k,v])=>`${k} ${v}%`).join(', ')}. By geography: {Object.entries(plan.concentration.byGeo||{}).map(([k,v])=>`${k} ${v}%`).join(', ')}.</div>
+        </div>}
+
+        {p.target && <div className="card accent">
+          <div className="eyebrow"><Ic n="brain"/>Target balance</div>
+          <div className="note" style={{color:'var(--ink2)'}}>{p.target.summary}</div>
+          {Array.isArray(p.target.sectors)&&p.target.sectors.length>0 && <div style={{marginTop:10}}>
+            {p.target.sectors.map((s,i)=><div key={i} className="meta" style={{justifyContent:'space-between'}}><span className="steel">{s.name}</span><span className="dim mono">{s.current} → <span className="ambr">{s.target}</span></span></div>)}
+          </div>}
+          {Array.isArray(p.target.geography)&&p.target.geography.length>0 && <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid var(--line)'}}>
+            {p.target.geography.map((g,i)=><div key={i} className="meta" style={{justifyContent:'space-between'}}><span className="steel">{g.name}</span><span className="dim mono">{g.current} → <span className="ambr">{g.target}</span></span></div>)}
+          </div>}
+        </div>}
+
+        <h3 className="sec"><Ic n="review"/>Per-holding verdicts</h3>
+        {(p.verdicts||[]).map((v,i)=>(
+          <div key={i} className="card" style={{padding:13}}>
+            <div className="between">
+              <span className="hl" style={{fontSize:15}}>{v.name} {v.ticker&&<span className="dim mono" style={{fontSize:12}}>{v.ticker}</span>}</span>
+              <span className={'badge '+vCls(v.verdict)}>{v.verdict}</span>
+            </div>
+            <div className="meta">{v.sector&&<span className="steel">{v.sector}</span>}{v.weight&&<span className="dim">{v.weight} of book</span>}{v.exit_price&&v.exit_price!=='null'&&<span className="ambr" style={{fontWeight:600}}>exit ~{v.exit_price}</span>}</div>
+            {v.reason && <div className="note" style={{marginTop:6}}>{v.reason}</div>}
+          </div>
+        ))}
+        {p.next_step && <div className="alertbox a-green" style={{marginTop:8}}><span style={{fontWeight:600}}>Next step:</span> {p.next_step}</div>}
+      </>}
+
+      <h3 className="sec"><Ic n="camera"/>After you close a position</h3>
+      <div className="card">
+        <div className="note">Closed a name on NOVA? Upload your fresh positions screenshot. The desk confirms the close, reconciles your margin and balance, and if enough cash is freed, proposes the next fully-framed buy to rebalance into.</div>
+        <div className="row" style={{marginTop:12}}>
+          <ShotButton primary label={proofBusy?'reconciling…':'Upload proof of close'} disabled={proofBusy} onImage={submitProof}/>
+        </div>
+      </div>
+
+      {proofOut && <>
+        {proofOut.balancePicture && <div className="card">
+          <div className="eyebrow">Reconciled</div>
+          <div className="grid2">
+            <div className="kv"><div className="k">Holdings</div><div className="v">{proofOut.balancePicture.holdingsBefore} → {proofOut.balancePicture.holdingsNow}</div></div>
+            <div className="kv"><div className="k">Buying Power</div><div className="v">{fmt(proofOut.balancePicture.buyingPowerNow)}</div></div>
+            {proofOut.balancePicture.freedThisClose!=null && <div className="kv"><div className="k">Freed this close</div><div className={'v '+(proofOut.balancePicture.freedThisClose>=0?'green':'red')}>{proofOut.balancePicture.freedThisClose>=0?'+':''}{fmt(proofOut.balancePicture.freedThisClose)}</div></div>}
+            {proofOut.balancePicture.netLiqNow!=null && <div className="kv"><div className="k">Net Liquidity</div><div className="v">{fmt(proofOut.balancePicture.netLiqNow)}</div></div>}
+          </div>
+          {proofOut.closesDetected?.length>0 && <div className="note" style={{marginTop:8}}><span className="green">Closed:</span> {proofOut.closesDetected.join(', ')}</div>}
+        </div>}
+
+        {proofOut.waiting && <div className="alertbox a-amber">{proofOut.waiting}</div>}
+
+        {proofOut.nextBuy && <>
+          <h3 className="sec"><Ic n="gem"/>Next rebalancing buy</h3>
+          <GemCard idea={proofOut.nextBuy} ledgerId={null} onPass={()=>{}} onFlag={()=>{}} onTake={()=>{}}/>
+        </>}
+      </>}
+    </div>
+  );
+}
+
 // ---------- App shell ----------
 function App(){
   const [tab,setTab]=useState('desk');
@@ -569,10 +731,11 @@ function App(){
     {engineErr && <div className="wrap" style={{paddingBottom:0}}><div className="alertbox a-red">Engine offline: {engineErr}. Check the API key and Upstash variables in Vercel, then reload.</div></div>}
     {tab==='desk' && <Desk state={state} refresh={refresh}/>}
     {tab==='portfolio' && <Portfolio state={state} refresh={refresh}/>}
+    {tab==='rebalance' && <Rebalance state={state} refresh={refresh}/>}
+    {tab==='vitals' && <Vitals state={state}/>}
     {tab==='reviews' && <Reviews state={state} refresh={refresh}/>}
-    {tab==='learn' && <Learn state={state}/>}
     <nav className="tabs">
-      {[['desk','Hunt','gem'],['portfolio','Book','book'],['reviews','Reviews','review'],['learn','Learn','brain']].map(([k,l,ic])=>
+      {[['desk','Hunt','gem'],['portfolio','Book','book'],['rebalance','Balance','pulse'],['vitals','Vitals','target'],['reviews','Reviews','review']].map(([k,l,ic])=>
         <button key={k} className={tab===k?'on':''} onClick={()=>setTab(k)}><Ic n={ic}/>{l}</button>)}
     </nav>
   </>);
