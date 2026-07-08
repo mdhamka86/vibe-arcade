@@ -288,14 +288,36 @@ function fetchSharedState() {
 // star, a photo url landing — isn't undone). Simple scalar fields (season,
 // spoils) follow last-write-wins, taking the copy stamped more recently. This is
 // the durability guard: even a truly simultaneous double-add loses nothing.
+// When the same entry (same id) exists on both sides, we keep the local copy's
+// fields winning (so your own star or edit isn't undone) BUT we never lose a
+// public photo URL that either side has discovered. A photo link only ever goes
+// from absent to present (it's uploaded once and never un-uploaded), so it is
+// treated as monotonic: if either copy has it, the merged copy keeps it. This is
+// what stops a racing linkless save from wiping a photo that already landed.
+function mergeSharedEntry(localE, remoteE) {
+  if (!remoteE) return localE;
+  if (!localE) return remoteE;
+  const merged = { ...remoteE, ...localE }; // local fields win, remote backfills
+  const url = localE.photoUrl || remoteE.photoUrl || null;
+  merged.photoUrl = url;
+  if (url) merged.hasPhoto = true;
+  return merged;
+}
+
 function mergeById(localList, remoteList) {
   const local = Array.isArray(localList) ? localList : [];
   const remote = Array.isArray(remoteList) ? remoteList : [];
   const byId = {};
   const order = [];
-  // remote first, so local versions overwrite shared entries while keeping order
+  // remote first, so local versions win for shared entries while keeping order;
+  // a same-id collision is field-merged so a discovered photo URL is never lost
   remote.forEach((e) => { if (e && e.id != null) { if (!(e.id in byId)) order.push(e.id); byId[e.id] = e; } });
-  local.forEach((e) => { if (e && e.id != null) { if (!(e.id in byId)) order.push(e.id); byId[e.id] = e; } });
+  local.forEach((e) => {
+    if (e && e.id != null) {
+      if (!(e.id in byId)) { order.push(e.id); byId[e.id] = e; }
+      else byId[e.id] = mergeSharedEntry(e, byId[e.id]);
+    }
+  });
   return order.map((id) => byId[id]);
 }
 
@@ -337,7 +359,13 @@ function mergeClaimEntry(a, b) {
   if (!b) return a;
   const same = a.by === b.by && (a.at || 0) === (b.at || 0);
   if (!same) return (a.at || 0) <= (b.at || 0) ? a : b; // first to snap wins
-  return entryStamp(a) >= entryStamp(b) ? { ...b, ...a } : { ...a, ...b };
+  // same claimant, same snap: fresher fields win, but a discovered photo URL is
+  // monotonic and must survive even if the fresher copy happens to lack it
+  const merged = entryStamp(a) >= entryStamp(b) ? { ...b, ...a } : { ...a, ...b };
+  const url = a.photoUrl || b.photoUrl || null;
+  merged.photoUrl = url;
+  if (url) merged.hasPhoto = true;
+  return merged;
 }
 function mergeClaimMaps(a, b) {
   const out = {};
@@ -478,6 +506,34 @@ function useSharedState(readOnly) {
 
   function remember(state) { latestRef.current = state; }
 
+  // --- serialized, coalesced saver ---------------------------------------
+  // The old bug: every photo-URL landing fired its OWN save, and a burst of
+  // uploads (claim a few tasks, snap a few moments) launched a pile of saves
+  // that raced over the network. Each carried a snapshot from its own moment,
+  // and a linkless one landing last would trample the good copy in storage, so
+  // only one photo survived. The cure: a single-file queue. Saves run strictly
+  // one after another, and each one writes the FRESHEST local state (latestRef),
+  // not a stale snapshot, so nothing gets left behind and nothing races.
+  const saveChainRef = useRef(Promise.resolve());
+  const savePendingRef = useRef(false);
+
+  function scheduleSave() {
+    // coalesce: if a save is already waiting its turn, we don't need another —
+    // when it runs it will grab the freshest state, which includes this change
+    if (savePendingRef.current) return;
+    savePendingRef.current = true;
+    saveChainRef.current = saveChainRef.current
+      .then(() => {
+        // release the latch the instant we begin, so any change made from here
+        // on schedules a fresh follow-up save rather than being missed
+        savePendingRef.current = false;
+        return saveSharedState(latestRef.current).then((saved) => {
+          if (saved) remember(saved);
+        });
+      })
+      .catch(() => { savePendingRef.current = false; });
+  }
+
   useEffect(() => {
     let alive = true;
 
@@ -521,11 +577,9 @@ function useSharedState(readOnly) {
       remember(next);
       localStampRef.current = Date.now();
       quietUntilRef.current = Date.now() + 1500; // brief hush so the save can fly
-      saveSharedState(next).then((saved) => {
-        // once the server confirms (with its own stamp), keep our ref current so
-        // later polls compare against the confirmed state, not a stale one.
-        if (saved) remember(saved);
-      });
+      // hand off to the serialized queue: it writes the freshest state, one save
+      // at a time, so a burst of photo uploads can never trample each other
+      scheduleSave();
       return next;
     });
   }
