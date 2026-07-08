@@ -661,6 +661,10 @@ Respond ONLY with JSON, no markdown:
     generatedAt: t.iso,
   };
   // remember the latest rebalance plan so the screen can show it and proof-of-close can reconcile against it
+  // BOUNDARY: the rebalance is DELIBERATELY separate from the Reviews tab. It writes ONLY to
+  // book.rebalance and never to any holding's reviewHistory or lastReview. The two produce
+  // different judgements for different purposes, so a rebalance verdict must never overwrite
+  // or pollute the per-holding review record. Do not wire rebalance verdicts into review fields.
   s.book.rebalance = { plan, concentration: result.concentration, at: t.iso };
   await rSet('exchange:book', s.book);
   return result;
