@@ -226,21 +226,23 @@ async function actIdeas(force) {
   const priorGuidance = (s.guidance || []).map((g) => `- ${g.text}${g.basis ? ' [' + g.basis + ']' : ''}`).join('\n') || '- none yet; not enough resolved history';
   const recentLessons = (s.lessons || []).slice(-10).map((l) => `- ${l.text}`).join('\n') || '- none yet';
 
-  const prompt = `You are the ideas engine of THE EXCHANGE, the equities desk of a retail investor in Phuket who trades US stocks through Phillip Nova (a "NOVA" account). His long-term convictions are already held in his portfolio; your job is DIFFERENT and specific: hunt SHORT to SHORTER-TERM TRADES, punchy positions held a few days up to about a week. No long-term plays.
+  const prompt = `You are the ideas engine of THE EXCHANGE, the equities desk of a retail investor in Phuket who trades through Phillip Nova (a "NOVA" account) across US, Singapore, Hong Kong, Japan, Malaysia and China markets. His long-term convictions are already held; your job is DIFFERENT: hunt SHORT to SHORTER-TERM TRADES, punchy positions held a few days up to about a week. No long-term plays.
+
+BIG PICTURE — THIS HUNT SERVES REBALANCING: his book is badly over-concentrated in US semiconductors. So this hunt is not just for any gem; it should actively help REBALANCE him across sectors AND geographies. Two things matter a lot: (a) diversify AWAY from US chips into under-represented corners, and (b) favour daytime-tradeable regional names (Singapore SGX, Hong Kong HKEX, and other Asian listings on NOVA) because he can only trade US stocks late at night when the US market opens, whereas SG/HK/regional names trade during his Phuket daytime. A great daytime-tradeable regional steal is worth more to him than yet another US name he can only touch at 3am.
 
 YOUR MANDATE (read carefully):
 1. HORIZON: every idea is a short to shorter-term trade, a few days out to roughly a week at the ceiling. Not a long-term investment. The thesis must be able to play out quickly (a catalyst, a technical bounce, a post-earnings drift, an insider-buying pop, a momentum move).
 2. LEVERAGE & AGGRESSION WELCOME, BUT EARNED: he actively WANTS to be more aggressive on these shorter trades, and CFDs are welcome and often preferred precisely because they are more volatile and leveraged, which suits a punchy short-term style. HOWEVER this aggression must be EARNED, never assumed. Only lean aggressive (a CFD framing, a tighter-to-price entry, a fuller size) when there is genuine NEWS CONVERGENCE (two or more independent signals or sources pointing the same way) or otherwise strong, well-evidenced confidence. Where conviction is merely moderate, stay proportionate and say so honestly. Reckless aggression on a thin thesis is exactly what to avoid; aggression is the reward for conviction, not a default.
 3. WITHIN HIS MEANS (critical): ${affordLine} State briefly in each idea's reason that it fits comfortably within his firepower.
-4. ROAM ALL INDUSTRIES: hunt across the WHOLE market, healthcare, energy, industrials, financials, consumer, materials, utilities, biotech, and yes occasionally tech. DELIBERATELY AVOID semiconductors and chip names: his portfolio is already saturated with them, so a semi idea is near-useless to him. Find gems in corners he is NOT already exposed to.
-5. BE ADVENTUROUS: he wants genuine gems, so range into small and mid caps and special situations, not just mega-caps. But see the TRADEABILITY rule below.
+4. HUNT STEALS THAT REBALANCE: find genuine STEALS — mispriced, overlooked, cheap-versus-worth names, not crowded obvious ones. Roam ALL industries (healthcare, energy, industrials, financials, consumer, materials, utilities, biotech, and yes occasionally tech). DELIBERATELY AVOID semiconductors and chip names: he is already saturated. Actively prize names that diversify his sector AND geographic mix.
+5. MARKET SPREAD: of your ideas, actively try to include at least one daytime-tradeable regional name (SGX Singapore, HKEX Hong Kong, or another Asian NOVA-listed market) when a genuine steal exists there, so he has something to trade in daylight. US names are welcome too, but note the US ones are night-only for him.
 6. WEIGH ALL FOUR SIGNAL FAMILIES and prize CONVERGENCE where several align on one name:
    - Insider & congressional buying (an insider or member of Congress recently buying with real money is a strong tell)
-   - Value & fundamentals (cheap versus peers, quality at a temporary discount)
+   - Value & fundamentals (cheap versus peers, quality at a temporary discount — the essence of a steal)
    - News & catalysts (earnings beats, upgrades, contract wins, product news, FDA decisions)
    - Technical setups (pullback into support, a clean base, a breakout with volume)
-   The best idea is one where 2+ of these point the same way. Name which signals fire in the reason. Convergence is also precisely what licenses a more aggressive, leveraged framing per rule 2.
-7. TRADEABILITY (critical): only propose names that are properly LISTED on a major US exchange (NASDAQ, NYSE, or NYSE American), tradeable as either a share or a CFD on Phillip Nova. NEVER propose OTC, pink-sheet, or nano-cap names a retail broker almost certainly cannot trade. When in doubt, prefer the more liquid, clearly-listed name. Mark each idea's availability as "likely" and note it needs his confirmation on the platform.
+   The best idea is one where 2+ of these point the same way. Name which signals fire in the reason. Genuine convergence is what makes a steal a steal, and is precisely what licenses a more aggressive, leveraged framing per rule 2. Do NOT propose a name unless the news and the recommendation genuinely converge.
+7. TRADEABILITY (critical): only propose names properly LISTED and liquid on a major exchange NOVA offers — US (NASDAQ, NYSE, NYSE American), Singapore (SGX), Hong Kong (HKEX), or other main Asian boards NOVA supports — tradeable as a share or CFD. NEVER propose OTC, pink-sheet, or nano-cap names a retail broker almost certainly cannot trade. When in doubt, prefer the more liquid, clearly-listed name. Mark each idea's availability as "likely" and note it needs his confirmation on the platform.
 8. NO DUPLICATES: do NOT propose any name in this banned list (recently proposed or already held): ${bannedList.join(', ') || 'none yet'}.
 9. NEVER propose any name he has flagged unavailable on his platform: ${[...unavailable].join(', ') || 'none yet'}.
 
@@ -258,7 +260,7 @@ ${recentLessons}
 TODAY'S MARKET & COMPANY NEWS WIRE:
 ${digest(news, 28)}
 
-TASK: Propose exactly 2 fresh short-term trade ideas. For each, indicate whether it is best taken as a plain SHARE or as a more aggressive CFD, letting that instrument choice follow the conviction: reserve the CFD/aggressive framing for genuine convergence or strong confidence. Present each EXACTLY in his journal's language: stock name, ticker, entry point, current market price, buy or sell, take profit, stop loss, and the reason (naming the signals that fire and noting it fits his buying power). Be genuinely critical and honest: if today offers nothing genuinely worth the risk, say so plainly in desk_note and mark ideas at their true lower conviction rather than inflating them.
+TASK: Propose exactly 2 fresh short-term STEAL ideas that help rebalance his book across sectors and markets. Try to include at least one daytime-tradeable regional name (SGX/HKEX/Asian) where a genuine steal exists. For each, indicate whether it is best taken as a plain SHARE or a more aggressive CFD, letting that follow the conviction. Present each in his journal's language: stock name, ticker, exchange, entry point, current market price, buy or sell, take profit, stop loss, and the reason (naming the converging signals, how it diversifies him, and that it fits his buying power). Only propose where news and recommendation genuinely converge. Be honest: if nothing is a real steal today, say so in desk_note and mark ideas at their true lower conviction rather than inflating them.
 
 LEVEL DISCIPLINE (every number is validated after you respond, so get them right):
 - entry must sit within ~8% of the current price (a fillable swing entry, not a far-off limit).
@@ -268,7 +270,7 @@ LEVEL DISCIPLINE (every number is validated after you respond, so get them right
 - CONVICTION on a four-rung scale: LOW, MED, MED-HIGH, HIGH. Reserve the top two rungs for genuine multi-signal convergence.
 
 Respond ONLY with JSON, no markdown:
-{"ideas":[{"name":"Company Name","ticker":"TICK","exchange":"NASDAQ|NYSE|NYSE American","industry":"e.g. Healthcare","direction":"BUY|SELL","instrument":"SHARE|CFD","current_price":"12.40","entry":"12.00-12.30","tp":"14.20","sl":"11.10","horizon":"e.g. 3-5 day trade","conviction":"LOW|MED|MED-HIGH|HIGH","signals":["insider","value","catalyst","technical"],"reason":"the thesis, naming which signals fire and noting it fits his buying power, max 48 words","availability":"likely — confirm on your NOVA platform"}],"stand_down":false,"desk_note":"one honest paragraph on the session's hunt, max 55 words"}`;
+{"ideas":[{"name":"Company Name","ticker":"TICK","exchange":"NASDAQ|NYSE|NYSE American|SGX|HKEX|other","industry":"e.g. Healthcare","direction":"BUY|SELL","instrument":"SHARE|CFD","current_price":"12.40","entry":"12.00-12.30","tp":"14.20","sl":"11.10","horizon":"e.g. 3-5 day trade","conviction":"LOW|MED|MED-HIGH|HIGH","signals":["insider","value","catalyst","technical"],"diversifies":"how this name helps rebalance his book (sector/geography), short phrase","daytime_tradeable":true,"reason":"the thesis, naming which signals converge and noting it fits his buying power, max 48 words","availability":"likely — confirm on your NOVA platform"}],"stand_down":false,"desk_note":"one honest paragraph on the session's hunt, max 55 words"}`;
 
   let ideas = await claude(prompt, 2600);
 
@@ -457,6 +459,173 @@ async function actSync(positionsImg, historyImg) {
   await rSet('exchange:book', s.book);
 
   return { clock: t, report, book: s.book };
+}
+
+// ---------- Proof of close: reconcile after a rebalancing exit ----------
+// You submit a screenshot after closing a position on NOVA. The desk confirms the close,
+// reconciles margin and balance, then applies your cash rule: if there is enough freed
+// buying power to make a sensible new position it proposes the next rebalancing buy
+// (fully framed: entry, current, SL, TP, reason); if not, it waits and just shows the
+// reconciled balance until several closes have banked enough powder.
+const MIN_DEPLOY = 150; // a sensible floor of freed buying power before proposing a buy
+
+async function actProofOfClose(positionsImg) {
+  const t = bkk();
+  if (!positionsImg) throw new Error('A positions screenshot is needed to confirm the close and reconcile.');
+  const s = await loadAll();
+  const before = {
+    holdings: (s.book.holdings || []).length,
+    buyingPower: num((s.book.account || {}).buyingPowerETD),
+    netLiq: num(s.book.netLiq),
+  };
+
+  // read the fresh screenshot and reconcile the book (reuses the proven sync machinery)
+  const sync = await actSync(positionsImg, null);
+  const after = await loadAll();
+  const closed = (sync.report && sync.report.closedDetected) || [];
+  const nowBuyingPower = num((after.book.account || {}).buyingPowerETD) ?? before.buyingPower;
+  const nowNetLiq = num(after.book.netLiq) ?? before.netLiq;
+  const freed = (before.buyingPower != null && nowBuyingPower != null) ? +(nowBuyingPower - before.buyingPower).toFixed(2) : null;
+
+  const balancePicture = {
+    holdingsBefore: before.holdings, holdingsNow: (after.book.holdings || []).length,
+    buyingPowerBefore: before.buyingPower, buyingPowerNow: nowBuyingPower,
+    netLiqBefore: before.netLiq, netLiqNow: nowNetLiq,
+    freedThisClose: freed, closesDetected: closed.map((c) => c.holding && (c.holding.ticker || c.holding.name)).filter(Boolean),
+  };
+
+  // decide whether there is enough powder to sensibly deploy now
+  const deployable = nowBuyingPower != null ? nowBuyingPower : 0;
+  const enough = deployable >= MIN_DEPLOY;
+
+  let nextBuy = null;
+  let waiting = null;
+  if (enough) {
+    // propose the next rebalancing buy, FULLY FRAMED like a gem card, and price-validated
+    const held = new Set((after.book.holdings || []).map((h) => (h.ticker || h.name || '').toUpperCase()));
+    const unavailable = new Set((after.universe.unavailable || []).map((u) => (u || '').toUpperCase()));
+    const reb = after.book.rebalance ? JSON.stringify(after.book.rebalance.plan?.target || {}) : 'no saved target yet';
+    const news = await getNews('market');
+
+    let prop = await claude(`You are THE EXCHANGE proposing the NEXT rebalancing BUY after the investor freed up about $${deployable.toFixed(0)} of buying power by closing a position. The goal is to move his book toward a more balanced, less chip-heavy, more geographically spread shape. Favour a name that genuinely diversifies him (away from US semiconductors), and prefer a Singapore/Hong Kong/regional name where sensible since those trade during his Phuket daytime.
+
+SAVED REBALANCE TARGET: ${reb}
+ALREADY HELD (do not propose): ${[...held].join(', ') || 'none'}
+UNAVAILABLE ON HIS PLATFORM (never propose): ${[...unavailable].join(', ') || 'none'}
+FREED BUYING POWER: about $${deployable.toFixed(0)} — the position must fit comfortably inside this.
+MARKET NEWS:\n${digest(news, 16)}
+
+Propose exactly ONE buy, fully framed like a proper trade idea, that fits the freed buying power and improves his diversification. Give real, sensible price levels (entry within ~8% of current; BUY = stop below entry, target above; stop ~3-10% from entry; reward:risk >= 1.5).
+
+Respond ONLY with JSON, no markdown:
+{"name":"Company","ticker":"TICK","exchange":"NASDAQ|NYSE|SGX|HKEX","industry":"e.g. Consumer","instrument":"SHARE|CFD","direction":"BUY","current_price":"12.40","entry":"12.00-12.30","tp":"14.20","sl":"11.10","conviction":"LOW|MED|MED-HIGH|HIGH","reason":"why this name diversifies the book and fits the freed cash, max 45 words","availability":"likely — confirm on your NOVA platform","fits_budget":"one line on how it fits ~$${deployable.toFixed(0)}"}`, 1400);
+
+    // validate the proposed levels against a genuine live price, exactly like the gem hunt
+    if (prop && prop.ticker) {
+      const real = (await livePrices([prop.ticker]))[prop.ticker.toUpperCase()] ?? null;
+      const lc = checkLevels(prop, real);
+      if (real != null) prop.current_price = String(real);
+      if (!lc.ok) { prop.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; }
+      else { prop.rr = lc.rr; prop.slPct = lc.slPct; prop.tpPct = lc.tpPct; }
+    }
+    nextBuy = prop;
+  } else {
+    waiting = `Freed buying power is about $${deployable.toFixed(0)}, below the ~$${MIN_DEPLOY} floor for a sensible new position. Close another one or two names first, then the desk will propose a buy worth making. Dribbling tiny amounts into new positions is inefficient.`;
+  }
+
+  return { clock: t, reconciled: true, balancePicture, enoughToDeployNow: enough, nextBuy, waiting, closesDetected: balancePicture.closesDetected };
+}
+
+// ---------- Rebalance: judge the whole book and design a balanced target ----------
+// One tap pulls live prices for every holding, measures the real concentration, then
+// judges each position (HOLD/TRIM/CLOSE) with a sensible exit price and reasoning, and
+// designs a more balanced, less chip-heavy, more geographically spread target book.
+async function actRebalance() {
+  const t = bkk();
+  const s = await loadAll();
+  const holdings = s.book.holdings || [];
+  if (!holdings.length) return { clock: t, empty: true, note: 'No holdings to rebalance. Seed or sync your book first.' };
+
+  // 1) pull genuine live prices for every held name, so every judgement is current
+  const tickers = holdings.map((h) => h.ticker || h.name).filter(Boolean);
+  const priceMap = await livePrices(tickers);
+  // fold live prices into a working copy so weights and P/L reflect the real market
+  const live = holdings.map((h) => {
+    const real = priceMap[(h.ticker || h.name || '').toUpperCase()];
+    const lastPrice = real != null ? real : num(h.lastPrice);
+    const avg = num(h.avgCost);
+    const qty = num(h.qty) || 0;
+    const plPct = (avg && lastPrice) ? ((lastPrice - avg) / avg) * 100 : null;
+    return { ...h, lastPrice, _sector: sectorOf(h), _value: Math.abs(qty * (lastPrice || avg || 0)), _plPct: plPct, _hasLive: real != null };
+  });
+
+  // 2) measure concentration: by sector, by chip-exposure, by geography (exchange)
+  const totalValue = live.reduce((a, h) => a + h._value, 0) || 1;
+  const bySector = {};
+  const byGeo = {};
+  let chipValue = 0;
+  for (const h of live) {
+    bySector[h._sector] = (bySector[h._sector] || 0) + h._value;
+    const geo = /SGX/i.test(h.exchange || '') ? 'Singapore' : /HK|HONG/i.test(h.exchange || '') ? 'Hong Kong' : 'US';
+    byGeo[geo] = (byGeo[geo] || 0) + h._value;
+    if (isChipExposed(h._sector)) chipValue += h._value;
+  }
+  const pct = (v) => +((v / totalValue) * 100).toFixed(1);
+  const sectorLines = Object.entries(bySector).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: ${pct(v)}%`).join(', ');
+  const geoLines = Object.entries(byGeo).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: ${pct(v)}%`).join(', ');
+  const chipPct = pct(chipValue);
+
+  // 3) per-holding lines with live price, weight, and P/L posture
+  const holdingLines = live.map((h) => {
+    const w = pct(h._value);
+    const pl = h._plPct != null ? `${h._plPct >= 0 ? '+' : ''}${h._plPct.toFixed(1)}% vs cost` : 'cost unclear';
+    return `${h.name}${h.ticker ? ' (' + h.ticker + ')' : ''} [${h._sector}, ${h.exchange || '?'}]: ${h.qty} @ cost ${h.avgCost}, live ${h.lastPrice ?? '?'}${h._hasLive ? '' : ' (no live feed, last synced)'}, weight ${w}%, ${pl}`;
+  }).join('\n');
+
+  const acc = s.book.account || {};
+  const buyingPower = num(acc.buyingPowerETD) ?? num(acc.buyingPowerSecurities);
+  const netLiq = num(s.book.netLiq) ?? num(acc.netLiquidityValue);
+
+  // pull fresh market + per-holding news so every verdict is grounded in what the market
+  // is actually saying right now, not price and concentration alone.
+  const newsQuery = live.map((h) => h.ticker ? `${h.ticker}|${h.name}` : h.name).filter(Boolean).join(',');
+  const news = await getNews('holdings', newsQuery);
+
+  const plan = await claude(`You are THE EXCHANGE's rebalancing strategist for a retail investor in Phuket trading via Phillip Nova (NOVA). His book is heavily concentrated in US semiconductors and you are helping him rebalance toward a healthier, more diversified portfolio, spread across sectors AND geographies. NOVA lets him trade US, Singapore, Hong Kong, Japan, Malaysia and China names, but he can only trade US stocks when the US market is open (his late night); SG/HK/regional names trade during his Phuket daytime, so those are especially valuable for daytime activity.
+
+CURRENT BOOK (live prices pulled just now where available):
+${holdingLines}
+
+CONCENTRATION RIGHT NOW:
+By sector: ${sectorLines}
+By geography: ${geoLines}
+Total semiconductor/chip exposure: ${chipPct}% of position value (this is the core problem to reduce).
+Account: net liquidity ~${netLiq ?? '?'}, buying power ~${buyingPower ?? '?'}.
+
+FRESH MARKET & COMPANY NEWS (ground every verdict in this, not just price and weight — if a name has a live catalyst, a broken story, or news that changes its outlook, that must shape the HOLD/TRIM/CLOSE call and the exit price):
+${digest(news, 24)}
+
+YOUR TASK, in two parts:
+
+PART 1 — TARGET BALANCE: Decide and EXPLAIN the best target shape for his book. Give sensible target weights by sector and by geography that meaningfully cut the chip concentration and add daytime-tradeable regional exposure, following sound diversification principles (no single stock dominating, no single sector above ~25-30%, genuine geographic spread). Explain WHY in plain, warm language.
+
+PART 2 — PER-HOLDING VERDICT: For EACH current holding, judge HOLD, TRIM, or CLOSE in service of that target. For any TRIM or CLOSE, give ONE sensible exit price (a single clean number) and a one-line reason. Base the exit price on the real current level and a sensible technical/valuation judgement; where he is underwater but the story is intact, it is fine to suggest holding or waiting for a better level rather than crystallising a loss, and where a name is a genuine winner or a broken story, say so. Ground verdicts in the concentration problem: over-weight chip names are prime trim/close candidates; genuine diversifiers and winners are keepers.
+
+Respond ONLY with JSON, no markdown:
+{"target":{"summary":"2-3 sentence plain explanation of the target shape and why","sectors":[{"name":"Semiconductors","current":"X%","target":"Y%"}],"geography":[{"name":"US","current":"X%","target":"Y%"}]},"verdicts":[{"ticker":"TICK","name":"Company","verdict":"HOLD|TRIM|CLOSE","exit_price":"single number or null for HOLD","reason":"one line","sector":"...","weight":"X%"}],"headline":"one honest sentence on the book's biggest imbalance","next_step":"what to do first, one line"}`, 2600);
+
+  const result = {
+    clock: t,
+    pulledPrices: Object.keys(priceMap).length,
+    totalHoldings: holdings.length,
+    concentration: { bySector: Object.fromEntries(Object.entries(bySector).map(([k, v]) => [k, pct(v)])), byGeo: Object.fromEntries(Object.entries(byGeo).map(([k, v]) => [k, pct(v)])), chipPct },
+    plan,
+    generatedAt: t.iso,
+  };
+  // remember the latest rebalance plan so the screen can show it and proof-of-close can reconcile against it
+  s.book.rebalance = { plan, concentration: result.concentration, at: t.iso };
+  await rSet('exchange:book', s.book);
+  return result;
 }
 
 // ---------- Position health review: hold or close, with proposed levels ----------
@@ -710,6 +879,29 @@ function resolveShadow(s, t, priceMap = {}) {
   return graded;
 }
 
+// ---------- Portfolio analytics helpers ----------
+// A light sector map for the names this book actually holds and is likely to hold.
+// Grounded in real classifications; extend as new names appear. Unknown falls to 'Other'.
+const SECTOR_MAP = {
+  MARVELL: 'Semiconductors', MRVL: 'Semiconductors', NETAPP: 'Technology', NTAP: 'Technology',
+  AMBA: 'Semiconductors', AMD: 'Semiconductors', CAMT: 'Semiconductors', CRDO: 'Semiconductors',
+  MBLY: 'Semiconductors', MGNI: 'Advertising Tech', SPCX: 'Aerospace/Space', COHR: 'Semiconductors',
+  ONTO: 'Semiconductors', C6L: 'Airlines', TSLA: 'Autos/EV', NEM: 'Materials/Gold', AR: 'Energy',
+  VOO: 'Broad Index ETF', AIQ: 'Tech Thematic ETF', SMH: 'Semiconductor ETF', ES3: 'Broad Index ETF',
+};
+const sectorOf = (h) => {
+  const k = (h.ticker || h.name || '').toUpperCase();
+  if (SECTOR_MAP[k]) return SECTOR_MAP[k];
+  // ETFs that are clearly semis by name
+  if (/semi/i.test(h.name || '')) return 'Semiconductor ETF';
+  if ((h.assetClass || '') === 'ETF') return 'Broad Index ETF';
+  return 'Other';
+};
+// A holding's market value (owned) or notional (leveraged), for weighting.
+const posValue = (h) => Math.abs((num(h.qty) || 0) * (num(h.lastPrice) || num(h.avgCost) || 0));
+// Group semis-adjacent sectors so hidden chip concentration is exposed honestly.
+const isChipExposed = (sector) => /semiconductor/i.test(sector);
+
 // ---------- Gather the whole state for the front end ----------
 // ---------- Vitals: gather the account figures and interpret them with insight ----------
 // The equity cousin of The Terminal's Vitals. Beyond listing balances, it reads what
@@ -785,13 +977,120 @@ function computeVitals(book) {
     }
   }
 
+  // ---- richer portfolio analytics (the expanded insights) ----
+  const val = (h) => Math.abs((num(h.qty) || 0) * (num(h.lastPrice) || num(h.avgCost) || 0));
+  const totVal = holdings.reduce((a, h) => a + val(h), 0) || 1;
+
+  // sector concentration + hidden chip exposure
+  const sectorAgg = {};
+  let chipVal = 0;
+  for (const h of holdings) {
+    const sec = sectorOf(h);
+    sectorAgg[sec] = (sectorAgg[sec] || 0) + val(h);
+    if (isChipExposed(sec)) chipVal += val(h);
+  }
+  const sectors = Object.entries(sectorAgg).map(([name, v]) => ({ name, pct: +((v / totVal) * 100).toFixed(1) })).sort((a, b) => b.pct - a.pct);
+  const chipPct = +((chipVal / totVal) * 100).toFixed(1);
+  const topSector = sectors[0] || null;
+
+  // geographic spread
+  const geoAgg = {};
+  for (const h of holdings) {
+    const geo = /SGX/i.test(h.exchange || '') ? 'Singapore' : /HK|HONG/i.test(h.exchange || '') ? 'Hong Kong' : 'US';
+    geoAgg[geo] = (geoAgg[geo] || 0) + val(h);
+  }
+  const geography = Object.entries(geoAgg).map(([name, v]) => ({ name, pct: +((v / totVal) * 100).toFixed(1) })).sort((a, b) => b.pct - a.pct);
+
+  // single-name concentration: is any one position too large a share?
+  const nameWeights = holdings.map((h) => ({ name: h.ticker || h.name, pct: +((val(h) / totVal) * 100).toFixed(1) })).sort((a, b) => b.pct - a.pct);
+  const topName = nameWeights[0] || null;
+
+  // winner / laggard attribution: which positions actually drive the book
+  const withPL = holdings.filter((h) => num(h.unrealised) != null);
+  const sortedPL = [...withPL].sort((a, b) => (num(b.unrealised) || 0) - (num(a.unrealised) || 0));
+  const topWinners = sortedPL.filter((h) => (num(h.unrealised) || 0) > 0).slice(0, 3).map((h) => ({ name: h.ticker || h.name, pl: +num(h.unrealised).toFixed(2) }));
+  const topLaggards = sortedPL.filter((h) => (num(h.unrealised) || 0) < 0).slice(-3).reverse().map((h) => ({ name: h.ticker || h.name, pl: +num(h.unrealised).toFixed(2) }));
+
+  // concentration reads folded in with status colours + healthy thresholds from the research
+  if (topSector) {
+    const st = topSector.pct > 40 ? 'RED' : topSector.pct > 30 ? 'AMBER' : 'GREEN';
+    reads.push({
+      label: 'Sector concentration', value: `${topSector.name} ${topSector.pct}%`, status: st,
+      note: st === 'GREEN'
+        ? `Your largest sector, ${topSector.name}, is ${topSector.pct}% of the book, within a healthy spread (a common guide is no single sector above ~30%).`
+        : `Your book leans heavily on ${topSector.name} at ${topSector.pct}%. A common healthy guide is no single sector above ~25-30%, so this is a concentration worth easing via the Balance tab.`,
+    });
+  }
+  if (chipPct > 0) {
+    const st = chipPct > 45 ? 'RED' : chipPct > 30 ? 'AMBER' : 'GREEN';
+    reads.push({
+      label: 'Chip exposure (hidden)', value: `${chipPct}%`, status: st,
+      note: st === 'GREEN'
+        ? `About ${chipPct}% of your book is semiconductor-exposed once you look through the ETFs. A reasonable level.`
+        : `Roughly ${chipPct}% of your book rides on semiconductors once you look through the ETFs and separate names. They tend to move together, so this is real hidden concentration; the Balance tab is built to reduce it.`,
+    });
+  }
+  if (topName && topName.pct > 10) {
+    reads.push({
+      label: 'Single-name risk', value: `${topName.name} ${topName.pct}%`, status: topName.pct > 20 ? 'AMBER' : 'GREEN',
+      note: `${topName.name} is ${topName.pct}% of your book. A common guide keeps any single stock under ~5-10%; a shock to one large name hits the whole book hardest.`,
+    });
+  }
+  if (geography.length) {
+    const usPct = (geography.find((g) => g.name === 'US') || {}).pct || 0;
+    reads.push({
+      label: 'Geographic spread', value: geography.map((g) => `${g.name} ${g.pct}%`).join(' · '), status: usPct > 85 ? 'AMBER' : 'GREEN',
+      note: usPct > 85
+        ? `About ${usPct}% of your book is US-listed, which you can only trade late at night. Adding SG/HK/regional daytime-tradeable names spreads both geography and trading hours.`
+        : `A genuine geographic spread across ${geography.map((g) => g.name).join(', ')}, which helps both diversification and daytime tradeability.`,
+    });
+  }
+
   return {
     figures: {
       netLiq, ledgerBalance, equityBalance, unrealizedPL, initialMargin, buyingPower,
     },
     reads, trend,
+    analytics: { sectors, chipPct, geography, nameWeights: nameWeights.slice(0, 6), topWinners, topLaggards, holdingsCount: holdings.length },
     leveraged: levHoldings.map((h) => h.ticker || h.name),
     lastSync: book.lastSync || null,
+  };
+}
+
+// ---------- Coaching progression: notice improvements, praise, advance ----------
+// Derives a small set of book-health goals from the vitals analytics, checks each
+// against a healthy threshold, and by comparing to the last saved snapshot, notices
+// when a goal has newly been MET so it can praise the win and surface the next focus.
+function computeCoaching(book, vitals, prevGoals) {
+  if (!vitals || !vitals.analytics) return null;
+  const a = vitals.analytics;
+  const goals = [];
+
+  // goal 1: cut chip concentration below 30%
+  if (a.chipPct != null) goals.push({ id: 'chip', label: 'Reduce chip exposure below 30%', met: a.chipPct <= 30, detail: `${a.chipPct}% chip-exposed`, target: '≤30%' });
+  // goal 2: no single sector above 30%
+  const top = (a.sectors || [])[0];
+  if (top) goals.push({ id: 'sector', label: 'No single sector above 30%', met: top.pct <= 30, detail: `${top.name} ${top.pct}%`, target: '≤30%' });
+  // goal 3: no single stock above 20%
+  const topName = (a.nameWeights || [])[0];
+  if (topName) goals.push({ id: 'name', label: 'No single stock above 20%', met: topName.pct <= 20, detail: `${topName.name} ${topName.pct}%`, target: '≤20%' });
+  // goal 4: some geographic spread (US under 85%)
+  const us = (a.geography || []).find((g) => g.name === 'US');
+  if (us) goals.push({ id: 'geo', label: 'Spread beyond US (US under 85%)', met: us.pct < 85, detail: `US ${us.pct}%`, target: '<85%' });
+
+  // compare to previous snapshot to detect NEWLY met goals (progress to praise)
+  const prevMap = {};
+  (prevGoals || []).forEach((g) => { prevMap[g.id] = g.met; });
+  const justAchieved = goals.filter((g) => g.met && prevMap[g.id] === false).map((g) => g.label);
+
+  const metCount = goals.filter((g) => g.met).length;
+  const nextFocus = goals.find((g) => !g.met) || null;
+
+  return {
+    goals, metCount, total: goals.length,
+    justAchieved,
+    nextFocus: nextFocus ? { label: nextFocus.label, detail: nextFocus.detail, target: nextFocus.target } : null,
+    allMet: metCount === goals.length && goals.length > 0,
   };
 }
 
@@ -799,6 +1098,14 @@ async function actGet() {
   const t = bkk();
   const s = await loadAll();
   const ideas = await rGet(`exchange:ideas:${t.dateKey}`);
+  const vitals = computeVitals(s.book);
+  // coaching: compare current goals to the last saved snapshot to notice improvements
+  const coaching = computeCoaching(s.book, vitals, (s.book.coachGoals || []));
+  if (coaching) {
+    // persist the current goal states so next time we can detect newly-met goals
+    s.book.coachGoals = coaching.goals.map((g) => ({ id: g.id, met: g.met }));
+    await rSet('exchange:book', s.book);
+  }
   return {
     clock: t,
     book: s.book,
@@ -808,7 +1115,8 @@ async function actGet() {
     guidanceMeta: s.guidanceMeta,
     universe: s.universe,
     ideasToday: ideas,
-    vitals: computeVitals(s.book),
+    vitals,
+    coaching,
   };
 }
 
@@ -875,6 +1183,8 @@ export default async function handler(req, res) {
     else if (action === 'ideas') out = await actIdeas(!!p.force);
     else if (action === 'sync') out = await actSync(p.positionsImage, p.historyImage);
     else if (action === 'review') out = await actReview(p.holdingId);
+    else if (action === 'rebalance') out = await actRebalance();
+    else if (action === 'proofofclose') out = await actProofOfClose(p.positionsImage);
     else if (action === 'pass') out = await actPass(p.ideaLedgerId);
     else if (action === 'takeup') out = await actTakeUp(p.ideaLedgerId);
     else if (action === 'flag') out = await actFlagUnavailable(p.name, p.available);
