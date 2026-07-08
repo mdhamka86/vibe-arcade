@@ -616,14 +616,14 @@ function Learn({state}){
 // ---------- Rebalance: the guided rebalancing cockpit ----------
 function Rebalance({state,refresh}){
   const [busy,setBusy]=useState(false);
-  const [plan,setPlan]=useState(null);
+  const [freshPlan,setFreshPlan]=useState(null);
   const [err,setErr]=useState(null);
   const [proofBusy,setProofBusy]=useState(false);
   const [proofOut,setProofOut]=useState(null);
 
   const run=async()=>{
     setBusy(true); setErr(null);
-    try{ const r=await eng('rebalance'); setPlan(r); }
+    try{ const r=await eng('rebalance'); setFreshPlan(r); await refresh(); }
     catch(e){ setErr(e.message); }
     setBusy(false);
   };
@@ -634,6 +634,11 @@ function Rebalance({state,refresh}){
     setProofBusy(false);
   };
 
+  // Persist across navigation: prefer a plan generated this session, otherwise fall back
+  // to the last saved plan on the book. This stays put until the user pulls prices again.
+  const saved=state?.book?.rebalance||null;
+  const plan = freshPlan || (saved ? { plan: saved.plan, concentration: saved.concentration, generatedAt: saved.at } : null);
+
   const vCls=(v)=> v==='CLOSE'?'b-red':v==='TRIM'?'b-amber':'b-ok';
   const p=plan?.plan;
 
@@ -643,8 +648,9 @@ function Rebalance({state,refresh}){
         <div className="eyebrow"><Ic n="pulse"/>Rebalance · the guided cockpit</div>
         <div className="note">One tap pulls live prices for every holding, measures your real concentration, and judges each position hold, trim or close toward a more balanced, less chip-heavy, more geographically spread book. Grounded in fresh market news.</div>
         <div className="row" style={{marginTop:12}}>
-          <button className="pri" disabled={busy} onClick={run}>{busy?<span className="spin">◐</span>:'Pull prices & rebalance'}</button>
+          <button className="pri" disabled={busy} onClick={run}>{busy?<span className="spin">◐</span>:(plan?'Pull fresh prices & re-run':'Pull prices & rebalance')}</button>
         </div>
+        {plan?.generatedAt && !busy && <div className="meta" style={{marginTop:8}}><span>plan generated {ago(Date.parse(plan.generatedAt))} · stays here until you re-run</span></div>}
         {err && <div className="alertbox a-red" style={{marginTop:10,marginBottom:0}}>{err} <span className="dim">Tap the button to try again.</span></div>}
       </div>
 
