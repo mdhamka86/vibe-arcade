@@ -37,6 +37,31 @@ async function redis(cmds) {
   return j.map((x) => x.result);
 }
 
+// Write each key, snapshot the previous value first, then read back and confirm
+// the stored value matches what we sent. Same discipline as the vault's own writes.
+async function writeVerified(kv) {
+  const keys = Object.keys(kv);
+  // snapshot current values as stw:prev:*
+  const cur = await redis(keys.map((k) => ["GET", k]));
+  const snap = [];
+  keys.forEach((k, i) => {
+    if (cur[i] != null) snap.push(["SET", "stw:prev:" + k.replace(/^stw:/, ""), cur[i]]);
+  });
+  if (snap.length) await redis(snap);
+  // write
+  await redis(keys.map((k) => ["SET", k, kv[k]]));
+  // read back and verify
+  const back = await redis(keys.map((k) => ["GET", k]));
+  const verify = {};
+  let allMatch = true;
+  keys.forEach((k, i) => {
+    const match = back[i] === kv[k];
+    verify[k] = { match };
+    if (!match) allMatch = false;
+  });
+  return { verify, allMatch };
+}
+
 function parseBody(req) {
   try {
     return typeof req.body === "object" && req.body
@@ -81,7 +106,8 @@ async function recentLessons() {
 
 function charterText(ch) {
   return ch.laws
-    .map((l, i) => i + 1 + ". " + l.title.toUpperCase() + "\n   " + l.rule)
+    .filter((l) => !l.repealed)
+    .map((l, i) => i + 1 + ". " + l.title.toUpperCase() + (l.custom ? " (promoted)" : "") + "\n   " + l.rule)
     .join("\n\n");
 }
 
@@ -144,6 +170,302 @@ module.exports = async (req, res) => {
           .json({ error: 'Charter exists. Send {"force":true} to overwrite.' });
       await redis([["SET", "stw:charter", JSON.stringify(charterSeed)]]);
       return res.status(200).json({ ok: true, version: charterSeed.version, laws: charterSeed.laws.length });
+    }
+
+    // ---- THE LIVING CHARTER: promote a proven lesson into binding law ----
+    // The ten seeded laws are themselves graduated lessons. This lets an important
+    // model note or ledger entry be ELEVATED to Charter law, where it binds every
+    // future proposal with full weight, not merely as one lesson the Stable reads.
+    // Deliberate and user-driven, like a precedent signed into common law. Appends
+    // only; a mistaken promotion is repealed by marking it, never by silent erasure.
+    if (action === "charterpromote") {
+      if (req.method !== "POST")
+        return res.status(405).json({ error: "POST required" });
+      const body = parseBody(req);
+      const title = String(body.title || "").trim();
+      const rule = String(body.rule || "").trim();
+      if (!title || !rule)
+        return res
+          .status(422)
+          .json({ error: "title and rule are required to enact a law" });
+      if (title.length > 200 || rule.length > 4000)
+        return res.status(422).json({ error: "title or rule too long" });
+
+      const ch = await getCharter();
+      // custom laws get a stable id and provenance
+      const existingCustom = (ch.laws || []).filter((l) =>
+        String(l.id || "").startsWith("custom-")
+      ).length;
+      const id = "custom-" + (existingCustom + 1);
+      const law = {
+        id,
+        title,
+        rule,
+        origin:
+          "Promoted to Charter " +
+          new Date().toISOString().slice(0, 10) +
+          (body.fromLedgerSeq ? " from Model Ledger #" + body.fromLedgerSeq : " by you") +
+          (body.why ? " — " + String(body.why).slice(0, 300) : ""),
+        enacted: new Date().toISOString(),
+        custom: true,
+      };
+      ch.laws = ch.laws || [];
+      ch.laws.push(law);
+      ch.version = (ch.version || "charter-1") + "+" + id;
+      const str = JSON.stringify(ch);
+      const { verify, allMatch } = await writeVerified({ "stw:charter": str });
+      // also record the enactment in the Model Ledger, so the two stay in step
+      try {
+        const [lRaw] = await redis([["GET", "stw:ledger"]]);
+        const entries = lRaw ? JSON.parse(lRaw) : [];
+        const seq = entries.reduce((m, e) => Math.max(m, e.seq || 0), 0) + 1;
+        entries.push({
+          seq,
+          at: new Date().toISOString(),
+          kind: "rule",
+          change: "Enacted Charter law: " + title,
+          why:
+            "Promoted from lesson to binding Charter law. " +
+            (body.why || "") +
+            (body.fromLedgerSeq ? " (from ledger #" + body.fromLedgerSeq + ")" : ""),
+          before: "",
+          after: rule,
+          author: "you",
+          correctsSeq: null,
+        });
+        await redis([["SET", "stw:ledger", JSON.stringify(entries)]]);
+      } catch (e) {
+        /* ledger mirroring is best-effort; the Charter write is the source of truth */
+      }
+      return res.status(200).json({
+        ok: allMatch,
+        law,
+        totalLaws: ch.laws.length,
+        verify,
+      });
+    }
+
+    if (action === "charterlaws") {
+      const ch = await getCharter();
+      return res.status(200).json({
+        version: ch.version,
+        count: (ch.laws || []).length,
+        laws: (ch.laws || []).map((l) => ({
+          id: l.id,
+          title: l.title,
+          rule: l.rule,
+          origin: l.origin || "",
+          custom: !!l.custom,
+          repealed: !!l.repealed,
+        })),
+      });
+    }
+
+    if (action === "charterrepeal") {
+      if (req.method !== "POST")
+        return res.status(405).json({ error: "POST required" });
+      const body = parseBody(req);
+      const id = String(body.id || "").trim();
+      if (!id.startsWith("custom-"))
+        return res
+          .status(422)
+          .json({ error: "Only promoted (custom-) laws may be repealed; the ten founding laws are permanent." });
+      const ch = await getCharter();
+      const law = (ch.laws || []).find((l) => l.id === id);
+      if (!law) return res.status(404).json({ error: "No law " + id });
+      law.repealed = true;
+      law.repealedAt = new Date().toISOString();
+      law.repealReason = String(body.why || "").slice(0, 300);
+      const str = JSON.stringify(ch);
+      const { verify, allMatch } = await writeVerified({ "stw:charter": str });
+      return res.status(200).json({ ok: allMatch, repealed: id, verify });
+    }
+
+    // ---- THE CHARTER ADVOCATE: recommend promotions and repeals from proven patterns ----
+    // Reads the recent settled history across MULTIPLE days, the standing Charter, and the
+    // ledger lessons, then argues for any lesson that has proven itself enough to become
+    // binding law, or any promoted law the evidence has turned against. It RECOMMENDS ONLY,
+    // with its reasoning and the evidence; the user enacts or repeals with a deliberate tap.
+    if (action === "charterrecommend") {
+      if (req.method !== "POST")
+        return res.status(405).json({ error: "POST required" });
+      if (!AK)
+        return res
+          .status(500)
+          .json({ error: "ANTHROPIC_API_KEY missing (the advocate needs it)" });
+
+      const [logRaw, ledRaw] = await redis([
+        ["GET", "stw:betlog"],
+        ["GET", "stw:ledger"],
+      ]);
+      if (!logRaw) return res.status(404).json({ error: "Vault not seeded yet" });
+      const log = JSON.parse(logRaw);
+      const ledger = ledRaw ? JSON.parse(ledRaw) : [];
+      const ch = await getCharter();
+
+      const num = (v) => { const n = parseFloat(v); return isFinite(n) ? n : 0; };
+      const r2 = (v) => Math.round(num(v) * 100) / 100;
+      const normResult = (v) => {
+        const s = String(v == null ? "" : v).trim().toLowerCase();
+        return s === "loss" ? "lose" : s;
+      };
+      const dkey = (d) => {
+        const p = String(d || "").split("/");
+        return p.length === 3 ? p[2] + p[1] + p[0] : "";
+      };
+      const regionOf = (meet) => {
+        const s = String(meet || "").toLowerCase();
+        if (s.includes("south africa")) return "South Africa";
+        if (s.includes("france")) return "France";
+        if (s.includes("united kingdom") || s.includes("ireland")) return "UK/IRE";
+        if (s.includes("australia")) return "Australia";
+        if (s.includes("hong kong")) return "Hong Kong";
+        if (s.includes("japan")) return "Japan";
+        if (s.includes("singapore")) return "Singapore";
+        if (s.includes("korea")) return "Korea";
+        if (s.includes("united states") || s.includes("usa")) return "USA";
+        return "Other";
+      };
+
+      // settled model legs only, most recent ~10 distinct days of evidence
+      const settled = log.filter(
+        (b) =>
+          String(b.ledger || "").trim().toLowerCase() === "model" &&
+          ["win", "place", "lose"].includes(normResult(b.result))
+      );
+      const days = [...new Set(settled.map((b) => b.date))].sort((a, b) =>
+        dkey(b).localeCompare(dkey(a))
+      );
+      const recentDays = new Set(days.slice(0, 10));
+      const recent = settled.filter((b) => recentDays.has(b.date));
+
+      const agg = (legs) => {
+        const staked = r2(legs.reduce((a, b) => a + num(b.stake), 0));
+        const payout = r2(legs.reduce((a, b) => a + num(b.payout), 0));
+        return {
+          n: legs.length,
+          staked,
+          payout,
+          net: r2(payout - staked),
+          roi: staked ? Math.round(((payout - staked) / staked) * 1000) / 10 : 0,
+          cashed: legs.filter((b) => num(b.payout) > 0).length,
+        };
+      };
+      // by region, across the recent window and how many distinct days each appeared
+      const byRegion = {};
+      recent.forEach((b) => {
+        const rg = regionOf(b.meet);
+        (byRegion[rg] = byRegion[rg] || []).push(b);
+      });
+      const regionLines = Object.keys(byRegion).map((rg) => {
+        const legs = byRegion[rg];
+        const daySpan = new Set(legs.map((l) => l.date)).size;
+        const a = agg(legs);
+        return rg + ": " + a.n + " legs over " + daySpan + " days, net $" + a.net + " (" + a.roi + "% ROI), " + a.cashed + " cashed";
+      });
+      // by bet type
+      const winA = agg(recent.filter((b) => String(b.betType).trim() === "WIN"));
+      const plaA = agg(recent.filter((b) => String(b.betType).trim() === "PLA"));
+      // by confidence band
+      const byConf = {};
+      recent.forEach((b) => {
+        const c = String(b.confidence).trim() === "Med-High" ? "Medium-High" : (String(b.confidence).trim() || "(none)");
+        (byConf[c] = byConf[c] || []).push(b);
+      });
+      const confLines = Object.keys(byConf).map((c) => {
+        const a = agg(byConf[c]);
+        return c + ": " + a.n + " legs, " + a.roi + "% ROI";
+      });
+
+      // current promoted laws (candidates for repeal) and lesson themes (candidates for promotion)
+      const promoted = (ch.laws || []).filter((l) => l.custom && !l.repealed);
+      const promotedText = promoted.length
+        ? promoted.map((l) => l.id + ": " + l.title + " — " + l.rule).join("\n")
+        : "(none yet)";
+      const ledgerThemes = ledger
+        .filter((e) => !e.correctsSeq)
+        .slice(-14)
+        .map((e) => "#" + e.seq + " [" + e.kind + "] " + e.change + (e.why ? " (" + e.why + ")" : ""));
+
+      const system =
+        "You are the Charter advocate for The Outsider Method, a disciplined horse-racing staking model. " +
+        "The Charter is the body of binding law every betlist must obey. It should evolve like common-law precedent: " +
+        "a lesson is elevated to law ONLY once it has proven itself across MULTIPLE days, not on a single result, because a law that overfits to noise corrupts the whole method. " +
+        "You RECOMMEND promotions and repeals; you never enact them. Be rigorous and sparing. Most reviews should recommend NOTHING: " +
+        "an ordinary stretch where the standing laws are working needs no change. Only advocate a PROMOTION when a pattern is genuinely recurring and materially affects returns, " +
+        "and only advocate a REPEAL of an existing promoted law when recent evidence has clearly turned against the very pattern it was enacted to capture. " +
+        "Never invent figures; reason only from the evidence given.";
+
+      const prompt =
+        "THE STANDING CHARTER (founding + promoted laws):\n" + charterText(ch) +
+        "\n\nPROMOTED LAWS currently in force (these, and only these, may be recommended for repeal):\n" + promotedText +
+        "\n\nRECENT LEDGER LESSONS (candidate themes for promotion):\n- " + (ledgerThemes.length ? ledgerThemes.join("\n- ") : "(none)") +
+        "\n\nEVIDENCE — last " + recentDays.size + " settled days (" + recent.length + " model legs):" +
+        "\nBy region:\n  " + (regionLines.join("\n  ") || "(none)") +
+        "\nWIN book: " + JSON.stringify(winA) +
+        "\nPLA book: " + JSON.stringify(plaA) +
+        "\nBy confidence:\n  " + (confLines.join("\n  ") || "(none)") +
+        "\n\nReview whether the Charter should evolve. Respond with ONLY minified JSON, no fences, exactly:\n" +
+        '{"summary":"1-2 sentence read of whether the Charter needs to evolve right now",' +
+        '"promotions":[{"title":"short law title","rule":"the full binding rule","why":"the multi-day evidence justifying elevation to law","fromLedgerSeq":0}],' +
+        '"repeals":[{"id":"custom-N","why":"the recent evidence that has turned against this law"}]}';
+
+      const cr = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": AK,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-6",
+          max_tokens: 3000,
+          system,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      });
+      if (!cr.ok) {
+        const t = await cr.text();
+        return res.status(502).json({ error: "Claude HTTP " + cr.status + ": " + t.slice(0, 200) });
+      }
+      const cj = await cr.json();
+      const text = (cj.content || []).map((c) => (c.type === "text" ? c.text : "")).join("");
+      let parsed;
+      try {
+        parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+      } catch (e) {
+        return res.status(502).json({ error: "Advocate reply was not clean JSON: " + text.slice(0, 200) });
+      }
+      // validate the recommendations against reality: repeals must name real promoted laws
+      const promotedIds = new Set(promoted.map((l) => l.id));
+      const promotions = (Array.isArray(parsed.promotions) ? parsed.promotions : [])
+        .filter((p) => p && String(p.title || "").trim() && String(p.rule || "").trim())
+        .map((p) => ({
+          title: String(p.title).trim().slice(0, 200),
+          rule: String(p.rule).trim().slice(0, 4000),
+          why: String(p.why || "").trim().slice(0, 1000),
+          fromLedgerSeq: parseInt(p.fromLedgerSeq, 10) || null,
+        }));
+      const repeals = (Array.isArray(parsed.repeals) ? parsed.repeals : [])
+        .filter((r) => r && promotedIds.has(String(r.id).trim()))
+        .map((r) => ({
+          id: String(r.id).trim(),
+          title: (promoted.find((l) => l.id === String(r.id).trim()) || {}).title || "",
+          why: String(r.why || "").trim().slice(0, 1000),
+        }));
+
+      const result = {
+        ok: true,
+        summary: String(parsed.summary || "").trim(),
+        daysReviewed: recentDays.size,
+        legsReviewed: recent.length,
+        promotions,
+        repeals,
+        nothingToDo: promotions.length === 0 && repeals.length === 0,
+        generatedAt: new Date().toISOString(),
+      };
+      await redis([["SET", "stw:charterrec:latest", JSON.stringify(result)]]);
+      return res.status(200).json(result);
     }
 
     if (action === "run") {
