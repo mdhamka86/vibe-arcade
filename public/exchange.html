@@ -617,19 +617,20 @@ function Learn({state}){
 function Rebalance({state,refresh}){
   const [busy,setBusy]=useState(false);
   const [plan,setPlan]=useState(null);
+  const [err,setErr]=useState(null);
   const [proofBusy,setProofBusy]=useState(false);
   const [proofOut,setProofOut]=useState(null);
 
   const run=async()=>{
-    setBusy(true);
+    setBusy(true); setErr(null);
     try{ const r=await eng('rebalance'); setPlan(r); }
-    catch(e){ alert(e.message); }
+    catch(e){ setErr(e.message); }
     setBusy(false);
   };
   const submitProof=async(b64)=>{
-    setProofBusy(true);
+    setProofBusy(true); setErr(null);
     try{ const r=await eng('proofofclose',{positionsImage:b64}); setProofOut(r); await refresh(); }
-    catch(e){ alert(e.message); }
+    catch(e){ setErr(e.message); }
     setProofBusy(false);
   };
 
@@ -644,6 +645,7 @@ function Rebalance({state,refresh}){
         <div className="row" style={{marginTop:12}}>
           <button className="pri" disabled={busy} onClick={run}>{busy?<span className="spin">◐</span>:'Pull prices & rebalance'}</button>
         </div>
+        {err && <div className="alertbox a-red" style={{marginTop:10,marginBottom:0}}>{err} <span className="dim">Tap the button to try again.</span></div>}
       </div>
 
       {plan?.empty && <div className="note">{plan.note}</div>}
