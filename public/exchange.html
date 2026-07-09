@@ -76,6 +76,8 @@
   button:focus-visible{outline:2px solid var(--amber);outline-offset:1px}
   button.pri{background:linear-gradient(180deg,var(--amber),var(--amber-soft));color:#1A1206;border-color:var(--amber);font-weight:600}
   button.ghost{background:transparent;border-color:var(--line2)}
+  .inp{background:var(--bg2);border:1px solid var(--line2);border-radius:8px;color:var(--ink);padding:8px 10px;font-size:14px;font-family:'IBM Plex Mono',monospace}
+  .inp:focus{outline:none;border-color:var(--amber)}
   button.ghost:active{background:var(--panel2)}
   button:disabled{opacity:.4;cursor:default}
   svg.ic{width:1em;height:1em;stroke:currentColor;stroke-width:1.6;fill:none;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.13em}
@@ -510,6 +512,9 @@ function HoldingRow({h,cls}){
 // ---------- Reviews tab: hold-or-close verdicts ----------
 function Reviews({state,refresh}){
   const [busy,setBusy]=useState(null);
+  const [editing,setEditing]=useState(null);
+  const [slIn,setSlIn]=useState('');
+  const [tpIn,setTpIn]=useState('');
   const holdings=state?.book?.holdings||[];
 
   const runReview=async(id)=>{
@@ -518,20 +523,37 @@ function Reviews({state,refresh}){
     catch(e){ alert(e.message); }
     setBusy(null);
   };
+  const saveLevels=async(id)=>{
+    setBusy(id);
+    try{ await eng('setlevels',{holdingId:id,sl:slIn||null,tp:tpIn||null}); await refresh(); setEditing(null); }
+    catch(e){ alert(e.message); }
+    setBusy(null);
+  };
+  const startEdit=(h)=>{ setEditing(h.id); setSlIn(h.lockedSL!=null?String(h.lockedSL):''); setTpIn(h.lockedTP!=null?String(h.lockedTP):''); };
   const vCls=(v)=> v==='HOLD'?'b-ok':v==='CLOSE'?'b-red':'b-note';
   const vTextCls=(v)=> v==='HOLD'?'green':v==='CLOSE'?'red':'ambr';
+  // live-recompute whether a locked level is currently hit, from the freshest price
+  const liveHit=(h)=>{
+    const px=parseFloat(h.lastPrice); if(isNaN(px)) return null;
+    const tp=parseFloat(h.lockedTP), sl=parseFloat(h.lockedSL);
+    if(!isNaN(tp) && px>=tp) return {type:'TP',level:h.lockedTP};
+    if(!isNaN(sl) && px<=sl) return {type:'SL',level:h.lockedSL};
+    return null;
+  };
 
   return (
     <div className="wrap">
       <div className="card">
         <div className="eyebrow"><Ic n="review"/>Position health reviews</div>
-        <div className="note">Send any holding for a patient analyst's review. The desk weighs whether the story still holds, proposes sensible stop and target levels, and advises hold, trim, or close, grounded in fresh company news.</div>
+        <div className="note">Send any holding for a patient analyst's review. The FIRST review locks in a stop and target; later reviews never move them, they only judge hold or close against them. Since NOVA has no automatic stop/target, the desk flags when a locked level is hit so you know to act. You can deliberately override the levels yourself any time.</div>
       </div>
       {holdings.length===0 && <div className="note">No holdings to review yet. Seed or sync your book first.</div>}
       {holdings.map(h=>{
         const rv=h.lastReview;
         const hist=h.reviewHistory||[];
         const priorCount=Math.max(0,hist.length-1);
+        const hasLocked=h.lockedSL!=null||h.lockedTP!=null;
+        const hit=liveHit(h);
         return (
           <div key={h.id} className="card">
             <div className="between">
@@ -543,14 +565,23 @@ function Reviews({state,refresh}){
               <span>now {fmt(h.lastPrice)}</span>
               <span className={(h.unrealised||0)>=0?'green':'red'}>{(h.unrealised||0)>=0?'+':''}{fmt(h.unrealised)}</span>
             </div>
+
+            {/* LOCKED level HIT alert — the manual trigger NOVA can't give you */}
+            {hit && <div className="alertbox a-red" style={{marginTop:10}}>
+              <div style={{fontWeight:700}}><Ic n="target"/> {hit.type==='TP'?'TAKE-PROFIT HIT':'STOP-LOSS HIT'} at {fmt(hit.level)} — now {fmt(h.lastPrice)}</div>
+              <div style={{marginTop:3}}>NOVA won't have closed this automatically. This is your cue to decide: act on the level, or consciously hold on.</div>
+            </div>}
+
+            {/* the locked levels, shown persistently */}
+            {hasLocked && <div className="levels" style={{marginTop:10}}>
+              <div className="lvl"><div className="lk">Locked Stop {h.levelsManuallySet?'(manual)':''}</div><div className={'lv '+(hit&&hit.type==='SL'?'red':'red')} style={hit&&hit.type==='SL'?{textDecoration:'underline'}:{}}>{fmt(h.lockedSL)}</div></div>
+              <div className="lvl"><div className="lk">Locked Target</div><div className={'lv green'} style={hit&&hit.type==='TP'?{textDecoration:'underline'}:{}}>{fmt(h.lockedTP)}</div></div>
+            </div>}
+
             {rv && <>
               {rv.level_note && <div className="alertbox a-amber" style={{marginTop:10,marginBottom:0}}><Ic n="target"/> {rv.level_note}</div>}
               <div className="thesis">{rv.reason}</div>
               {rv.change_note && <div className="note" style={{marginTop:8}}><span className="steel">SINCE LAST REVIEW</span> {rv.change_note}</div>}
-              {(rv.proposed_sl||rv.proposed_tp)&&<div className="levels">
-                <div className="lvl"><div className="lk">Proposed Stop</div><div className="lv red">{fmt(rv.proposed_sl)}</div></div>
-                <div className="lvl"><div className="lk">Proposed Target</div><div className="lv green">{fmt(rv.proposed_tp)}</div></div>
-              </div>}
               {rv.hold_guidance&&<div className="note" style={{marginTop:8}}><span className="steel">HOLD GUIDANCE</span> {rv.hold_guidance}</div>}
               <div className="meta">
                 <span>reviewed {rv.at?ago(Date.parse(rv.at)):''}</span>
@@ -563,15 +594,26 @@ function Reviews({state,refresh}){
                     <div key={i} className="lesson" style={{borderLeftColor:'var(--line2)'}}>
                       <div className="between"><span className={vTextCls(r.verdict)} style={{fontWeight:600,fontSize:12}}>{r.verdict}</span><span className="dim" style={{fontSize:10}}>{r.at?r.at.slice(0,10):''}</span></div>
                       <div style={{marginTop:4}}>{r.reason}</div>
-                      {(r.proposed_sl||r.proposed_tp)&&<div className="meta"><span className="red">SL {fmt(r.proposed_sl)}</span><span className="green">TP {fmt(r.proposed_tp)}</span></div>}
                     </div>
                   ))}
                 </div>
               </details>}
             </>}
-            <div className="row" style={{marginTop:12}}>
-              <button className="ghost" disabled={busy===h.id} onClick={()=>runReview(h.id)}>{busy===h.id?<span className="spin">◐</span>:(rv?'Review again':'Review this holding')}</button>
-            </div>
+
+            {/* manual override editor */}
+            {editing===h.id ? <div className="card" style={{marginTop:10,background:'var(--panel2)'}}>
+              <div className="eyebrow">Override locked levels</div>
+              <div className="row" style={{gap:8,marginTop:6,flexWrap:'wrap'}}>
+                <input className="inp" placeholder="Stop loss" value={slIn} onChange={e=>setSlIn(e.target.value)} inputMode="decimal" style={{maxWidth:120}}/>
+                <input className="inp" placeholder="Take profit" value={tpIn} onChange={e=>setTpIn(e.target.value)} inputMode="decimal" style={{maxWidth:120}}/>
+                <button className="pri" disabled={busy===h.id} onClick={()=>saveLevels(h.id)}>{busy===h.id?<span className="spin">◐</span>:'Lock these'}</button>
+                <button className="ghost" onClick={()=>setEditing(null)}>Cancel</button>
+              </div>
+              <div className="note" style={{marginTop:6}}>Leave a field blank to clear that level. This is the only way to change locked levels.</div>
+            </div> : <div className="row" style={{marginTop:12,gap:8,flexWrap:'wrap'}}>
+              <button className="ghost" disabled={busy===h.id} onClick={()=>runReview(h.id)}>{busy===h.id?<span className="spin">◐</span>:(rv?'Review again':(hasLocked?'Review this holding':'Review & lock levels'))}</button>
+              {hasLocked && <button className="ghost" onClick={()=>startEdit(h)}>Override levels</button>}
+            </div>}
           </div>
         );
       })}
