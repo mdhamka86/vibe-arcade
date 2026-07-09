@@ -308,7 +308,7 @@
 
     <footer>
       Raw rows are stored verbatim, exactly as the journal recorded them. All computed figures use the normalisation layer (Loss&rarr;Lose, Med-High&rarr;Medium-High) so the dashboards see the truth without rewriting history. Export rebuilds the four-sheet workbook from the vault as computed values.<br><br>
-      <span style="color:var(--brass);font-weight:600;" class="serif">The Stewards&rsquo; Room v2.4</span> &middot; A living Charter: the room advocates promotions and repeals from proven patterns, you sign each into law &middot; hammyLabs &middot; 07/07/2026
+      <span style="color:var(--brass);font-weight:600;" class="serif">The Stewards&rsquo; Room v2.6</span> &middot; Charter live-figure audit: Medium-High now measured PLA-only to match its founding basis, drift language made neutral &middot; hammyLabs &middot; 07/07/2026
     </footer>
   </div>
 
@@ -757,11 +757,16 @@ function wireLedger(){
   if(cv) cv.addEventListener("click",async()=>{
     const host=$("charterHost");
     if(charterCache){ renderCharter(charterCache); return; }
-    cv.disabled=true; qmsgCh("Reading the Charter\u2026");
+    cv.disabled=true; qmsgCh("Reading the Charter and computing live figures\u2026");
     try{
       const r=await proposeApi("action=charterlaws",{},20000);
-      if(r.error){ qmsgCh(r.error,"err"); }
-      else{ charterCache=r; qmsgCh(""); renderCharter(r); }
+      if(r.error){ qmsgCh(r.error,"err"); return; }
+      // fetch live health too; if it fails, we still show the laws without live figures
+      let health=null;
+      try{ const hr=await proposeApi("action=charterhealth",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"},20000);
+        if(!hr.error) health=hr.health; }catch(e){}
+      r.health=health;
+      charterCache=r; qmsgCh(""); renderCharter(r);
     }catch(e){ qmsgCh("Failed: "+e.message,"err"); }
     finally{ const b=$("charterView"); if(b) b.disabled=false; }
   });
@@ -809,6 +814,17 @@ function renderCharterRecs(r){
           '<button class="qbtn gold small rec-repeal" data-i="'+i+'" data-id="'+esc(p.id)+'" type="button" style="margin-top:0">Repeal this law</button>'+
           '<button class="qbtn gold small rec-dismiss" data-t="rep" data-i="'+i+'" type="button" style="margin-top:0">Dismiss</button>'+
         '</div><div class="qmsg" id="rec-rep-msg-'+i+'"></div></div>';
+    });
+  }
+  if((r.foundingObservations||[]).length){
+    h+='<div class="lesson" style="margin-top:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.09em;font-size:11px;font-weight:500;">Founding-law drift \u00b7 for your review</div>';
+    h+='<div class="lesson" style="margin-bottom:4px">The founding laws are permanent and only your own hand can amend them. These are observations, not actions: a founding law\u2019s live figures have drifted from what it was enacted on.</div>';
+    r.foundingObservations.forEach(o=>{
+      h+='<div class="card" style="margin-bottom:8px">'+
+        '<div class="legtop"><span class="legname">'+esc(o.title)+'</span><span class="chip refund">founding</span></div>'+
+        (o.drift?'<div class="mono" style="margin-top:4px;color:var(--brass)">'+esc(o.drift)+'</div>':'')+
+        (o.note?'<div class="lesson" style="margin-top:5px">'+esc(o.note)+'</div>':'')+
+        '</div>';
     });
   }
   host.innerHTML=h;
@@ -878,9 +894,26 @@ function renderCharter(r){
   let h='<div class="lesson" style="margin-top:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.09em;font-size:11px;font-weight:500;">'+founding.length+' founding \u00b7 '+promoted.length+' promoted'+(repealed.length?' \u00b7 '+repealed.length+' repealed':'')+'</div>';
   active.forEach((l,i)=>{
     const chip=l.custom?'<span class="chip place">promoted</span>':'<span class="chip refund">founding</span>';
+    // live figure beside the founding rationale, where one exists
+    const hh=(r.health||{})[l.id];
+    let liveBlock="";
+    if(hh){
+      const drift=hh.drift;
+      const driftBadge=drift?
+        '<span class="chip refund">'+(drift.gap>0?"+":"")+esc(drift.gap)+' pts \u00b7 '+esc(drift.direction)+'</span>':
+        '<span class="chip place">holding</span>';
+      liveBlock='<div class="legreason" style="margin-top:7px;border:1px solid '+(drift?"var(--brass)":"var(--line)")+'">'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">'+
+          '<b style="color:var(--brass)">Live: '+esc(hh.metric)+'</b>'+driftBadge+
+        '</div>'+
+        '<div class="mono" style="margin-top:4px">'+esc(hh.live)+(hh.n?' \u00b7 '+esc(hh.n)+' legs':'')+'</div>'+
+        (hh.foundingPct!=null?'<div class="legsub" style="margin-top:3px">enacted on '+esc(hh.foundingPct)+'%'+(drift?', drift worth your review':', still in line')+'</div>':'')+
+        '</div>';
+    }
     h+='<div class="card" style="margin-bottom:8px">'+
       '<div class="legtop"><span class="legname">'+(i+1)+'. '+esc(l.title)+'</span>'+chip+'</div>'+
       '<div class="lesson">'+esc(l.rule)+'</div>'+
+      liveBlock+
       (l.origin?'<div class="legsub" style="margin-top:5px">'+esc(l.origin)+'</div>':'')+
       (l.custom?'<details class="more"><summary style="color:var(--red)">Repeal this law</summary>'+
         '<div class="lesson" style="margin-bottom:6px">Repeal retires a promoted law that has stopped earning its place. The founding ten cannot be repealed. The record of the enactment stays in the ledger.</div>'+
