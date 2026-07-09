@@ -571,14 +571,29 @@ function samePos(a, b) {
 }
 
 // Morning sync: positions shot (+ optional history shot) -> reconcile
-async function actSync(positionsImg, historyImg) {
+async function actSync(positionsImgs, historyImg) {
   const t = bkk();
   const s = await loadAll();
-  const posParse = positionsImg ? await parseShot(positionsImg, 'positions') : { positions: [], vitals: null };
+  // accept either a single image (back-compat) or an array (mobile: several partial
+  // screenshots covering the whole book). Parse each and merge positions, using samePos
+  // to drop true duplicates that appear at the overlapping edges of scrolled screenshots
+  // while preserving genuinely distinct positions (e.g. two EURUSD buys at different entries).
+  const imgs = Array.isArray(positionsImgs) ? positionsImgs.filter(Boolean) : (positionsImgs ? [positionsImgs] : []);
+  let mergedPositions = [];
+  let vitalsSeen = null;
+  for (const img of imgs) {
+    const parsed = await parseShot(img, 'positions');
+    for (const p of (parsed.positions || [])) {
+      if (!mergedPositions.some((x) => samePos(x, p))) mergedPositions.push(p);
+    }
+    // the account/vitals bar may appear in only one shot; capture it where present
+    if (parsed.vitals && Object.values(parsed.vitals).some((v) => v != null)) vitalsSeen = parsed.vitals;
+  }
+  const posParse = { positions: mergedPositions, vitals: vitalsSeen };
   const histParse = historyImg ? await parseShot(historyImg, 'history') : { closes: [] };
 
   const seen = posParse.positions || [];
-  const report = { closedDetected: [], orphansAdded: [], updated: 0, agingFlags: [], vitalsAlert: null };
+  const report = { closedDetected: [], orphansAdded: [], updated: 0, agingFlags: [], vitalsAlert: null, shotsRead: imgs.length };
 
   // 1) positions in book but missing on screen -> closed; match against history
   const still = [];
@@ -856,7 +871,7 @@ export default async function handler(req, res) {
     let out;
     if (action === 'get') out = await actGet();
     else if (action === 'ideas') out = await actIdeas(!!p.force);
-    else if (action === 'sync') out = await actSync(p.positionsImage, p.historyImage);
+    else if (action === 'sync') out = await actSync(p.positionsImages || p.positionsImage, p.historyImage);
     else if (action === 'fill') out = await actFill(p.image, p.ideaLedgerId);
     else if (action === 'pass') out = await actPass(p.ideaLedgerId);
     else if (action === 'aar') out = await actAAR(p.closureId, p.historyImage);
