@@ -143,6 +143,7 @@ function checkLevels(idea, realPrice) {
   const tp = num(idea.tp);
   const sl = num(idea.sl);
   if (entry == null || tp == null || sl == null) return { ok: false, reason: 'missing a numeric entry, TP or SL' };
+  if (entry <= 0) return { ok: false, reason: `entry ${entry} is not a positive price` };
   if (dir !== 'BUY' && dir !== 'SELL') return { ok: false, reason: 'direction not BUY/SELL' };
 
   // 0) REALITY CHECK: if a genuine live price is supplied, the idea's stated current
@@ -1012,13 +1013,16 @@ function computeVitals(book) {
   // 2) leverage exposure: what share of the book rides on CFDs vs owned shares
   const levHoldings = holdings.filter((h) => h.leveraged || h.assetClass === 'CFD');
   if (holdings.length) {
-    const levValue = levHoldings.reduce((sum, h) => sum + Math.abs((num(h.qty) || 0) * (num(h.lastPrice) || 0)), 0);
-    const totalValue = holdings.reduce((sum, h) => sum + Math.abs((num(h.qty) || 0) * (num(h.lastPrice) || 0)), 0);
+    // value falls back to avgCost when no live price is synced, so a leveraged holding
+    // without a fresh price is NOT silently dropped (which would understate leverage).
+    const posVal = (h) => Math.abs((num(h.qty) || 0) * (num(h.lastPrice) || num(h.avgCost) || 0));
+    const levValue = levHoldings.reduce((sum, h) => sum + posVal(h), 0);
+    const totalValue = holdings.reduce((sum, h) => sum + posVal(h), 0);
     const levPct = totalValue > 0 ? (levValue / totalValue) * 100 : 0;
     const status = levPct > 50 ? 'AMBER' : 'GREEN';
     reads.push({
       label: 'Leverage exposure', value: `${levHoldings.length} of ${holdings.length} positions`, status,
-      note: `Your leveraged CFD positions (${levHoldings.map((h) => h.ticker || h.name).join(', ') || 'none'}) carry financing costs and amplify both gains and losses. They make up roughly ${levPct.toFixed(0)}% of your position value. ${status === 'AMBER' ? 'That is a meaningful tilt toward leverage; keep a close eye on those three.' : 'A modest, sensible share riding on leverage.'}`,
+      note: `Your leveraged CFD positions (${levHoldings.map((h) => h.ticker || h.name).join(', ') || 'none'}) carry financing costs and amplify both gains and losses. They make up roughly ${levPct.toFixed(0)}% of your position value. ${status === 'AMBER' ? 'That is a meaningful tilt toward leverage; keep a close eye on those.' : 'A modest, sensible share riding on leverage.'}`,
     });
   }
 
