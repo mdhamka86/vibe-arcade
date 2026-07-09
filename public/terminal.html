@@ -231,15 +231,18 @@ function clockStr(clock){
 }
 
 // ---------- shot picker button ----------
-function ShotButton({label,onImage,primary,disabled}){
+function ShotButton({label,onImage,onImages,primary,disabled,multiple}){
   const ref=useRef();
   const [busy,setBusy]=useState(false);
   return (<>
-    <input ref={ref} type="file" accept="image/*" style={{display:'none'}}
+    <input ref={ref} type="file" accept="image/*" multiple={!!multiple} style={{display:'none'}}
       onChange={async e=>{
-        const f=e.target.files[0]; if(!f) return;
+        const files=[...e.target.files]; if(!files.length) return;
         setBusy(true);
-        try{ const b64=await compressImage(f); await onImage(b64); }
+        try{
+          if(onImages){ const all=await Promise.all(files.map(f=>compressImage(f))); await onImages(all); }
+          else { const b64=await compressImage(files[0]); await onImage(b64); }
+        }
         catch(err){ alert(err.message); }
         setBusy(false); e.target.value='';
       }}/>
@@ -438,7 +441,7 @@ function Desk({state,refresh}){
 
 // ---------- BOOK (positions, sync, AAR pipeline) ----------
 function Book({state,refresh}){
-  const [posImg,setPosImg]=useState(null);
+  const [posImgs,setPosImgs]=useState([]);
   const [syncing,setSyncing]=useState(false);
   const [report,setReport]=useState(null);
   const [morning,setMorning]=useState(null);
@@ -450,11 +453,14 @@ function Book({state,refresh}){
   const [msg,setMsg]=useState('');
   const book=state?.book;
 
+  const addImgs=(arr)=>setPosImgs(prev=>[...prev,...arr]);
+
   const runSync=async(historyB64)=>{
+    if(!posImgs.length) return;
     setSyncing(true);
     try{
-      const r=await eng('sync',{positionsImage:posImg,historyImage:historyB64||null});
-      setReport(r.report); setMorning(r.morningNote); setPosImg(null); refresh();
+      const r=await eng('sync',{positionsImages:posImgs,historyImage:historyB64||null});
+      setReport(r.report); setMorning(r.morningNote); setPosImgs([]); refresh();
     }catch(e){ alert(e.message); }
     setSyncing(false);
   };
@@ -486,17 +492,19 @@ function Book({state,refresh}){
     <div className="wrap">
       <div className="card">
         <div className="eyebrow"><Ic n="book"/>Sync book · {clockStr(state?.clock)}</div>
-        <div className="note">Sync whenever you sit down, any hour. Step 1: upload the MT5 open-positions screen. Step 2 (if anything closed): upload history. The engine diffs the book, detects closures, adopts orphans, reads vitals and flags aging.</div>
-        <div className="row" style={{marginTop:10}}>
-          <ShotButton primary={!posImg} label={posImg?'✓ positions loaded':'1 · Positions screenshot'} onImage={async b=>setPosImg(b)} />
-          <ShotButton label="2 · History (optional)" disabled={!posImg||syncing} onImage={async b=>runSync(b)} />
-          <button className="pri" disabled={!posImg||syncing} onClick={()=>runSync(null)}>{syncing? <span className="spin">◐</span>:'Run sync'}</button>
+        <div className="note">Sync whenever you sit down, any hour. Step 1: upload the MT5 open-positions screen. On mobile the app shows only part of your book per screen, so add as many screenshots as you need — they'll be merged into one book. Step 2 (if anything closed): upload history. The engine diffs the book, detects closures, adopts orphans, reads vitals and flags aging.</div>
+        <div className="row" style={{marginTop:10,flexWrap:'wrap',gap:8}}>
+          <ShotButton primary={!posImgs.length} multiple label={posImgs.length?`+ Add another (${posImgs.length} loaded)`:'1 · Positions screenshot(s)'} onImages={addImgs} />
+          <ShotButton label="2 · History (optional)" disabled={!posImgs.length||syncing} onImage={async b=>runSync(b)} />
+          <button className="pri" disabled={!posImgs.length||syncing} onClick={()=>runSync(null)}>{syncing? <span className="spin">◐</span>:`Run sync${posImgs.length>1?` (${posImgs.length} shots)`:''}`}</button>
+          {posImgs.length>0 && !syncing && <button className="ghost" onClick={()=>setPosImgs([])}>Clear</button>}
         </div>
+        {posImgs.length>1 && <div className="note" style={{marginTop:8}}><span className="green">{posImgs.length} screenshots loaded</span> — read together and merged into one book on sync.</div>}
       </div>
 
       {report && <>
         {report.vitalsAlert && <div className={'alertbox '+(report.vitalsAlert.level==='RED'?'a-red':'a-amber')}>MARGIN {report.vitalsAlert.level}: {report.vitalsAlert.msg}</div>}
-        <div className="alertbox a-green">Sync complete. {report.updated} updated · {report.closedDetected.length} closure(s) detected · {report.orphansAdded.length} orphan(s) adopted.</div>
+        <div className="alertbox a-green">Sync complete{report.shotsRead>1?` from ${report.shotsRead} screenshots`:''}. {report.updated} updated · {report.closedDetected.length} closure(s) detected · {report.orphansAdded.length} orphan(s) adopted.</div>
       </>}
 
       {(() => {
