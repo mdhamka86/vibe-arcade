@@ -67,10 +67,17 @@ async function claude(userContent, maxTokens = 2000) {
   });
   const j = await r.json();
   if (j.error) throw new Error(j.error.message || 'Claude API error');
+  if (j.stop_reason === 'max_tokens') {
+    throw new Error('The desk had more to say than the response could hold (hit the token limit). Try again in a moment.');
+  }
   const text = (j.content || []).map((c) => c.text || '').join('\n');
   const clean = text.replace(/```json|```/g, '').trim();
   const m = clean.match(/\{[\s\S]*\}/);
-  return JSON.parse(m ? m[0] : clean);
+  try {
+    return JSON.parse(m ? m[0] : clean);
+  } catch (e) {
+    throw new Error('The desk returned an incomplete response and could not be read. Please try again in a moment.');
+  }
 }
 
 // ---------- Economic calendar (Forex Factory weekly feed, Redis-cached 6h to
@@ -188,10 +195,18 @@ function num(v) {
   const m = String(v).match(/-?\d+(\.\d+)?/);
   return m ? parseFloat(m[0]) : null;
 }
-// pip size: JPY pairs and other 2-decimal quotes use 0.01, everything else 0.0001
+// pip size: pairs quoted to 2 decimals (JPY and a few other crosses) use 0.01; the rest
+// use 0.0001. We key off the QUOTE currency (the second half of the pair) where possible,
+// and only fall back to the price magnitude when the pair string is unavailable.
 function pipSize(pair, refPx) {
   const p = normPair(pair);
-  if (p.includes('JPY') || (refPx != null && refPx > 20)) return 0.01;
+  // quote currencies that conventionally price to 2 decimals against majors
+  const twoDecimalQuotes = ['JPY']; // JPY is the dominant 2-decimal quote for these majors
+  const quote = p.length >= 6 ? p.slice(3, 6) : '';
+  if (twoDecimalQuotes.includes(quote) || p.includes('JPY')) return 0.01;
+  // fallback only when we cannot read the pair: a genuine FX rate above ~20 is almost
+  // certainly a 2-decimal quote (e.g. USDMXN, USDZAR), otherwise 4-decimal.
+  if (!quote && refPx != null && refPx > 20) return 0.01;
   return 0.0001;
 }
 function checkLevels(idea, refPx) {
@@ -550,9 +565,11 @@ async function parseShot(image, kind) {
   const spec = {
     positions: `Extract ALL open positions AND the account vitals from this MT5 screenshot.
 JSON: {"positions":[{"pair":"EURUSD","direction":"BUY|SELL","lots":0.1,"entry":1.14388,"current":1.1438,"sl":1.116,"tp":1.18,"floating":-2.14}],"vitals":{"balance":0,"equity":0,"margin":0,"freeMargin":0,"marginLevel":0}}
-If a field is not visible use null. marginLevel as a number (percent).`,
+CRITICAL — SIGN OF FLOATING P/L: MT5 shows profit and loss BY COLOUR. A figure shown in GREEN (or blue/positive tint) is a PROFIT and MUST be a POSITIVE number; a figure shown in RED is a LOSS and MUST be a NEGATIVE number. Read the colour carefully and set the sign accordingly; never drop or invert it. Cross-check: for a BUY, if current price is above entry the floating is usually positive (below entry, negative); for a SELL it is the reverse. When colour and this cross-check disagree, trust the colour but read carefully.
+If a field is not visible use null. marginLevel as a number (percent). Numbers as numbers, not strings.`,
     history: `Extract ALL closed deals visible in this MT5 history screenshot.
-JSON: {"closes":[{"pair":"EURUSD","direction":"BUY|SELL","lots":0.1,"entry":1.14388,"exit":1.15,"profit":24.2,"closeTime":"2026.07.02 19:41"}]}`,
+JSON: {"closes":[{"pair":"EURUSD","direction":"BUY|SELL","lots":0.1,"entry":1.14388,"exit":1.15,"profit":24.2,"closeTime":"2026.07.02 19:41"}]}
+CRITICAL — SIGN OF PROFIT: GREEN/positive means a POSITIVE profit, RED means a NEGATIVE loss. Preserve the sign faithfully; never invert it.`,
     fill: `Extract the single confirmed position (the newest/most relevant) plus account vitals if visible from this MT5 screenshot.
 JSON: {"fill":{"pair":"EURUSD","direction":"BUY|SELL","lots":0.1,"entry":1.14388,"sl":1.116,"tp":1.18},"vitals":{"balance":null,"equity":null,"freeMargin":null,"marginLevel":null}}`,
   }[kind];
@@ -593,14 +610,38 @@ async function actSync(positionsImgs, historyImg) {
   const histParse = historyImg ? await parseShot(historyImg, 'history') : { closes: [] };
 
   const seen = posParse.positions || [];
-  const report = { closedDetected: [], orphansAdded: [], updated: 0, agingFlags: [], vitalsAlert: null, shotsRead: imgs.length };
+  const report = { closedDetected: [], orphansAdded: [], updated: 0, agingFlags: [], vitalsAlert: null, shotsRead: imgs.length, signFlags: [] };
+
+  // Sign sanity check for floating P/L: for a BUY, price above entry should mean a POSITIVE
+  // float (below entry, negative); for a SELL the reverse. A clear contradiction likely means
+  // a misread colour/sign on the screenshot, so we correct it and report it transparently.
+  const floatSignWrong = (pos, screen) => {
+    const dir = (screen.direction || pos.direction || '').toUpperCase();
+    const entry = num(screen.entry ?? pos.entry);
+    const cur = num(screen.current);
+    const fl = num(screen.floating);
+    if (dir !== 'BUY' && dir !== 'SELL') return false;
+    if (entry == null || cur == null || fl == null || entry === 0) return false;
+    if (Math.abs(fl) < 0.01) return false;
+    const move = Math.abs(cur - entry) / entry;
+    if (move < 0.0005) return false; // price basically at entry: sign is noise, don't touch
+    const inProfit = dir === 'BUY' ? cur > entry : cur < entry;
+    return (inProfit && fl < 0) || (!inProfit && fl > 0);
+  };
 
   // 1) positions in book but missing on screen -> closed; match against history
   const still = [];
   for (const p of s.book.positions) {
     const onScreen = seen.find((x) => samePos(x, p));
     if (onScreen) {
-      p.floating = onScreen.floating ?? p.floating;
+      let fl = onScreen.floating ?? p.floating;
+      // correct a floating P/L whose sign contradicts the price move, and record it
+      if (onScreen.floating != null && floatSignWrong(p, onScreen)) {
+        const corrected = -num(onScreen.floating);
+        report.signFlags.push({ pair: p.pair, was: onScreen.floating, nowIs: corrected, note: `${p.pair}: ${onScreen.direction || p.direction} with price ${num(onScreen.current) > num(onScreen.entry ?? p.entry) ? 'above' : 'below'} entry but floating sign disagreed; corrected ${onScreen.floating} to ${corrected}` });
+        fl = corrected;
+      }
+      p.floating = fl;
       p.sl = onScreen.sl ?? p.sl; p.tp = onScreen.tp ?? p.tp;
       report.updated++;
       still.push(p);
