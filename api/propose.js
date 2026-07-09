@@ -111,6 +111,137 @@ function charterText(ch) {
     .join("\n\n");
 }
 
+// Compute the LIVE health of each founding law that maps to a measurable figure.
+// Returns a map keyed by law id. Founding rationale text is NEVER touched; this is a
+// separate live readout shown beside it. Laws with no honest metric are omitted (procedural).
+// `foundingPct` is parsed from the law's own rationale so we can show then-vs-now drift.
+function charterHealth(betLog) {
+  const num = (v) => { const n = parseFloat(v); return isFinite(n) ? n : 0; };
+  const r2 = (v) => Math.round(num(v) * 100) / 100;
+  const normResult = (v) => {
+    const s = String(v == null ? "" : v).trim().toLowerCase();
+    return s === "loss" ? "lose" : s;
+  };
+  const normConf = (v) => {
+    const s = String(v == null ? "" : v).trim();
+    return s === "Med-High" ? "Medium-High" : s;
+  };
+  const isSettled = (b) => ["win", "place", "lose"].includes(normResult(b.result));
+  const roiOf = (legs) => {
+    const staked = legs.reduce((a, b) => a + num(b.stake), 0);
+    const payout = legs.reduce((a, b) => a + num(b.payout), 0);
+    return {
+      n: legs.length,
+      roi: staked ? Math.round(((payout - staked) / staked) * 1000) / 10 : null,
+      cashRate: legs.length
+        ? Math.round((legs.filter((b) => num(b.payout) > 0).length / legs.length) * 1000) / 10
+        : null,
+      net: r2(payout - staked),
+    };
+  };
+  const model = betLog.filter(
+    (b) => String(b.ledger || "").trim().toLowerCase() === "model" && isSettled(b)
+  );
+  const exotic = betLog.filter(
+    (b) => String(b.ledger || "").trim().toLowerCase() === "exotic" && ["win", "lose"].includes(normResult(b.result))
+  );
+  const winLegs = model.filter((b) => String(b.betType).trim() === "WIN");
+  const plaLegs = model.filter((b) => String(b.betType).trim() === "PLA");
+  const japanLegs = model.filter((b) =>
+    /japan/i.test(String(b.meet || ""))
+  );
+
+  const health = {};
+
+  // win-leak: WIN book ROI + cash rate vs PLA (founding: WIN -19.6%, 36% cash)
+  {
+    const w = roiOf(winLegs), p = roiOf(plaLegs);
+    health["win-leak"] = {
+      kind: "stat",
+      metric: "WIN book ROI (cash rate), vs PLA",
+      live: w.roi == null ? "no WIN legs yet" :
+        w.roi + "% ROI, " + w.cashRate + "% cash (PLA " + (p.roi == null ? "n/a" : p.roi + "%)"),
+      n: w.n,
+      livePct: w.roi,
+      foundingPct: -19.6,
+    };
+  }
+  // medium-high-bias: the founding +19.2% was the Medium-High PLA ROI specifically
+  // (a thin ~19-line sample), so the live figure must also be Medium-High PLA only.
+  {
+    const mhPla = plaLegs.filter((b) => normConf(b.confidence) === "Medium-High");
+    const mh = roiOf(mhPla);
+    health["medium-high-bias"] = {
+      kind: "stat",
+      metric: "Medium-High PLA ROI",
+      live: mh.roi == null ? "no Medium-High PLA legs yet" : mh.roi + "% ROI",
+      n: mh.n,
+      livePct: mh.roi,
+      foundingPct: 19.2,
+    };
+  }
+  // trim-medium: Medium PLA bucket ROI (founding: -20.9% over 34)
+  {
+    const medPla = plaLegs.filter((b) => normConf(b.confidence) === "Medium");
+    const m = roiOf(medPla);
+    health["trim-medium"] = {
+      kind: "stat",
+      metric: "Medium PLA bucket ROI",
+      live: m.roi == null ? "no Medium PLA legs yet" : m.roi + "% ROI",
+      n: m.n,
+      livePct: m.roi,
+      foundingPct: -20.9,
+    };
+  }
+  // japan-caution: outcome of any Japan legs taken (founding: repeatedly blanked)
+  {
+    const j = roiOf(japanLegs);
+    health["japan-caution"] = {
+      kind: "outcome",
+      metric: "Japan legs taken, their ROI",
+      live: j.n === 0 ? "0 Japan legs taken (caution holding)" :
+        j.n + " Japan legs, " + j.roi + "% ROI, " + j.cashRate + "% cash",
+      n: j.n,
+      livePct: j.roi,
+      foundingPct: null,
+    };
+  }
+  // exotic-trio: the Exotic ledger's health (founding: capped trial)
+  {
+    const e = roiOf(exotic);
+    health["exotic-trio"] = {
+      kind: "outcome",
+      metric: "Exotic (Trio) ledger ROI",
+      live: e.n === 0 ? "0 exotics settled yet" :
+        e.n + " exotics, " + e.roi + "% ROI, " + e.cashRate + "% cash",
+      n: e.n,
+      livePct: e.roi,
+      foundingPct: null,
+    };
+  }
+  return health;
+}
+
+// Is a live figure meaningfully diverged from its founding figure? Returns a drift note or null.
+// Guards against thin-sample noise: needs a real number, a founding baseline, and enough legs.
+// Language is deliberately NEUTRAL about good/bad: a higher ROI strengthens some laws (medium-high
+// bias) but weakens others (the trim/fade laws, whose whole premise is that the figure is poor).
+// So we state the movement factually and leave the judgement of what it means to the reader.
+function charterDrift(h, minN) {
+  if (!h || h.livePct == null || h.foundingPct == null) return null;
+  if ((h.n || 0) < (minN || 20)) return null; // too few legs to trust
+  const gap = Math.round((h.livePct - h.foundingPct) * 10) / 10;
+  if (Math.abs(gap) < 8) return null; // within normal drift, no signal
+  return {
+    gap,
+    direction: gap > 0 ? "risen" : "fallen",
+    text:
+      "enacted at " + h.foundingPct + "%, now " + h.livePct + "% over " +
+      h.n + " legs (" + (gap > 0 ? "+" : "") + gap + " pts)",
+  };
+}
+
+
 // Compress the pack into a token-lean but complete brief for the model.
 function packBrief(pack) {
   const L = [];
@@ -261,6 +392,22 @@ module.exports = async (req, res) => {
       });
     }
 
+    // ---- LIVE CHARTER HEALTH: current figures beside the founding rationale ----
+    // Founding text is never altered. This computes, from the live book, how each law's
+    // underlying pattern is performing now, with sample sizes and a then-vs-now drift note.
+    if (action === "charterhealth") {
+      const [logRaw] = await redis([["GET", "stw:betlog"]]);
+      if (!logRaw) return res.status(404).json({ error: "Vault not seeded yet" });
+      const log = JSON.parse(logRaw);
+      const health = charterHealth(log);
+      const out = {};
+      Object.keys(health).forEach((id) => {
+        const h = health[id];
+        out[id] = { ...h, drift: charterDrift(h, 20) };
+      });
+      return res.status(200).json({ ok: true, health: out, generatedAt: new Date().toISOString() });
+    }
+
     if (action === "charterrepeal") {
       if (req.method !== "POST")
         return res.status(405).json({ error: "POST required" });
@@ -387,6 +534,21 @@ module.exports = async (req, res) => {
         .slice(-14)
         .map((e) => "#" + e.seq + " [" + e.kind + "] " + e.change + (e.why ? " (" + e.why + ")" : ""));
 
+      // founding-law drift: live figures vs the figures each law was enacted on
+      const health = charterHealth(log); // full book, so like-for-like with founding figures
+      const foundingById = {};
+      (ch.laws || []).forEach((l) => { foundingById[l.id] = l; });
+      const driftLines = [];
+      Object.keys(health).forEach((id) => {
+        const d = charterDrift(health[id], 20);
+        if (d) {
+          const law = foundingById[id];
+          driftLines.push(
+            (law ? law.title : id) + " [" + id + "]: " + d.text + " \u2014 the law has " + d.direction
+          );
+        }
+      });
+
       const system =
         "You are the Charter advocate for The Outsider Method, a disciplined horse-racing staking model. " +
         "The Charter is the body of binding law every betlist must obey. It should evolve like common-law precedent: " +
@@ -394,11 +556,14 @@ module.exports = async (req, res) => {
         "You RECOMMEND promotions and repeals; you never enact them. Be rigorous and sparing. Most reviews should recommend NOTHING: " +
         "an ordinary stretch where the standing laws are working needs no change. Only advocate a PROMOTION when a pattern is genuinely recurring and materially affects returns, " +
         "and only advocate a REPEAL of an existing promoted law when recent evidence has clearly turned against the very pattern it was enacted to capture. " +
+        "You may ALSO note when a FOUNDING law's live figures have drifted materially from the figures it was enacted on \u2014 these are observations for the user to review, NOT repeals (founding laws are permanent and can only be amended by the user's own hand). " +
         "Never invent figures; reason only from the evidence given.";
 
       const prompt =
         "THE STANDING CHARTER (founding + promoted laws):\n" + charterText(ch) +
         "\n\nPROMOTED LAWS currently in force (these, and only these, may be recommended for repeal):\n" + promotedText +
+        "\n\nFOUNDING-LAW DRIFT (live figures vs enactment figures; observations only, never repeals):\n  " +
+          (driftLines.length ? driftLines.join("\n  ") : "(no founding law has drifted materially)") +
         "\n\nRECENT LEDGER LESSONS (candidate themes for promotion):\n- " + (ledgerThemes.length ? ledgerThemes.join("\n- ") : "(none)") +
         "\n\nEVIDENCE — last " + recentDays.size + " settled days (" + recent.length + " model legs):" +
         "\nBy region:\n  " + (regionLines.join("\n  ") || "(none)") +
@@ -408,7 +573,8 @@ module.exports = async (req, res) => {
         "\n\nReview whether the Charter should evolve. Respond with ONLY minified JSON, no fences, exactly:\n" +
         '{"summary":"1-2 sentence read of whether the Charter needs to evolve right now",' +
         '"promotions":[{"title":"short law title","rule":"the full binding rule","why":"the multi-day evidence justifying elevation to law","fromLedgerSeq":0}],' +
-        '"repeals":[{"id":"custom-N","why":"the recent evidence that has turned against this law"}]}';
+        '"repeals":[{"id":"custom-N","why":"the recent evidence that has turned against this law"}],' +
+        '"foundingObservations":[{"id":"law-id","note":"how this founding law has drifted and what the user might consider"}]}';
 
       const cr = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -453,6 +619,21 @@ module.exports = async (req, res) => {
           title: (promoted.find((l) => l.id === String(r.id).trim()) || {}).title || "",
           why: String(r.why || "").trim().slice(0, 1000),
         }));
+      // founding-law observations: only for real founding laws that actually drifted
+      const foundingIds = new Set((ch.laws || []).filter((l) => !l.custom).map((l) => l.id));
+      const foundingObservations = (Array.isArray(parsed.foundingObservations) ? parsed.foundingObservations : [])
+        .filter((o) => o && foundingIds.has(String(o.id).trim()) && charterDrift(health[String(o.id).trim()], 20))
+        .map((o) => {
+          const id = String(o.id).trim();
+          const law = foundingById[id];
+          const d = charterDrift(health[id], 20);
+          return {
+            id,
+            title: law ? law.title : id,
+            note: String(o.note || "").trim().slice(0, 1000),
+            drift: d ? d.text : "",
+          };
+        });
 
       const result = {
         ok: true,
@@ -461,7 +642,8 @@ module.exports = async (req, res) => {
         legsReviewed: recent.length,
         promotions,
         repeals,
-        nothingToDo: promotions.length === 0 && repeals.length === 0,
+        foundingObservations,
+        nothingToDo: promotions.length === 0 && repeals.length === 0 && foundingObservations.length === 0,
         generatedAt: new Date().toISOString(),
       };
       await redis([["SET", "stw:charterrec:latest", JSON.stringify(result)]]);
@@ -931,3 +1113,5 @@ module.exports = async (req, res) => {
 
 module.exports._packBrief = packBrief;
 module.exports._charterText = charterText;
+module.exports._charterHealth = charterHealth;
+module.exports._charterDrift = charterDrift;
