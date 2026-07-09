@@ -740,31 +740,42 @@ async function actReview(holdingId) {
   // ---- the running history of prior reviews, so each review builds on the last ----
   const history = h.reviewHistory || [];
   const priorReviewsBlock = history.length
-    ? history.slice(-4).map((r, i) => `Review ${history.length - Math.min(4, history.length) + i + 1} (${r.at ? r.at.slice(0, 10) : '?'}): ${r.verdict} — ${r.reason} [proposed SL ${r.proposed_sl || 'none'}, TP ${r.proposed_tp || 'none'}]`).join('\n')
+    ? history.slice(-4).map((r, i) => `Review ${history.length - Math.min(4, history.length) + i + 1} (${r.at ? r.at.slice(0, 10) : '?'}): ${r.verdict} — ${r.reason}`).join('\n')
     : 'No prior reviews. This is the first review of this holding.';
 
-  // ---- has a previously proposed level actually been hit since last time? ----
-  let levelEvent = 'No previously proposed levels to check.';
-  const last = history.length ? history[history.length - 1] : null;
-  if (last && priceNow != null) {
-    const psl = num(last.proposed_sl), ptp = num(last.proposed_tp);
+  // ---- LOCKED levels: set once on the first review, then immutable (only a manual
+  // override by the user can change them). Reviews never re-propose them. ----
+  const lockedSL = num(h.lockedSL);
+  const lockedTP = num(h.lockedTP);
+  const hasLocked = lockedSL != null || lockedTP != null;
+  const isFirstReview = !hasLocked;
+
+  // ---- has a LOCKED level actually been hit? (NOVA has no auto SL/TP, so this note is
+  // his manual trigger to act) ----
+  let levelEvent;
+  let levelHit = null; // { type:'SL'|'TP', level, price } for persisting a flag on the holding
+  if (!hasLocked) {
+    levelEvent = 'This is the FIRST review: propose the stop-loss and take-profit now. They will be LOCKED permanently after this — you will never set them again, only judge hold or close against them.';
+  } else if (priceNow != null) {
     const events = [];
-    if (ptp != null && priceNow >= ptp) events.push(`the take-profit of ${ptp} proposed on ${last.at ? last.at.slice(0, 10) : 'the last review'} has been REACHED (live ${priceNow})`);
-    if (psl != null && priceNow <= psl) events.push(`the stop-loss of ${psl} proposed on ${last.at ? last.at.slice(0, 10) : 'the last review'} has been BREACHED (live ${priceNow})`);
-    if (events.length) levelEvent = 'IMPORTANT — ' + events.join('; ') + '. Address this head-on: given the level was hit, advise clearly whether to hold on regardless or to close/trim now, with your reasoning.';
-    else levelEvent = `Neither previously proposed level has been hit yet (last proposed SL ${last.proposed_sl || 'none'}, TP ${last.proposed_tp || 'none'}; live ${priceNow}).`;
+    if (lockedTP != null && priceNow >= lockedTP) { events.push(`the LOCKED take-profit of ${lockedTP} has been REACHED (live ${priceNow})`); levelHit = { type: 'TP', level: lockedTP, price: priceNow }; }
+    if (lockedSL != null && priceNow <= lockedSL) { events.push(`the LOCKED stop-loss of ${lockedSL} has been BREACHED (live ${priceNow})`); levelHit = { type: 'SL', level: lockedSL, price: priceNow }; }
+    if (events.length) levelEvent = 'IMPORTANT — ' + events.join('; ') + '. NOVA has no automatic stop/target, so nothing closed this for him. Advise clearly and directly: hold on regardless, or close now, with your reasoning.';
+    else levelEvent = `Locked levels (SL ${lockedSL ?? 'none'}, TP ${lockedTP ?? 'none'}); live ${priceNow}. Neither has been hit yet.`;
+  } else {
+    levelEvent = `Locked levels (SL ${lockedSL ?? 'none'}, TP ${lockedTP ?? 'none'}); no live price to check against right now.`;
   }
 
   const verdict = await claude(`You are THE EXCHANGE's position analyst, reviewing ONE long-term equity holding in a Phuket investor's Phillip Nova (NOVA) portfolio. These are his considered long-term convictions, NOT week-long swings, so judge with patience, like a seasoned analyst rather than a jumpy trader. Run a zero-based review (Peter Lynch's test: if he held none of this today, would buying it right now at this price be justified?).
 
 HOLDING UNDER REVIEW:
 ${h.name}${h.ticker ? ' (' + h.ticker + ')' : ''}, ${h.qty} shares @ avg cost ${h.avgCost}, live price ${priceNow ?? '?'}, unrealised P/L ${h.unrealised ?? '?'}.
-Posture: ${pl}. Held roughly ${held} day(s) since first tracked${h.mentalTP || h.mentalSL ? `. Current working levels: TP ${h.mentalTP || 'none'}, SL ${h.mentalSL || 'none'}` : '. No stop or target set yet.'}
+Posture: ${pl}. Held roughly ${held} day(s) since first tracked${hasLocked ? `. LOCKED levels (immutable): SL ${lockedSL ?? 'none'}, TP ${lockedTP ?? 'none'}` : '. No stop or target locked yet — this first review sets them.'}
 
 YOUR OWN PRIOR REVIEWS OF THIS HOLDING (build on these; note what has changed, whether your prior call played out, and evolve the view rather than starting fresh):
 ${priorReviewsBlock}
 
-LEVEL CHECK SINCE LAST REVIEW:
+LEVEL CHECK:
 ${levelEvent}
 
 FINANCIAL MINDFULNESS (weigh the account's health, not just this stock in isolation):
@@ -777,34 +788,65 @@ LESSONS ARCHIVE:
 ${priorLessons}
 
 Your job, honest judgements that CONTINUE the story from your prior reviews:
-1. HOLD, TRIM or CLOSE: is the original reason for owning this still intact? A holding being down is NOT itself a reason to close; a broken thesis is. A holding being up is not itself a reason to sell; a spent thesis, a hit target, or a better use of the capital might be. If a proposed level was hit (see the level check above), give a direct hold-or-close call on that basis. Weigh the financial mindfulness above: a weak leveraged holding eating margin is a stronger candidate to free up than an owned position when the account is tight. Be honest if the story has genuinely broken or evolved since your last review.
-2. PROPOSED LEVELS: suggest a sensible stop loss and take profit grounded in the CURRENT live price. If your prior levels still make sense, you may keep them; if the situation has moved, adjust them and say why. Give real price levels.
+1. HOLD, TRIM or CLOSE: is the original reason for owning this still intact? A holding being down is NOT itself a reason to close; a broken thesis is. A holding being up is not itself a reason to sell; a spent thesis, a hit target, or a better use of the capital might be. If a LOCKED level was hit (see the level check above), give a direct hold-or-close call on that basis — NOVA won't have closed it automatically. Weigh the financial mindfulness above: a weak leveraged holding eating margin is a stronger candidate to free up than an owned position when the account is tight. Be honest if the story has genuinely broken or evolved since your last review.
+${isFirstReview
+  ? '2. SET THE LEVELS (first review only): propose ONE sensible stop loss and take profit grounded in the current live price. These will be LOCKED permanently — you are setting them once, for good, so choose carefully. Give real price levels.'
+  : '2. DO NOT propose or change any stop or target. The levels are LOCKED and are shown above. Your job is only to judge hold or close against them and the story. Do NOT output new levels.'}
 3. WHAT'S CHANGED: explicitly note how your view has shifted (or held firm) since the last review, referencing it.
 4. HOLDING HORIZON & FINANCES: offer a sensible sense of how long to keep holding or what milestone/catalyst to hold toward, and note briefly whether holding on or closing helps or hurts his margin and buying power.
 
 Respond ONLY with JSON, no markdown:
-{"verdict":"HOLD|CLOSE|TRIM","reason":"2-3 sentences grounded in current facts, referencing how the view has evolved since the last review","proposed_sl":"price level","proposed_tp":"price level","level_note":"one sentence on whether a prior proposed level was hit and what to do, or empty if none","change_note":"one sentence on what has changed since the last review","hold_guidance":"how long / toward what, one sentence","conviction":"how sure you are, one short phrase"}`, 1500);
+${isFirstReview
+  ? '{"verdict":"HOLD|CLOSE|TRIM","reason":"2-3 sentences grounded in current facts","proposed_sl":"price level to LOCK","proposed_tp":"price level to LOCK","level_note":"","change_note":"one sentence on your initial read","hold_guidance":"how long / toward what, one sentence","conviction":"how sure you are, one short phrase"}'
+  : '{"verdict":"HOLD|CLOSE|TRIM","reason":"2-3 sentences grounded in current facts, referencing how the view has evolved since the last review","level_note":"one sentence on whether a LOCKED level was hit and what to do, or empty if none","change_note":"one sentence on what has changed since the last review","hold_guidance":"how long / toward what, one sentence","conviction":"how sure you are, one short phrase"}'}`, 1500);
 
   // build this review record
   const record = {
     verdict: verdict.verdict, reason: verdict.reason,
-    proposed_sl: verdict.proposed_sl || null, proposed_tp: verdict.proposed_tp || null,
     level_note: verdict.level_note || null, change_note: verdict.change_note || null,
     hold_guidance: verdict.hold_guidance || null,
     priceAtReview: priceNow ?? null, at: t.iso,
+    lockedSL: hasLocked ? lockedSL : (num(verdict.proposed_sl) ?? null),
+    lockedTP: hasLocked ? lockedTP : (num(verdict.proposed_tp) ?? null),
   };
 
   // append to the running history (cap to keep the record tidy), and keep lastReview
-  // as the single most recent one so the existing front end continues to work.
   h.reviewHistory = [...history, record].slice(-12);
   h.lastReview = record;
-  // adopt the freshly proposed levels as the working mental levels so the next
-  // review can check them; a review supersedes older proposals.
-  if (verdict.proposed_sl) h.mentalSL = verdict.proposed_sl;
-  if (verdict.proposed_tp) h.mentalTP = verdict.proposed_tp;
-  await rSet('exchange:book', s.book);
 
-  return { clock: t, verdict, holding: h };
+  // LOCK the levels on the FIRST review only. Thereafter they are immutable here; the
+  // ONLY way to change them is the deliberate manual override action. A review NEVER moves them.
+  if (isFirstReview) {
+    if (num(verdict.proposed_sl) != null) { h.lockedSL = num(verdict.proposed_sl); h.mentalSL = h.lockedSL; }
+    if (num(verdict.proposed_tp) != null) { h.lockedTP = num(verdict.proposed_tp); h.mentalTP = h.lockedTP; }
+    h.levelsLockedAt = t.iso;
+  }
+
+  // persist whether a locked level has been hit, so the Book/holding view can flag it
+  // prominently (NOVA has no auto SL/TP, so this is his manual trigger to act).
+  h.levelHit = levelHit ? { ...levelHit, at: t.iso } : null;
+
+  await rSet('exchange:book', s.book);
+  return { clock: t, verdict, holding: h, levelHit };
+}
+
+// ---------- Manual override: deliberately reset a holding's LOCKED levels ----------
+// The only way locked levels can change. A review never moves them; only this explicit,
+// conscious human action does. Pass new sl/tp (either may be null to clear one).
+async function actSetLevels(holdingId, sl, tp) {
+  const s = await loadAll();
+  const h = (s.book.holdings || []).find((x) => x.id === holdingId);
+  if (!h) throw new Error('Holding not found.');
+  const t = bkk();
+  const nsl = num(sl), ntp = num(tp);
+  h.lockedSL = nsl != null ? nsl : null;
+  h.lockedTP = ntp != null ? ntp : null;
+  h.mentalSL = h.lockedSL; h.mentalTP = h.lockedTP;
+  h.levelsLockedAt = t.iso;
+  h.levelsManuallySet = true;
+  h.levelHit = null; // recheck against the new levels on the next review
+  await rSet('exchange:book', s.book);
+  return { ok: true, holding: h };
 }
 
 // ---------- Self-improvement: shadow scorecard + reflection loop ----------
@@ -1262,6 +1304,7 @@ export default async function handler(req, res) {
     else if (action === 'ideas') out = await actIdeas(!!p.force);
     else if (action === 'sync') out = await actSync(p.positionsImages || p.positionsImage, p.historyImage);
     else if (action === 'review') out = await actReview(p.holdingId);
+    else if (action === 'setlevels') out = await actSetLevels(p.holdingId, p.sl, p.tp);
     else if (action === 'rebalance') out = await actRebalance();
     else if (action === 'proofofclose') out = await actProofOfClose(p.positionsImage);
     else if (action === 'pass') out = await actPass(p.ideaLedgerId);
