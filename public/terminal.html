@@ -505,6 +505,11 @@ function Book({state,refresh}){
       {report && <>
         {report.vitalsAlert && <div className={'alertbox '+(report.vitalsAlert.level==='RED'?'a-red':'a-amber')}>MARGIN {report.vitalsAlert.level}: {report.vitalsAlert.msg}</div>}
         <div className="alertbox a-green">Sync complete{report.shotsRead>1?` from ${report.shotsRead} screenshots`:''}. {report.updated} updated · {report.closedDetected.length} closure(s) detected · {report.orphansAdded.length} orphan(s) adopted.</div>
+        {report.signFlags?.length>0 && <div className="alertbox a-amber">
+          <div style={{fontWeight:700,marginBottom:4}}>Corrected {report.signFlags.length} floating P/L sign{report.signFlags.length>1?'s':''} that disagreed with the price move:</div>
+          {report.signFlags.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}
+          <div style={{marginTop:5}} className="dim">If any looks wrong, re-sync a clearer screenshot.</div>
+        </div>}
       </>}
 
       {(() => {
