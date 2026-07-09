@@ -81,6 +81,9 @@ function clampWeekBook(book, maxWeeks) {
 //   spoils        : the current leader's diss + funny punishment for the loser
 //   claims        : week-keyed board claims, e.g. { w1: { taskId: {...} } }
 //   dares         : week-keyed throw-down dares, e.g. { w1: [ {...}, ... ] }
+//   quizzes       : week-keyed Coach Saliba quiz results, e.g. { w1: { Hammy:{score}, Naddy:{score} } }
+//   duels         : week-keyed big-one photo duel, e.g. { w1: { Hammy:{photoUrl}, Naddy:{...}, verdict } }
+//   themeDuels    : week-keyed photo-theme duel, same shape as duels
 //   resets        : week-keyed dev-reset wipe stamps, so a cleared week can't be
 //                   resurrected from the other phone's older copy on merge
 function emptyState() {
@@ -93,6 +96,9 @@ function emptyState() {
     spoils: null,
     claims: {},
     dares: {},
+    quizzes: {},
+    duels: {},
+    themeDuels: {},
     resets: {},
     updatedAt: 0,
   };
@@ -150,6 +156,9 @@ export default async function handler(req, res) {
         spoils: (incoming.spoils && typeof incoming.spoils === "object") ? incoming.spoils : null,
         claims: clampWeekBook(incoming.claims, 40),
         dares: clampWeekBook(incoming.dares, 40),
+        quizzes: clampWeekBook(incoming.quizzes, 40),
+        duels: clampWeekBook(incoming.duels, 40),
+        themeDuels: clampWeekBook(incoming.themeDuels, 40),
         resets: (incoming.resets && typeof incoming.resets === "object" && !Array.isArray(incoming.resets))
           ? incoming.resets : {},
         updatedAt: Date.now(),
