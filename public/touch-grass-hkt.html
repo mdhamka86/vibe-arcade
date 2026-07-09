@@ -252,7 +252,7 @@ function seededShuffle(arr, seed) {
 // live board; resets carries per-week wipe stamps so the dev reset can't be
 // undone by a merge resurrecting old copies from the other phone.
 function emptySharedState() {
-  return { memories: [], season: { Hammy: 0, Naddy: 0 }, scrapbooks: [], varNotices: [], spoils: null, seasonsArchive: [], claims: {}, dares: {}, resets: {}, updatedAt: 0 };
+  return { memories: [], season: { Hammy: 0, Naddy: 0 }, scrapbooks: [], varNotices: [], spoils: null, seasonsArchive: [], claims: {}, dares: {}, quizzes: {}, duels: {}, themeDuels: {}, resets: {}, updatedAt: 0 };
 }
 
 // a local mirror so preview (and offline moments) still show something sensible
@@ -344,6 +344,24 @@ function slimClaimMap(map) {
   Object.keys(map || {}).forEach((k) => { out[k] = slimClaim(map[k]); });
   return out;
 }
+// A duel is player-keyed ({ Hammy:{photo,photoUrl,...}, Naddy:{...}, verdict }).
+// Only the light photoUrl travels; the heavy on-device `photo` bytes are stripped
+// from each player's side, exactly the discipline claims follow.
+function slimDuel(duel) {
+  if (!duel || typeof duel !== "object") return {};
+  const out = {};
+  Object.keys(duel).forEach((k) => {
+    const v = duel[k];
+    if (v && typeof v === "object" && ("photo" in v || "photoUrl" in v)) {
+      const side = {};
+      Object.keys(v).forEach((kk) => { if (kk !== "photo") side[kk] = v[kk]; });
+      out[k] = side;
+    } else {
+      out[k] = v; // verdict, theme, etc. pass through
+    }
+  });
+  return out;
+}
 // freshness of an entry: its last-modified stamp, falling back to creation time
 function entryStamp(e) { return (e && (e.mod || e.at)) || 0; }
 
@@ -389,6 +407,36 @@ function mergeDareLists(a, b) {
   }
   la.forEach(fold); lb.forEach(fold);
   return order.map((id) => byId[id]);
+}
+// Quiz results and photo duels share a PLAYER-KEYED shape, e.g.
+//   { Hammy: {score/photoUrl/at}, Naddy: {...}, verdict: {...}, theme: "..." }
+// Both phones write their OWN side (Hammy sets Hammy, Naddy sets Naddy), so a
+// merge must keep BOTH sides: whichever copy holds a given key with real content
+// wins, and a landed score or photo is monotonic (never reverts to absent). The
+// verdict, once a judge has ruled, is likewise kept if either side has it. This
+// is what lets each of you finally see the other's score and submitted photo.
+function mergePlayerBook(a, b) {
+  const A = (a && typeof a === "object") ? a : {};
+  const B = (b && typeof b === "object") ? b : {};
+  const out = {};
+  const keys = {};
+  Object.keys(A).forEach((k) => { keys[k] = 1; });
+  Object.keys(B).forEach((k) => { keys[k] = 1; });
+  Object.keys(keys).forEach((k) => {
+    const av = A[k], bv = B[k];
+    if (av == null) { out[k] = bv; return; }
+    if (bv == null) { out[k] = av; return; }
+    if (typeof av === "object" && typeof bv === "object") {
+      // fresher fields win, but a discovered photoUrl survives either way
+      const merged = entryStamp(av) >= entryStamp(bv) ? { ...bv, ...av } : { ...av, ...bv };
+      const url = av.photoUrl || bv.photoUrl || null;
+      if (url) merged.photoUrl = url;
+      out[k] = merged;
+    } else {
+      out[k] = av; // scalars (a theme string): either is fine, keep local
+    }
+  });
+  return out;
 }
 // week-keyed books ("w1", "w2"...) merged shelf by shelf
 function mergeWeekBooks(a, b, mergeShelf) {
@@ -441,6 +489,11 @@ function mergeSharedStates(local, remote) {
     // the live board: claims and dares merged shelf by shelf, wipes honoured
     claims: applyClaimResets(mergeWeekBooks(local.claims, remote.claims, mergeClaimMaps), resets),
     dares: applyDareResets(mergeWeekBooks(local.dares, remote.dares, mergeDareLists), resets),
+    // quiz results and both photo duels: player-keyed, both sides kept so each
+    // phone finally sees the other's score and submitted photo
+    quizzes: mergeWeekBooks(local.quizzes, remote.quizzes, mergePlayerBook),
+    duels: mergeWeekBooks(local.duels, remote.duels, mergePlayerBook),
+    themeDuels: mergeWeekBooks(local.themeDuels, remote.themeDuels, mergePlayerBook),
     resets: resets,
     // scalars: take whichever copy was stamped more recently
     season: recent.season || { Hammy: 0, Naddy: 0 },
@@ -6711,6 +6764,33 @@ function Game({ now, who, isFull, onSwitch }) {
       return { ...s, dares: book };
     });
   }
+  // quiz results and both photo duels ride the shared book too. They're already
+  // slim (a score, or a photoUrl never the raw bytes), so they travel as-is. The
+  // merge keeps both players' sides, so each of you sees the other's result.
+  function pushQuizToShared(weekNo, data) {
+    const wkKey = "w" + weekNo;
+    updateShared((s) => {
+      const book = { ...((s && s.quizzes) || {}) };
+      book[wkKey] = mergePlayerBook(data, book[wkKey]);
+      return { ...s, quizzes: book };
+    });
+  }
+  function pushDuelToShared(weekNo, duel) {
+    const wkKey = "w" + weekNo;
+    updateShared((s) => {
+      const book = { ...((s && s.duels) || {}) };
+      book[wkKey] = mergePlayerBook(slimDuel(duel), book[wkKey]);
+      return { ...s, duels: book };
+    });
+  }
+  function pushThemeDuelToShared(weekNo, duel) {
+    const wkKey = "w" + weekNo;
+    updateShared((s) => {
+      const book = { ...((s && s.themeDuels) || {}) };
+      book[wkKey] = mergePlayerBook(slimDuel(duel), book[wkKey]);
+      return { ...s, themeDuels: book };
+    });
+  }
 
   // persist claims whenever they change: locally at once (photo bytes and all),
   // then a slim copy up to the shared book a beat later. Accepts either a plain
@@ -6778,6 +6858,44 @@ function Game({ now, who, isFull, onSwitch }) {
       saveDares(wk, merged);
       return merged;
     });
+
+    // Quiz + both photo duels: fold the OTHER phone's copy into our local store
+    // so their score and submitted photo become visible here. These live in
+    // localStorage (their screens read them fresh), so we merge straight to disk;
+    // the screens pick up the merged copy on their next render/poll.
+    const incQuiz = (shared.quizzes || {})[wkKey];
+    if (incQuiz) {
+      const localQ = loadQuiz(wk) || {};
+      const mergedQ = mergePlayerBook(localQ, incQuiz);
+      if (stableStringify(mergedQ) !== stableStringify(localQ)) saveQuiz(wk, mergedQ);
+    }
+    const incDuel = (shared.duels || {})[wkKey];
+    if (incDuel) {
+      const localDuel = loadDuel(wk) || {};
+      const mergedDuel = mergePlayerBook(localDuel, incDuel);
+      if (stableStringify(slimDuel(mergedDuel)) !== stableStringify(slimDuel(localDuel))) saveDuel(wk, mergedDuel);
+    }
+    const incTheme = (shared.themeDuels || {})[wkKey];
+    if (incTheme) {
+      const localTheme = loadThemeDuel(wk) || {};
+      const mergedTheme = mergePlayerBook(localTheme, incTheme);
+      if (stableStringify(slimDuel(mergedTheme)) !== stableStringify(slimDuel(localTheme))) saveThemeDuel(wk, mergedTheme);
+    }
+
+    // On every sync tick, also push our OWN local quiz/duel data UP into the
+    // shared book. Cheap (the merge dedups), and it guarantees a freshly-taken
+    // quiz or freshly-submitted duel photo travels even though those screens
+    // don't hold the shared hook themselves. This is the piece that fixes the
+    // "I can't see her score / photo" bug at its root.
+    if (!spectating) {
+      const myQ = loadQuiz(wk) || {};
+      if (Object.keys(myQ).length > 0) pushQuizToShared(wk, myQ);
+      const myDuel = loadDuel(wk) || {};
+      if (Object.keys(myDuel).length > 0) pushDuelToShared(wk, myDuel);
+      const myTheme = loadThemeDuel(wk) || {};
+      if (Object.keys(myTheme).length > 0) pushThemeDuelToShared(wk, myTheme);
+    }
+
     if (!bootSyncRef.current && !spectating) {
       bootSyncRef.current = true;
       const localC = loadClaims(wk) || {};
