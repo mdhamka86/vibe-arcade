@@ -307,14 +307,15 @@ function Desk({state,refresh}){
 }
 
 // ---------- shot picker button ----------
-function ShotButton({label,onImage,primary,disabled}){
+function ShotButton({label,onImage,onImages,primary,disabled,multiple}){
   const ref=useRef();
+  const readOne=(f)=>new Promise((res)=>{ const rd=new FileReader(); rd.onload=()=>res(String(rd.result).split(',')[1]); rd.readAsDataURL(f); });
   return (<>
-    <input ref={ref} type="file" accept="image/*" style={{display:'none'}} onChange={e=>{
-      const f=e.target.files[0]; if(!f) return;
-      const rd=new FileReader();
-      rd.onload=()=>{ const b64=String(rd.result).split(',')[1]; onImage(b64); };
-      rd.readAsDataURL(f);
+    <input ref={ref} type="file" accept="image/*" multiple={!!multiple} style={{display:'none'}} onChange={async e=>{
+      const files=[...e.target.files]; if(!files.length) return;
+      if(onImages){ const all=await Promise.all(files.map(readOne)); onImages(all); }
+      else { const b64=await readOne(files[0]); onImage(b64); }
+      e.target.value='';
     }}/>
     <button className={primary?'pri':'ghost'} disabled={disabled} onClick={()=>ref.current&&ref.current.click()}>{label}</button>
   </>);
@@ -430,17 +431,21 @@ function Vitals({state}){
 }
 
 function Portfolio({state,refresh}){
-  const [posImg,setPosImg]=useState(null);
+  const [posImgs,setPosImgs]=useState([]);
   const [syncing,setSyncing]=useState(false);
   const [report,setReport]=useState(null);
   const book=state?.book;
   const holdings=book?.holdings||[];
 
+  const addImgs=(arr)=>setPosImgs(prev=>[...prev,...arr]);
+  const addImg=(b)=>setPosImgs(prev=>[...prev,b]);
+
   const runSync=async(histImg)=>{
+    if(!posImgs.length) return;
     setSyncing(true);
-    try{ const r=await eng('sync',{positionsImage:posImg,historyImage:histImg||null}); setReport(r.report); await refresh(); }
+    try{ const r=await eng('sync',{positionsImages:posImgs,historyImage:histImg||null}); setReport(r.report); await refresh(); }
     catch(e){ alert(e.message); }
-    setSyncing(false); setPosImg(null);
+    setSyncing(false); setPosImgs([]);
   };
 
   const cls=(a)=> a==='CFD'?'b-cfd':a==='ETF'?'b-etf':'b-eq';
@@ -451,15 +456,17 @@ function Portfolio({state,refresh}){
     <div className="wrap">
       <div className="card">
         <div className="eyebrow"><Ic n="camera"/>Sync your NOVA book</div>
-        <div className="note">Upload your NOVA open-positions screenshot to read your book by sight. The desk reconciles holdings, spots closures, adopts new names, and tracks your net liquidity.</div>
-        <div className="row" style={{marginTop:12}}>
-          <ShotButton primary={!posImg} label={posImg?'✓ positions loaded':'1 · Positions screenshot'} onImage={b=>setPosImg(b)}/>
-          <ShotButton label="2 · History (optional)" disabled={!posImg||syncing} onImage={b=>runSync(b)}/>
-          <button className="pri" disabled={!posImg||syncing} onClick={()=>runSync(null)}>{syncing?<span className="spin">◐</span>:'Run sync'}</button>
+        <div className="note">Upload your NOVA open-positions screenshot to read your book by sight. On mobile the NOVA app shows only part of your book per screen, so add as many screenshots as you need — they'll be merged into one book. The desk reconciles holdings, spots closures, adopts new names, and tracks your net liquidity.</div>
+        <div className="row" style={{marginTop:12,flexWrap:'wrap',gap:8}}>
+          <ShotButton primary={!posImgs.length} multiple label={posImgs.length?`+ Add another (${posImgs.length} loaded)`:'1 · Positions screenshot(s)'} onImages={addImgs}/>
+          <ShotButton label="2 · History (optional)" disabled={!posImgs.length||syncing} onImage={h=>runSync(h)}/>
+          <button className="pri" disabled={!posImgs.length||syncing} onClick={()=>runSync(null)}>{syncing?<span className="spin">◐</span>:`Run sync${posImgs.length>1?` (${posImgs.length} shots)`:''}`}</button>
+          {posImgs.length>0 && !syncing && <button className="ghost" onClick={()=>setPosImgs([])}>Clear</button>}
         </div>
+        {posImgs.length>1 && <div className="note" style={{marginTop:8}}><span className="green">{posImgs.length} screenshots loaded</span> — they'll be read together and merged into one book on sync.</div>}
       </div>
 
-      {report && <div className="alertbox a-green">Synced. {report.updated} updated, {report.newAdded?.length||0} newly adopted, {report.closedDetected?.length||0} closure(s) detected.</div>}
+      {report && <div className="alertbox a-green">Synced{report.shotsRead>1?` from ${report.shotsRead} screenshots`:''}. {report.updated} updated, {report.newAdded?.length||0} newly adopted, {report.closedDetected?.length||0} closure(s) detected.</div>}
       {report?.signFlags?.length>0 && <div className="alertbox a-amber">
         <div style={{fontWeight:700,marginBottom:4}}>Corrected {report.signFlags.length} P/L sign{report.signFlags.length>1?'s':''} that disagreed with the price move:</div>
         {report.signFlags.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}
