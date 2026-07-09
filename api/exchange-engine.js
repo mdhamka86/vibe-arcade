@@ -395,14 +395,30 @@ function sameHolding(a, b) {
 }
 
 // ---------- Book sync: read positions (+ optional history), reconcile, review ----------
-async function actSync(positionsImg, historyImg) {
+async function actSync(positionsImgs, historyImg) {
   const t = bkk();
   const s = await loadAll();
-  const posParse = positionsImg ? await parseShot(positionsImg, 'positions') : { holdings: [], netLiq: null };
+  // accept either a single image (back-compat) or an array of images (mobile: several
+  // partial screenshots covering the whole book). Parse each and merge the holdings.
+  const imgs = Array.isArray(positionsImgs) ? positionsImgs.filter(Boolean) : (positionsImgs ? [positionsImgs] : []);
+  let mergedHoldings = [];
+  let netLiqSeen = null;
+  let accountSeen = null;
+  for (const img of imgs) {
+    const parsed = await parseShot(img, 'positions');
+    for (const h of (parsed.holdings || [])) {
+      // de-dupe across shots: if the same holding appears in two screenshots, keep one
+      if (!mergedHoldings.some((x) => sameHolding(x, h))) mergedHoldings.push(h);
+    }
+    // the account summary bar may only appear in one shot; capture it where present
+    if (parsed.netLiq != null) netLiqSeen = parsed.netLiq;
+    if (parsed.account && Object.values(parsed.account).some((v) => v != null)) accountSeen = parsed.account;
+  }
+  const posParse = { holdings: mergedHoldings, netLiq: netLiqSeen, account: accountSeen };
   const histParse = historyImg ? await parseShot(historyImg, 'history') : { closes: [] };
 
   const seen = posParse.holdings || [];
-  const report = { closedDetected: [], newAdded: [], updated: 0, netLiq: posParse.netLiq ?? null };
+  const report = { closedDetected: [], newAdded: [], updated: 0, netLiq: posParse.netLiq ?? null, shotsRead: imgs.length };
 
   // 1) reconcile: holdings in the book but absent on screen => sold; match to history
   // Sign sanity check: on a normal long, price above cost should mean a POSITIVE unrealised
@@ -1240,7 +1256,7 @@ export default async function handler(req, res) {
     let out;
     if (action === 'get') out = await actGet();
     else if (action === 'ideas') out = await actIdeas(!!p.force);
-    else if (action === 'sync') out = await actSync(p.positionsImage, p.historyImage);
+    else if (action === 'sync') out = await actSync(p.positionsImages || p.positionsImage, p.historyImage);
     else if (action === 'review') out = await actReview(p.holdingId);
     else if (action === 'rebalance') out = await actRebalance();
     else if (action === 'proofofclose') out = await actProofOfClose(p.positionsImage);
@@ -1255,8 +1271,3 @@ export default async function handler(req, res) {
     res.status(500).json({ error: String(e.message || e) });
   }
 }
-
-
-
-
-
