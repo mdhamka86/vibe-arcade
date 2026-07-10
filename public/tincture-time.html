@@ -546,9 +546,28 @@ var SOUSWEED = [
       "Strain through cheesecloth or fine mesh, then bottle in dark amber glass.",
       "Heat, light, and air degrade it. Keep it cool, dark, and tightly capped.",
       "Oil infusions keep best refrigerated, roughly 6 to 12 months. Bin any batch that smells rancid, turns cloudy, or shows mould."
+    ] },
+  { icon: "flame", title: "Step-by-step: decarb in the bath",
+    intro: "The clean no-oven method, start to finish. Naddy's shared favourite.",
+    points: [
+      "Grind the cured flower coarsely.",
+      "Put it in a sealable bag, press out as much air as you can, then seal it tight.",
+      "Set the circulator to 95\u00b0C and let the water come up to temperature first.",
+      "Drop the sealed bag in, fully submerged, and leave it exactly one hour. Use the timer so it does not overcook.",
+      "Lift it out and let it cool before you open or use it. That is the whole decarb done, no oven, no smell."
+    ] },
+  { icon: "jar", title: "Step-by-step: infuse the fat",
+    intro: "Once decarbed, turn it into oil or butter in the same bath.",
+    points: [
+      "Rule of thumb ratio: about 16 parts fat to 1 part decarbed flower for most oils and butter.",
+      "Coconut oil is the exception at roughly 8 parts to 1, so adjust if that is your carrier.",
+      "Split the fat and decarbed herb between canning jars, lids on snug but only finger-tight.",
+      "Set the bath to 85\u00b0C, gently lower the jars in once it is up to temperature.",
+      "Leave them 4 hours, then cool until safe to handle, strain out the plant matter, and bottle."
     ] }
 ];
 var SOUSWEED_SOURCE = { label: "Sous Weed (Monica Lo's method)", url: "https://www.sousweed.com/blog/howtosousweed" };
+var ZAMNESIA_SOURCE = { label: "Zamnesia sous vide decarb guide", url: "https://www.zamnesia.com/blog-how-to-sous-vide-decarboxylate-cannabis-n1915" };
 
 /* ---------- potency estimate ----------
    Standard maker-consensus efficiency: some THCA is lost in decarb,
@@ -1192,6 +1211,8 @@ function SousWeed() {
     React.createElement("div", { className: "sourceRow" },
       React.createElement("a", { className: "linkRow", href: SOUSWEED_SOURCE.url, target: "_blank", rel: "noopener" },
         React.createElement(Icon, { name: "read", size: 14 }), SOUSWEED_SOURCE.label),
+      React.createElement("a", { className: "linkRow", href: ZAMNESIA_SOURCE.url, target: "_blank", rel: "noopener" },
+        React.createElement(Icon, { name: "read", size: 14 }), ZAMNESIA_SOURCE.label),
       React.createElement("a", { className: "linkRow", href: THC_COMMUNITY.url, target: "_blank", rel: "noopener" },
         React.createElement(Icon, { name: "arrow", size: 14 }), THC_COMMUNITY.label))
   );
