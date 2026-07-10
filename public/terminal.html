@@ -285,7 +285,7 @@ const TICKER_QUIPS = [
   "Sitting on your hands is an underrated alpha strategy",
   "If the setup needs a paragraph to justify, it's probably not a setup",
 ];
-function shuffle(a){const b=a.slice();for(let i=b.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[b[i],b[j]]=[b[j],b[i]];}return b;}
+function shuffle(a){const arr=Array.isArray(a)?a.slice():[];for(let i=arr.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[arr[i],arr[j]]=[arr[j],arr[i]];}return arr;}
 
 function Tape(){
   const [rates,setRates]=useState(null);
@@ -305,7 +305,7 @@ function Tape(){
   useEffect(()=>{
     const t=setInterval(()=>{
       idx.current++;
-      if(idx.current>=deck.current.length){ deck.current=shuffle(TICKER_QUIPS); idx.current=0; }
+      if(idx.current>=(deck.current?deck.current.length:0)){ deck.current=shuffle(TICKER_QUIPS); idx.current=0; }
       setLine(l=>l+1);
     },22000);
     return ()=>clearInterval(t);
@@ -455,13 +455,20 @@ function Book({state,refresh}){
 
   const addImgs=(arr)=>setPosImgs(prev=>[...prev,...arr]);
 
+  const [syncErr,setSyncErr]=useState(null);
   const runSync=async(historyB64)=>{
     if(!posImgs.length) return;
-    setSyncing(true);
+    setSyncing(true); setSyncErr(null);
     try{
       const r=await eng('sync',{positionsImages:posImgs,historyImage:historyB64||null});
-      setReport(r.report); setMorning(r.morningNote); setPosImgs([]); refresh();
-    }catch(e){ alert(e.message); }
+      // defensively render only well-formed pieces; capture anything odd for diagnosis
+      setReport(r&&r.report?r.report:null);
+      setMorning(r&&r.morningNote?r.morningNote:null);
+      setPosImgs([]);
+      await refresh();
+    }catch(e){
+      setSyncErr((e&&e.message||String(e))+(e&&e.stack?'\n'+e.stack.split('\n').slice(0,4).join('\n'):''));
+    }
     setSyncing(false);
   };
   const runAAR=async(closureId,histB64)=>{
@@ -500,11 +507,16 @@ function Book({state,refresh}){
           {posImgs.length>0 && !syncing && <button className="ghost" onClick={()=>setPosImgs([])}>Clear</button>}
         </div>
         {posImgs.length>1 && <div className="note" style={{marginTop:8}}><span className="green">{posImgs.length} screenshots loaded</span> — read together and merged into one book on sync.</div>}
+        {syncErr && <div className="alertbox a-red" style={{marginTop:10}}>
+          <div style={{fontWeight:700,marginBottom:4}}>Sync error — copy this and send it over:</div>
+          <div style={{fontFamily:"monospace",fontSize:11,whiteSpace:'pre-wrap',maxHeight:200,overflow:'auto',background:'rgba(0,0,0,0.25)',padding:8,borderRadius:6}}>{syncErr}</div>
+          <button className="pri" style={{marginTop:8}} onClick={()=>{ try{navigator.clipboard.writeText(syncErr);}catch(e){} }}>Copy the error</button>
+        </div>}
       </div>
 
       {report && <>
         {report.vitalsAlert && <div className={'alertbox '+(report.vitalsAlert.level==='RED'?'a-red':'a-amber')}>MARGIN {report.vitalsAlert.level}: {report.vitalsAlert.msg}</div>}
-        <div className="alertbox a-green">Sync complete{report.shotsRead>1?` from ${report.shotsRead} screenshots`:''}. {report.updated} updated · {report.closedDetected.length} closure(s) detected · {report.orphansAdded.length} orphan(s) adopted.</div>
+        <div className="alertbox a-green">Sync complete{report.shotsRead>1?` from ${report.shotsRead} screenshots`:''}. {report.updated||0} updated · {(report.closedDetected||[]).length} closure(s) detected · {(report.orphansAdded||[]).length} orphan(s) adopted.</div>
         {report.signFlags?.length>0 && <div className="alertbox a-amber">
           <div style={{fontWeight:700,marginBottom:4}}>Corrected {report.signFlags.length} floating P/L sign{report.signFlags.length>1?'s':''} that disagreed with the price move:</div>
           {report.signFlags.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}
@@ -548,7 +560,7 @@ function Book({state,refresh}){
 
       {(book?.pendingAAR||[]).length>0 && <>
         <h3 className="sec">Closures awaiting AAR</h3>
-        {book.pendingAAR.map(c=>(
+        {book.pendingAAR.filter(c=>c&&c.position).map(c=>(
           <div key={c.id} className="card" style={{borderColor:'var(--amber-dim)'}}>
             <div className="row" style={{justifyContent:'space-between'}}>
               <span className="hl">{c.position.pair} <span className="dim">{c.position.direction} {c.position.lots}</span></span>
@@ -565,10 +577,10 @@ function Book({state,refresh}){
         ))}
       </>}
 
-      {aarOut && <div className="card" style={{borderColor:'var(--steel-dim)'}}>
+      {aarOut && aarOut.aar && <div className="card" style={{borderColor:'var(--steel-dim)'}}>
         <div className="eyebrow">AAR verdict</div>
         <div className="row" style={{justifyContent:'space-between'}}>
-          <span className={'badge '+(aarOut.aar.bucket.includes('GOOD')?'b-ok':'b-red')}>{aarOut.aar.bucket.replace(/_/g,' ')}</span>
+          <span className={'badge '+((aarOut.aar.bucket||'').includes('GOOD')?'b-ok':'b-red')}>{(aarOut.aar.bucket||'').replace(/_/g,' ')}</span>
         </div>
         <div className="hl" style={{marginTop:8}}>{aarOut.aar.headline}</div>
         <div className="note" style={{marginTop:8}}><span className="ambr">SUPPOSED</span> {aarOut.aar.supposed}</div>
@@ -881,7 +893,32 @@ function App(){
     </nav>
   </>);
 }
-ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+class ErrorBoundary extends React.Component{
+  constructor(p){super(p);this.state={err:null};}
+  static getDerivedStateFromError(err){return {err};}
+  componentDidCatch(err,info){
+    this.setState({stack:(info&&info.componentStack)||'', jsStack:(err&&err.stack)||''});
+    // also surface into the pre-React diag banner if it's still around
+    try{ if(window.__diag) window.__diag('RENDER ERROR: '+(err&&err.message)); }catch(e){}
+  }
+  render(){
+    if(this.state.err){
+      const full = 'MESSAGE: '+String(this.state.err&&this.state.err.message||this.state.err)
+        + '\n\nCOMPONENT TRACE:'+(this.state.stack||' (none)')
+        + '\n\nJS STACK:\n'+((this.state.jsStack||'').split('\n').slice(0,5).join('\n')||' (none)');
+      return <div className="wrap"><div className="alertbox a-red" style={{marginTop:20}}>
+        <div style={{fontWeight:700,marginBottom:6}}>The desk hit a render error. Copy this and send it over — it names the exact spot.</div>
+        <div style={{fontFamily:"monospace",fontSize:11,whiteSpace:'pre-wrap',maxHeight:280,overflow:'auto',background:'rgba(0,0,0,0.25)',padding:10,borderRadius:8}}>{full}</div>
+        <div className="row" style={{marginTop:10,gap:8}}>
+          <button className="pri" onClick={()=>{ try{navigator.clipboard.writeText(full);}catch(e){} }}>Copy the error</button>
+          <button className="ghost" onClick={()=>{ try{location.reload();}catch(e){} }}>Reload</button>
+        </div>
+      </div></div>;
+    }
+    return this.props.children;
+  }
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><App/></ErrorBoundary>);
 </script>
 </body>
 </html>
