@@ -16,22 +16,57 @@
 const MIRROR_BASE = "https://sgodds.com";
 const MIRROR_LIST = "https://sgodds.com/football/current-odds";
 
-async function getText(url, ms) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), ms || 8000);
-  try {
-    const r = await fetch(url, {
-      signal: ctrl.signal,
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-        Accept: "text/html",
-      },
-    });
-    return await r.text();
-  } finally {
-    clearTimeout(t);
+// Give the function room to run its own retries before Vercel kills it.
+// (Our per-attempt timeout is 15s, up to 2 attempts, so cap the invocation
+// comfortably above that.)
+module.exports.config = { maxDuration: 45 };
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Fetch text with a real timeout AND one automatic retry. Mirror hiccups
+// (cold start + slow Cloudflare challenge) are usually transient, so a single
+// 8s one-shot was the whole reason Pull odds threw AbortError. We now give
+// each attempt 15s and retry once with a short backoff.
+async function getText(url, ms, attempts) {
+  const budget = ms || 15000;
+  const tries = attempts || 2;
+  let lastErr;
+  for (let i = 0; i < tries; i++) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), budget);
+    try {
+      const r = await fetch(url, {
+        signal: ctrl.signal,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+          Accept: "text/html",
+        },
+      });
+      if (!r.ok) throw new Error("mirror returned HTTP " + r.status);
+      return await r.text();
+    } catch (e) {
+      lastErr = e;
+      // Only retry on abort/network-style failures, and only if we have a try left.
+      const isAbort = e && (e.name === "AbortError" || /aborted/i.test(String(e)));
+      if (i < tries - 1) {
+        await sleep(600);
+        continue;
+      }
+      // Out of retries: translate the opaque AbortError into something the
+      // punter can actually act on.
+      if (isAbort) {
+        throw new Error(
+          "mirror timed out after " + (budget / 1000) + "s x" + tries +
+          " tries (sgodds.com slow or blocking). Screenshot the SGPools card and I'll read it manually."
+        );
+      }
+      throw e;
+    } finally {
+      clearTimeout(t);
+    }
   }
+  throw lastErr;
 }
 
 function abs(href) {
@@ -169,7 +204,7 @@ module.exports = async (req, res) => {
         res.status(400).json({ error: "match url must be an sgodds.com fixture page" });
         return;
       }
-      const html = await getText(matchUrl, 9000);
+      const html = await getText(matchUrl, 15000, 2);
       const parsed = parseMatch(html);
       res.status(200).json({
         build: "odds2 v1.1 deep",
@@ -181,7 +216,7 @@ module.exports = async (req, res) => {
       return;
     }
 
-    const listHtml = await getText(MIRROR_LIST, 8000);
+    const listHtml = await getText(MIRROR_LIST, 15000, 2);
     const fixtures = parseList(listHtml);
     let stamp = null;
     const sm = listHtml.match(/Last Updated on\s*([\d-]+\s[\d:]+)/i);
@@ -198,6 +233,9 @@ module.exports = async (req, res) => {
         "Reference only. mirror_code is NOT the SGPools app code. Always card-match and confirm the live price in your SGPools app before betting.",
     });
   } catch (e) {
-    res.status(500).json({ error: String(e) });
+    // getText already gives a plain-English message on timeout; strip the
+    // "Error: " prefix so the frontend shows just the actionable sentence.
+    const msg = String(e && e.message ? e.message : e).replace(/^Error:\s*/, "");
+    res.status(200).json({ error: msg, soft: true });
   }
 };
