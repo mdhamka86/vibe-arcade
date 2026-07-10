@@ -16,11 +16,6 @@
 const MIRROR_BASE = "https://sgodds.com";
 const MIRROR_LIST = "https://sgodds.com/football/current-odds";
 
-// Give the function room to run its own retries before Vercel kills it.
-// (Our per-attempt timeout is 15s, up to 2 attempts, so cap the invocation
-// comfortably above that.)
-module.exports.config = { maxDuration: 45 };
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Fetch text with a real timeout AND one automatic retry. Mirror hiccups
@@ -192,9 +187,10 @@ function parseMatch(html) {
   return { title, last_updated: stamp, markets };
 }
 
-module.exports = async (req, res) => {
+async function handler(req, res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "no-store, max-age=0");
+  res.setHeader("Content-Type", "application/json");
   try {
     const url = new URL(req.url, "http://localhost");
     const matchUrl = url.searchParams.get("match");
@@ -207,7 +203,7 @@ module.exports = async (req, res) => {
       const html = await getText(matchUrl, 15000, 2);
       const parsed = parseMatch(html);
       res.status(200).json({
-        build: "odds2 v1.1 deep",
+        build: "odds2 v1.2 deep",
         match_url: matchUrl,
         ...parsed,
         disclaimer:
@@ -223,7 +219,7 @@ module.exports = async (req, res) => {
     if (sm) stamp = sm[1];
 
     res.status(200).json({
-      build: "odds2 v1.1 list",
+      build: "odds2 v1.2 list",
       pulled_at: new Date().toISOString(),
       source: "sgodds.com (unofficial SGPools mirror)",
       last_updated: stamp,
@@ -235,7 +231,20 @@ module.exports = async (req, res) => {
   } catch (e) {
     // getText already gives a plain-English message on timeout; strip the
     // "Error: " prefix so the frontend shows just the actionable sentence.
+    // Guarantee a JSON body so the frontend never has to parse a Vercel
+    // plain-text crash page (the "Unexpected token 'A'" bug).
     const msg = String(e && e.message ? e.message : e).replace(/^Error:\s*/, "");
-    res.status(200).json({ error: msg, soft: true });
+    try {
+      res.status(200).json({ error: msg, soft: true });
+    } catch (_) {
+      res.status(200).send(JSON.stringify({ error: msg, soft: true }));
+    }
   }
-};
+}
+
+// Assign the handler, THEN hang config off it. Doing `module.exports = fn`
+// replaces the whole exports object, so any `module.exports.config` set
+// BEFORE this line would be wiped out - which is what produced Vercel's
+// plain-text "An error occurred" page and the frontend JSON parse crash.
+module.exports = handler;
+module.exports.config = { maxDuration: 45 };
