@@ -461,11 +461,15 @@ function Book({state,refresh}){
     setSyncing(true); setSyncErr(null);
     try{
       const r=await eng('sync',{positionsImages:posImgs,historyImage:historyB64||null});
-      // defensively render only well-formed pieces; capture anything odd for diagnosis
       setReport(r&&r.report?r.report:null);
       setMorning(r&&r.morningNote?r.morningNote:null);
       setPosImgs([]);
-      await refresh();
+      // The sync response ALREADY contains the freshly-reconciled, freshly-saved book.
+      // Apply it directly as the source of truth. A separate get() here can race the write
+      // (read-after-write) and return a stale/empty book, which is exactly what was blanking
+      // the positions after a successful sync. So we trust the sync response.
+      if(r&&r.book){ refresh({...(state||{}), clock:r.clock||state?.clock, book:r.book}); }
+      else { await refresh(); }
     }catch(e){
       setSyncErr((e&&e.message||String(e))+(e&&e.stack?'\n'+e.stack.split('\n').slice(0,4).join('\n'):''));
     }
@@ -516,7 +520,8 @@ function Book({state,refresh}){
 
       {report && <>
         {report.vitalsAlert && <div className={'alertbox '+(report.vitalsAlert.level==='RED'?'a-red':'a-amber')}>MARGIN {report.vitalsAlert.level}: {report.vitalsAlert.msg}</div>}
-        <div className="alertbox a-green">Sync complete{report.shotsRead>1?` from ${report.shotsRead} screenshots`:''}. {report.updated||0} updated · {(report.closedDetected||[]).length} closure(s) detected · {(report.orphansAdded||[]).length} orphan(s) adopted.</div>
+        <div className="alertbox a-green">Sync complete{report.shotsRead>1?` from ${report.shotsRead} screenshots`:''}. {report.updated||0} updated · {(report.closedDetected||[]).length} closure(s) detected · {(report.orphansAdded||[]).length} orphan(s) adopted.{report.savedPositions!=null?` · ${report.savedPositions} position(s) saved`:''}</div>
+        {report.savedPositions>0 && (book?.positions||[]).length===0 && <div className="alertbox a-amber">Engine saved {report.savedPositions} position(s) but the book view shows none. Tap Book again or reload — if it persists, this is a load/display mismatch, tell me.</div>}
         {report.signFlags?.length>0 && <div className="alertbox a-amber">
           <div style={{fontWeight:700,marginBottom:4}}>Corrected {report.signFlags.length} floating P/L sign{report.signFlags.length>1?'s':''} that disagreed with the price move:</div>
           {report.signFlags.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}
@@ -866,8 +871,11 @@ function App(){
   const [tab,setTab]=useState('desk');
   const [state,setState]=useState(null);
   const [engineErr,setEngineErr]=useState(null);
-  const refresh=useCallback(async()=>{
-    try{ setState(await eng('get')); setEngineErr(null); }
+  const refresh=useCallback(async(prefetched)=>{
+    try{
+      if(prefetched){ setState(prefetched); setEngineErr(null); return; }
+      setState(await eng('get')); setEngineErr(null);
+    }
     catch(e){ setEngineErr(e.message); }
   },[]);
   useEffect(()=>{
