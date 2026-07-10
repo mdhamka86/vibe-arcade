@@ -308,6 +308,31 @@
   .calcHint{margin-top:14px;font-size:13px;text-align:center;padding:10px;}
   .calcNote{margin-top:12px;font-size:11.5px;line-height:1.45;}
 
+  /* carrier selector */
+  .calcField.full{margin-bottom:12px;}
+  .carrierGrid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;}
+  .carrierBtn{background:var(--surface);border:1px solid var(--line2);border-radius:var(--rs);padding:9px 6px;font-size:12px;font-weight:600;color:var(--muted);transition:border-color .15s,color .15s;text-align:center;line-height:1.2;}
+  .calc.embedded .carrierBtn{background:var(--surface);}
+  .carrierBtn:active{transform:scale(.97);}
+  .carrierBtn.on{border-color:var(--sage);border-width:1.5px;color:var(--sageDeep);}
+  .carrierNote{font-size:12px;color:var(--muted);line-height:1.45;margin-bottom:14px;}
+  .ratioTag{display:inline-block;background:var(--amberSoft);color:#8a5a1f;font-weight:600;font-size:11px;padding:1px 8px;border-radius:20px;margin-left:2px;white-space:nowrap;}
+  .weakTag{display:inline-block;background:#f2e3df;color:#a6543f;font-weight:600;font-size:11px;padding:1px 8px;border-radius:20px;margin-left:6px;white-space:nowrap;}
+  .suggestBtn{width:100%;background:var(--surface2);border:1px dashed var(--line2);border-radius:var(--rs);padding:10px;font-size:12.5px;font-weight:600;color:var(--sageDeep);margin-top:12px;transition:border-color .15s,background .15s;}
+  .calc.embedded .suggestBtn{background:var(--surface);}
+  .suggestBtn:active{transform:scale(.98);}
+  .suggestBtn:hover{border-color:var(--sage);border-style:solid;}
+
+  /* sous vide decarb card (green, not warning-red) */
+  .decarbCard.sv{border-color:var(--sageSoft);background:#eef3ec;}
+  .decarbHd.sv{color:var(--sageDeep);}
+  .decarbCard.sv .bathNum{color:var(--sageDeep);}
+  .svToggle{background:transparent;border:none;display:inline-flex;align-items:center;gap:7px;color:var(--sageDeep);font-size:12.5px;font-weight:600;padding:4px 0;margin-top:2px;}
+  .svToggle .rot{transform:rotate(90deg);}
+  .svSteps{margin:10px 0 4px;padding-left:20px;display:flex;flex-direction:column;gap:7px;}
+  .svSteps li{font-size:13px;line-height:1.5;color:var(--ink-soft,#57544d);padding-left:3px;}
+  .svCaveat{margin-top:10px;font-style:italic;}
+
   #err{display:none;margin:20px;padding:16px;background:#faf1ee;border:1px solid var(--danger);border-radius:10px;color:#8a4231;font-family:monospace;font-size:12px;white-space:pre-wrap;}
 </style>
 </head>
@@ -570,17 +595,30 @@ var SOUSWEED_SOURCE = { label: "Sous Weed (Monica Lo's method)", url: "https://w
 var ZAMNESIA_SOURCE = { label: "Zamnesia sous vide decarb guide", url: "https://www.zamnesia.com/blog-how-to-sous-vide-decarboxylate-cannabis-n1915" };
 
 /* ---------- potency estimate ----------
-   Standard maker-consensus efficiency: some THCA is lost in decarb,
-   more is lost transferring into the solvent. Combined ~0.6 is the
-   widely-used rule of thumb. Result is an estimate, never lab-exact.
+   Carrier-aware. Each solvent extracts cannabinoids at a different
+   efficiency (research-backed midpoints) and uses a different
+   flower-to-liquid ratio. Result is an estimate, never lab-exact.
+   Efficiency = fraction of available cannabinoid that lands in the liquid,
+   already accounting for decarb loss.
 */
-var DECARB_EFF = 0.85;   /* fraction surviving activation */
-var INFUSE_EFF = 0.80;   /* fraction transferring to solvent */
-function estimatePotency(thcPct, grams, ml) {
+var CARRIERS = [
+  { id: "mct", name: "MCT oil", eff: 0.80, ratio: 16, note: "Strongest oil extractor, fast-absorbing, near tasteless." },
+  { id: "coconut", name: "Coconut oil", eff: 0.73, ratio: 8, note: "High saturated fat, great binder. Uses less oil per gram (1:8)." },
+  { id: "olive", name: "Olive oil", eff: 0.55, ratio: 16, note: "Milder extractor (unsaturated fat), lovely for food." },
+  { id: "avocado", name: "Avocado oil", eff: 0.55, ratio: 16, note: "Rich and skin-friendly, similar strength to olive." },
+  { id: "alcohol", name: "High-proof alcohol", eff: 0.90, ratio: 14, note: "Very efficient, long shelf life. Classic Green Dragon." },
+  { id: "glycerine", name: "Glycerine (VG)", eff: 0.10, ratio: 14, note: "Sweet and alcohol-free, but a weak extractor. Comes out mild." }
+];
+function carrierById(id) {
+  for (var i = 0; i < CARRIERS.length; i++) { if (CARRIERS[i].id === id) return CARRIERS[i]; }
+  return CARRIERS[0];
+}
+function estimatePotency(thcPct, grams, ml, carrierId) {
   var pct = parseFloat(thcPct); var g = parseFloat(grams); var v = parseFloat(ml);
   if (isNaN(pct) || isNaN(g) || isNaN(v) || pct <= 0 || g <= 0 || v <= 0) return null;
+  var carrier = carrierById(carrierId);
   var rawMg = g * (pct / 100) * 1000;          /* mg THC in the raw flower */
-  var usableMg = rawMg * DECARB_EFF * INFUSE_EFF;
+  var usableMg = rawMg * carrier.eff;
   var perMl = usableMg / v;
   return { totalMg: Math.round(usableMg), perMl: Math.round(perMl * 10) / 10, perDropper: Math.round(perMl * 10) / 10 };
 }
@@ -1031,19 +1069,34 @@ function StepReview(props) {
   );
 }
 
+var SV_DECARB_STEPS = [
+  "Grind the flower coarsely, not to powder.",
+  "Seal it in a bag, pressing out as much air as you can.",
+  "Bring the bath to 95\u00b0C first, then lower the bag in fully submerged.",
+  "Hold exactly 1 hour. Use the timer so it does not overcook.",
+  "Lift out and let it cool before opening. Decarb done, no oven, no smell."
+];
 function DecarbNote(props) {
-  var d = DECARB[props.cannabinoid]; if (!d) return null;
-  return React.createElement("div", { className: "decarbCard" },
-    React.createElement("div", { className: "decarbHd" },
-      React.createElement(Icon, { name: "warn", size: 16 }), "Decarb first (oven job)"),
+  var o = useState(false); var open = o[0]; var setOpen = o[1];
+  return React.createElement("div", { className: "decarbCard sv" },
+    React.createElement("div", { className: "decarbHd sv" },
+      React.createElement(Icon, { name: "flame", size: 16 }), "Decarb in the bath (no oven)"),
     React.createElement("div", { className: "bathRow tight" },
       React.createElement("div", { className: "bathStat" },
-        React.createElement("span", { className: "bathNum warn" }, d.tempLo + "\u2013" + d.tempHi + "\u00b0"),
-        React.createElement("span", { className: "bathLbl" }, "best ~" + d.best + "\u00b0")),
+        React.createElement("span", { className: "bathNum" }, "95\u00b0"),
+        React.createElement("span", { className: "bathLbl" }, "bath temp")),
       React.createElement("div", { className: "bathStat" },
-        React.createElement("span", { className: "bathNum warn" }, d.timeLo + "\u2013" + d.timeHi),
-        React.createElement("span", { className: "bathLbl" }, "min, oven"))),
-    React.createElement("p", { className: "muted small" }, d.note),
+        React.createElement("span", { className: "bathNum" }, "1h"),
+        React.createElement("span", { className: "bathLbl" }, "sealed bag"))),
+    React.createElement("p", { className: "muted small" }, "Activate the flower right in the water bath, sealed. Gentler and more even than an oven, and no smell."),
+    React.createElement("button", { className: "svToggle", type: "button", onClick: function () { setOpen(!open); } },
+      React.createElement(Icon, { name: open ? "back" : "arrow", size: 14, weight: 1.7, className: open ? "rot" : "" }),
+      open ? "Hide the steps" : "Show the steps"),
+    open ? React.createElement("ol", { className: "svSteps" },
+      SV_DECARB_STEPS.map(function (st, i) {
+        return React.createElement("li", { key: i }, st);
+      })) : null,
+    React.createElement("p", { className: "muted tiny svCaveat" }, "Naddy's SV130 tops out near 95\u00b0C, exactly the decarb sweet spot, so watch it holds temperature."),
     React.createElement("a", { className: "linkRow", href: STEP_LINK.decarb.url, target: "_blank", rel: "noopener" },
       React.createElement(Icon, { name: "arrow", size: 14 }), STEP_LINK.decarb.label));
 }
@@ -1145,16 +1198,37 @@ function Guides() {
   );
 }
 
-/* ---------- Potency calculator (reusable) ---------- */
+/* ---------- Potency calculator (reusable, carrier-aware) ---------- */
 function PotencyCalc(props) {
-  var s = useState({ thc: "", grams: "", ml: "" });
+  var s = useState({ thc: "", grams: "", ml: "", carrier: "mct" });
   var f = s[0]; var setF = s[1];
   function upd(key, val) { var c = {}; for (var k in f) c[k] = f[k]; c[key] = val; setF(c); }
-  var result = estimatePotency(f.thc, f.grams, f.ml);
+  var carrier = carrierById(f.carrier);
+  var result = estimatePotency(f.thc, f.grams, f.ml, f.carrier);
+
+  /* suggested ml from grams + carrier ratio, offered as a one-tap fill */
+  var g = parseFloat(f.grams);
+  var suggestedMl = (!isNaN(g) && g > 0) ? Math.round(g * carrier.ratio) : null;
+
   return React.createElement("div", { className: "calc" + (props.embedded ? " embedded" : "") },
     props.title ? React.createElement("div", { className: "calcHd" },
       React.createElement(Icon, { name: "info", size: 15, weight: 1.7, className: "calcIc" }),
       React.createElement("span", null, props.title)) : null,
+
+    React.createElement("div", { className: "calcField full" },
+      React.createElement("label", null, "Carrier liquid"),
+      React.createElement("div", { className: "carrierGrid" },
+        CARRIERS.map(function (c) {
+          return React.createElement("button", {
+            key: c.id, type: "button",
+            className: "carrierBtn" + (f.carrier === c.id ? " on" : ""),
+            onClick: function () { upd("carrier", c.id); }
+          }, c.name);
+        }))),
+    React.createElement("div", { className: "carrierNote" },
+      carrier.note, " ", React.createElement("span", { className: "ratioTag" }, "ratio 1:" + carrier.ratio),
+      carrier.id === "glycerine" ? React.createElement("span", { className: "weakTag" }, "weak extractor") : null),
+
     React.createElement("div", { className: "calcInputs" },
       React.createElement("div", { className: "calcField" },
         React.createElement("label", null, "THC %"),
@@ -1165,6 +1239,11 @@ function PotencyCalc(props) {
       React.createElement("div", { className: "calcField" },
         React.createElement("label", null, "Liquid (ml)"),
         React.createElement("input", { className: "inp", type: "number", value: f.ml, placeholder: "240", onChange: function (e) { upd("ml", e.target.value); } }))),
+
+    suggestedMl && (!f.ml || parseInt(f.ml, 10) !== suggestedMl) ? React.createElement(ActionButton, {
+      className: "suggestBtn", onAct: function () { upd("ml", "" + suggestedMl); }
+    }, "Use suggested " + suggestedMl + " ml (1:" + carrier.ratio + ")") : null,
+
     result ? React.createElement("div", { className: "calcResult" },
       React.createElement("div", { className: "calcStat big" },
         React.createElement("span", { className: "calcNum" }, result.perMl),
@@ -1175,8 +1254,8 @@ function PotencyCalc(props) {
       React.createElement("div", { className: "calcStat" },
         React.createElement("span", { className: "calcNum" }, result.totalMg),
         React.createElement("span", { className: "calcLbl" }, "mg in batch"))) :
-      React.createElement("div", { className: "calcHint muted" }, "Fill all three for an estimate."),
-    React.createElement("p", { className: "calcNote muted" }, "An estimate, not lab-exact. Real strength varies, so the dropper still starts low.")
+      React.createElement("div", { className: "calcHint muted" }, "Fill THC %, flower, and liquid for an estimate."),
+    React.createElement("p", { className: "calcNote muted" }, "An estimate for " + carrier.name + ", not lab-exact. Real strength varies, so the dropper still starts low.")
   );
 }
 function TopicCard(props) {
