@@ -592,7 +592,7 @@ function Book({state,refresh}){
             <span className="hl">{p.pair} <span className="dim">{p.direction} {p.lots} @ {p.entry}</span></span>
             {p.longTerm
               ? <span className="badge b-etf">LONG-TERM</span>
-              : <span className={'badge '+flagCls[p.ageFlag]}>{p.ageDays}D {p.ageFlag!=='OK'?p.ageFlag:''}</span>}
+              : <span className={'badge '+flagCls[p.ageFlag]}>{p.hoursHeld!=null&&p.hoursHeld<24?`${p.hoursHeld<1?Math.round(p.hoursHeld*60)+'m':p.hoursHeld.toFixed(1)+'h'}`:`${p.ageDays}D`} {p.ageFlag!=='OK'?p.ageFlag:''}</span>}
           </div>
           <div className="meta">
             <span>SL {p.sl??'—'}</span><span>TP {p.tp??'—'}</span>
@@ -600,6 +600,14 @@ function Book({state,refresh}){
             {p.orphan && <span className="ambr">OFF-BOOK</span>}
             {p.ageResetAt && !p.longTerm && <span className="dim">re-underwritten</span>}
           </div>
+          {/* precise held duration with reliability of the open-time anchor */}
+          {p.hoursHeld!=null && <div className="meta" style={{marginTop:4}}>
+            <span className="steel">HELD</span>
+            <span>{p.hoursHeld<24?(p.hoursHeld<1?`${Math.round(p.hoursHeld*60)} min`:`${p.hoursHeld.toFixed(1)} hours`):`${p.ageDays} day${p.ageDays===1?'':'s'}`}</span>
+            {p.openTimeReliable
+              ? <span className="dim">· from platform open time</span>
+              : <span className="ambr">· est. since first seen (sync a shot showing open time for exact)</span>}
+          </div>}
           {p.longTerm
             ? <div className="note" style={{marginTop:6}}><span className="dim">HORIZON</span> long-term hold, held {p.ageDays} day{p.ageDays===1?'':'s'} <span className="steel">· judged on the long-term thesis, not the one-day clock</span></div>
             : p.proposedHorizon && <div className="note" style={{marginTop:6}}><span className="dim">HORIZON</span> proposed {p.proposedHorizon}, held {p.ageDays} day{p.ageDays===1?'':'s'}{p.ageDays>=1?<span className="ambr"> · past its intended life</span>:''}</div>}
