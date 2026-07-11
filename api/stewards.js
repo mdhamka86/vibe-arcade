@@ -240,13 +240,22 @@ function validateLeg(raw, defaults, idx) {
   if (!isFinite(race) || race < 1)
     errors.push("leg " + idx + ": raceNo must be a positive number");
   leg.raceNo = race;
-  leg.horseNo = raw.horseNo == null ? "" : String(raw.horseNo).trim();
-  if (!leg.horseNo) errors.push("leg " + idx + ": horseNo is required");
-  leg.horseName = raw.horseName == null ? "" : String(raw.horseName).trim();
   leg.betType = String(raw.betType || "").trim().toUpperCase();
   if (!leg.betType) errors.push("leg " + idx + ": betType is required");
   else if (!KNOWN_TYPES.includes(leg.betType))
     notices.push("leg " + idx + ": unusual betType '" + leg.betType + "' accepted");
+  const EXOTIC_TYPES = ["TRIO", "FORECAST", "PLACE FORECAST", "TIERCE", "QUARTET", "QUINELLA"];
+  const legExotic = EXOTIC_TYPES.includes(leg.betType);
+  leg.horseNo = raw.horseNo == null ? "" : String(raw.horseNo).trim();
+  leg.combo = raw.combo == null ? "" : String(raw.combo).trim();
+  // singles need a horse number; exotics need a combination instead
+  if (legExotic) {
+    if (!leg.combo && !leg.horseNo)
+      errors.push("leg " + idx + ": exotic bet needs a combination (e.g. 4-5-9)");
+  } else {
+    if (!leg.horseNo) errors.push("leg " + idx + ": horseNo is required");
+  }
+  leg.horseName = raw.horseName == null ? "" : String(raw.horseName).trim();
   const stake = num(raw.stake);
   if (!(stake > 0)) errors.push("leg " + idx + ": stake must be > 0");
   leg.stake = r2(stake);
@@ -896,9 +905,11 @@ module.exports = async (req, res) => {
       });
 
       // --- coordinate fallback: for legs with no stored receipt, match on the bet's
-      // natural identity (race + horse + type), disambiguated by meet-code country.
-      // The SGPools selection "U1 UK9 PLA 1" encodes: units, MEETcode+race, type, horseNo.
-      const selRx = /^U?\d*\s*([A-Z]{2,3})(\d+)\s+(WIN|PLA|W|P|PLC|PLACE|WP)\s+(\d+)/i;
+      // natural identity. Singles key on race+horse+type; exotics key on race+combo+type.
+      // Single selection: "U1 UK9 PLA 1"  ->  units, MEETcode+race, type, horseNo
+      // Exotic selection:  "U5 SA7 TRO 4-5-9/4-5-9/4-5-9"  ->  units, MEETcode+race, type, combo
+      const selRxSingle = /^U?\d*\s*([A-Z]{2,3})(\d+)\s+(WIN|PLA|W|P|PLC|PLACE|WP)\s+(\d+)\b/i;
+      const selRxExotic = /^U?\d*\s*([A-Z]{2,3})(\d+)\s+(TRO|TRIO|FC|FORECAST|QUARTET|QUAD|QT|QUINELLA|QN|TIERCE)\s+([\d\-\/]+)/i;
       const codeToCountry = (code) => {
         const c = String(code || "").toUpperCase().replace(/\d+$/, "");
         if (c === "UK") return "united kingdom";
@@ -915,21 +926,36 @@ module.exports = async (req, res) => {
       const normType = (t) => {
         const s = String(t || "").toUpperCase();
         if (s.startsWith("W")) return "WIN";
-        if (s.startsWith("P")) return "PLA";
+        if (s.startsWith("PLA") || s === "P" || s === "PLC" || s.startsWith("PLACE")) return "PLA";
+        if (s.startsWith("TR")) return "TRIO";
+        if (s.startsWith("FC") || s.startsWith("FORE")) return "FORECAST";
+        if (s.startsWith("QUA") || s === "QT" || s === "QUAD") return "QUARTET";
+        if (s.startsWith("QUI") || s === "QN") return "QUINELLA";
+        if (s.startsWith("TIE")) return "TIERCE";
         return s;
       };
-      const coordKey = (country, raceNo, horseNo, type) =>
-        [country, String(raceNo).trim(), String(horseNo).trim(), normType(type)].join("|");
+      const EXOTIC_SET = new Set(["TRIO", "FORECAST", "QUARTET", "QUINELLA", "TIERCE"]);
+      const isExoticType = (t) => EXOTIC_SET.has(normType(t));
+      const normCombo = (c) => String(c || "").replace(/\s/g, "");
+      // singles: race+horse+type. exotics: race+combo+type. country prefix disambiguates.
+      const coordKey = (country, raceNo, ident, type) =>
+        [country, String(raceNo).trim(), isExoticType(type) ? "combo:" + normCombo(ident) : String(ident).trim(), normType(type)].join("|");
 
       // index the parsed receipt rows by coordinate, derived from their selection text
       const byCoord = {};
       rows.forEach((r) => {
-        const m = selRx.exec(String(r.selection || "").trim());
-        if (!m) return;
-        const country = codeToCountry(m[1]);
-        const key = coordKey(country, m[2], m[4], m[3]);
-        // if two rows share a coordinate (shouldn't for a single day), keep the first
-        if (!byCoord[key]) byCoord[key] = { row: r, code: m[1].toUpperCase() };
+        const sel = String(r.selection || "").trim();
+        let country, race, ident, type;
+        const me = selRxExotic.exec(sel);
+        if (me) {
+          country = codeToCountry(me[1]); race = me[2]; type = me[3]; ident = me[4];
+        } else {
+          const ms = selRxSingle.exec(sel);
+          if (!ms) return;
+          country = codeToCountry(ms[1]); race = ms[2]; type = ms[3]; ident = ms[4];
+        }
+        const key = coordKey(country, race, ident, type);
+        if (!byCoord[key]) byCoord[key] = { row: r, code: (me ? me[1] : selRxSingle.exec(sel)[1]).toUpperCase() };
       });
       // which country does a leg's stored meet name belong to
       const legCountry = (meet) => {
@@ -946,9 +972,10 @@ module.exports = async (req, res) => {
       };
       // find a receipt row for a leg by its coordinates; returns {row, code} or null
       const rowByCoord = (leg) => {
-        const key = coordKey(
-          legCountry(leg.meet), leg.raceNo, leg.horseNo, leg.betType
-        );
+        // exotics identify by combo, singles by horse number
+        const ident = isExoticType(leg.betType)
+          ? (leg.combo || "") : leg.horseNo;
+        const key = coordKey(legCountry(leg.meet), leg.raceNo, ident, leg.betType);
         return byCoord[key] || null;
       };
 
@@ -993,7 +1020,10 @@ module.exports = async (req, res) => {
         if (!row) {
           untouched.push({
             xlRow: leg.xlRow, receipt: rec,
-            label: leg.date + " R" + leg.raceNo + " #" + leg.horseNo + " " + leg.betType,
+            label: leg.date + " R" + leg.raceNo + " " +
+              (isExoticType(leg.betType)
+                ? leg.betType + " " + (leg.combo || "")
+                : "#" + leg.horseNo + " " + leg.betType),
           });
           continue;
         }
@@ -1012,16 +1042,19 @@ module.exports = async (req, res) => {
             else { result = "Place"; note = "no WIN sibling found, assumed Place"; }
           } else result = "Lose";
         } else {
+          // exotics (TRIO, Forecast, etc.): landed if it paid, else lost
           result = pay > 0 ? "Win" : "Lose";
         }
         if (matchedBy === "coordinate")
-          note = (note ? note + "; " : "") + "matched by race/horse (no stored receipt); receipt " + (matchedReceipt || "?") + " backfilled";
+          note = (note ? note + "; " : "") + "matched by race/" + (isExoticType(leg.betType) ? "combo" : "horse") + " (no stored receipt); receipt " + (matchedReceipt || "?") + " backfilled";
         proposal.push({
           xlRow: leg.xlRow,
           receipt: matchedReceipt,
           matchedBy,
-          label: leg.date + " R" + leg.raceNo + " #" + leg.horseNo + " " +
-            (leg.horseName || "") + " " + leg.betType,
+          label: leg.date + " R" + leg.raceNo + " " +
+            (isExoticType(leg.betType)
+              ? leg.betType + " " + (leg.combo || "")
+              : "#" + leg.horseNo + " " + (leg.horseName || "") + " " + leg.betType),
           result,
           payout: r2(pay),
           position: result === "Win" ? 1 : null,
@@ -1131,15 +1164,17 @@ module.exports = async (req, res) => {
         "Extract EVERY row whose type is Horse Wagering (ignore Football, Sports and Lottery rows, but count how many you skipped). " +
         "For each horse bet, read and structure these fields as best you can from the receipt: " +
         "the RECEIPT number (letters and digits only, e.g. 557A0429); " +
-        "the full SELECTION text verbatim (e.g. 'U1 UK9 PLA 1' or 'SA Race 3 Win Horse 4'); " +
+        "the full SELECTION text verbatim (e.g. 'U1 UK9 PLA 1', 'SA Race 3 Win Horse 4', or an exotic like 'U5 SA7 TRO 4-5-9/4-5-9/4-5-9'); " +
         "the MEET / country and course if shown; the COUPON CODE if shown (e.g. Code 6, UK9, SA); " +
-        "the RACE number; the HORSE number; the BET TYPE (WIN, PLA/Place, or exotic like Trio/Forecast); " +
+        "the RACE number; the BET TYPE (WIN, PLA/Place, or an EXOTIC: TRIO/TRO, FORECAST/FC, QUARTET, etc.); " +
         "the number of UNITS or LOTS if shown; and the total AMOUNT staked in dollars. " +
-        "Read the numbers exactly as printed. If a field is genuinely unreadable use null; do not guess a horse number you cannot see. " +
+        "IMPORTANT for the HORSE field: a WIN or PLA bet has a single horse number, so put it in horseNo. " +
+        "But an EXOTIC (TRIO, Forecast, Quartet) is a COMBINATION of horses, not one horse: for those leave horseNo null and instead put the full combination string (e.g. '4-5-9/4-5-9/4-5-9' or '1-7-9') in the combo field. Never try to force a single horse number onto an exotic. " +
+        "Read the numbers exactly as printed. If a genuinely single-horse field is unreadable use null; do not guess. " +
         "Respond with ONLY minified JSON, no markdown fences, exactly this shape: " +
         '{"skippedNonHorse":0,' +
-        '"bets":[{"receipt":"","selection":"","meet":"","couponCode":"","raceNo":0,"horseNo":0,"betType":"WIN|PLA|TRIO","units":1,"amount":0}]} ' +
-        "Numbers must be plain numbers without $ signs.";
+        '"bets":[{"receipt":"","selection":"","meet":"","couponCode":"","raceNo":0,"horseNo":null,"combo":"","betType":"WIN|PLA|TRIO|FORECAST|QUARTET","units":1,"amount":0}]} ' +
+        "For WIN/PLA set combo to empty string; for exotics set horseNo to null and fill combo. Numbers must be plain numbers without $ signs.";
 
       const content = images.map((im) => ({
         type: "image",
@@ -1195,11 +1230,14 @@ module.exports = async (req, res) => {
       const normType = (t) => {
         const s = String(t || "").toUpperCase();
         if (s.startsWith("W")) return "WIN";
-        if (s.startsWith("P")) return "PLA";
-        if (s.startsWith("T") || s.includes("TRIO")) return "TRIO";
-        if (s.includes("FORECAST")) return "TRIO";
+        if (s.startsWith("PLA") || s === "P" || s.startsWith("PLACE") || s === "PLC") return "PLA";
+        if (s.startsWith("T") || s.includes("TRIO") || s.includes("TRO")) return "TRIO";
+        if (s.includes("FORECAST") || s === "FC" || s.startsWith("FORE")) return "FORECAST";
+        if (s.includes("QUARTET") || s.includes("QUAD") || s === "QT") return "QUARTET";
+        if (s.includes("QUINELLA") || s === "QN") return "QUINELLA";
         return s || "WIN";
       };
+      const isExotic = (t) => ["TRIO", "FORECAST", "QUARTET", "QUINELLA"].includes(t);
 
       const legs = [];
       const warnings = [];
@@ -1209,9 +1247,14 @@ module.exports = async (req, res) => {
           ? String(b.receipt).toUpperCase().replace(/[^0-9A-Z]/g, "")
           : "";
         const betType = normType(b.betType);
+        const exotic = isExotic(betType);
         const amount = num(b.amount);
         const raceNo = b.raceNo == null ? "" : String(b.raceNo).trim();
-        const horseNo = b.horseNo == null ? "" : String(b.horseNo).trim();
+        // exotics carry a combination, not a single horse; singles carry a horse number
+        const combo = String(b.combo || "").trim();
+        const horseNo = exotic
+          ? "" // exotics never store a single horse number
+          : b.horseNo == null ? "" : String(b.horseNo).trim();
 
         if (receipt && existingReceipts.has(receipt)) {
           warnings.push(
@@ -1225,13 +1268,23 @@ module.exports = async (req, res) => {
         }
         if (receipt) seen.add(receipt);
 
-        // flat-stake sanity, purely informational (never rewrites what was actually placed)
-        const expected =
-          betType === "WIN" ? 10 : betType === "PLA" ? 5 : betType === "TRIO" ? 6 : null;
+        // stake note. For singles, flat-stake sanity ($10 WIN / $5 PLA). For exotics,
+        // stakes legitimately vary with units and combo size, so only a soft note, never a block.
         let stakeNote = "";
-        if (expected != null && amount && Math.abs(amount - expected) > 0.01)
-          stakeNote =
-            "stake $" + amount + " differs from the usual flat $" + expected + " for " + betType;
+        if (!exotic) {
+          const expected = betType === "WIN" ? 10 : betType === "PLA" ? 5 : null;
+          if (expected != null && amount && Math.abs(amount - expected) > 0.01)
+            stakeNote =
+              "stake $" + amount + " differs from the usual flat $" + expected + " for " + betType;
+        } else if (amount && Math.abs(amount - 6) > 0.01) {
+          // soft, informational only: exotics are allowed any stake
+          stakeNote = "exotic staked $" + amount + " (exotics vary by units/combo, no flat rule)";
+        }
+
+        // build the selection/combo descriptor for the notes and identity
+        const comboText = exotic
+          ? (combo || String(b.selection || "").trim() || "combo unread")
+          : "";
 
         legs.push({
           date: legDate,
@@ -1239,15 +1292,19 @@ module.exports = async (req, res) => {
           couponCode: String(b.couponCode || "").trim(),
           raceNo,
           horseNo,
+          combo: comboText,
           horseName: "",
           betType,
-          stake: amount || expected || 0,
+          exotic,
+          stake: amount || 0,
           confidence: "",
-          ledger: betType === "TRIO" ? "Exotic" : "Model",
+          ledger: exotic ? "Exotic" : "Model",
           reason: "",
           notes:
             "Pending, receipt " + (receipt || "UNKNOWN") +
-            (b.selection ? " (" + String(b.selection).trim() + ")" : ""),
+            (exotic
+              ? " [" + betType + " " + comboText + "]"
+              : (b.selection ? " (" + String(b.selection).trim() + ")" : "")),
           receipt,
           selection: String(b.selection || "").trim(),
           stakeNote,
@@ -1257,12 +1314,19 @@ module.exports = async (req, res) => {
       // cross-check against the Stable proposal for the day, if one exists
       let reconcile = null;
       if (proposalDoc && Array.isArray(proposalDoc.legs)) {
-        const keyOf = (l) =>
-          [
-            String(l.raceNo).trim(),
-            String(l.horseNo).trim(),
-            normType(l.betType),
-          ].join("|");
+        // singles key on race+horse+type; exotics key on race+combo+type
+        const keyOf = (l) => {
+          const t = normType(l.betType);
+          if (isExotic(t))
+            return [String(l.raceNo).trim(), "combo:" + String(l.combo || l.selection || "").replace(/\s/g, ""), t].join("|");
+          return [String(l.raceNo).trim(), String(l.horseNo).trim(), t].join("|");
+        };
+        const descOf = (l) => {
+          const t = normType(l.betType);
+          return isExotic(t)
+            ? "R" + l.raceNo + " " + t + " " + (l.combo || l.selection || "")
+            : "R" + l.raceNo + " #" + l.horseNo + " " + t + (l.horseName ? " " + l.horseName : "");
+        };
         const placedKeys = new Map();
         legs.forEach((l) => placedKeys.set(keyOf(l), l));
         const proposedKeys = new Map();
@@ -1273,25 +1337,16 @@ module.exports = async (req, res) => {
         const stakeDiffs = [];
         for (const [k, l] of placedKeys) {
           if (!proposedKeys.has(k))
-            placedNotProposed.push(
-              "R" + l.raceNo + " #" + l.horseNo + " " + l.betType + " (placed, not in the plan)"
-            );
+            placedNotProposed.push(descOf(l));
         }
         for (const [k, l] of proposedKeys) {
           if (!placedKeys.has(k))
-            proposedNotPlaced.push(
-              "R" + l.raceNo + " #" + l.horseNo + " " + normType(l.betType) +
-                " " + (l.horseName || "") + " (planned, not found in what you placed)"
-            );
+            proposedNotPlaced.push(descOf(l));
           else {
             const placed = placedKeys.get(k);
             const ps = num(placed.stake), qs = num(l.stake);
             if (ps && qs && Math.abs(ps - qs) > 0.01)
-              stakeDiffs.push(
-                "R" + l.raceNo + " #" + l.horseNo + " " + normType(l.betType) +
-                  ": placed $" + ps + ", planned $" + qs
-              );
-            // borrow the horse name from the plan so the leg reads nicely
+              stakeDiffs.push(descOf(l) + ": placed $" + ps + ", planned $" + qs);
             if (!placed.horseName && l.horseName) placed.horseName = l.horseName;
             if (!placed.confidence && l.confidence) placed.confidence = l.confidence;
             if (!placed.reason && l.reason) placed.reason = l.reason;
@@ -1318,6 +1373,7 @@ module.exports = async (req, res) => {
           meet: l.meet,
           raceNo: l.raceNo,
           horseNo: l.horseNo,
+          combo: l.combo,
           horseName: l.horseName,
           betType: l.betType,
           stake: l.stake,
