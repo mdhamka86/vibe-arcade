@@ -1,0 +1,1098 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>How Well Do You Know Me</title>
+<!--
+  ============================================================================
+  SERVERLESS STATE ENDPOINT SPEC  (api/km-state.js on Vercel + Upstash Redis)
+  ============================================================================
+  This client trusts the merged room returned by the server (no re-fetch),
+  which is the fix for the read-after-write race. Each player writes ONLY
+  their own slice, so there is no true write conflict to resolve.
+
+  POST /api/km-state
+  body: { code, action, payload }
+
+  actions:
+    "create"  -> payload: { category, questionIds[], hostName }
+                 creates game:{code} if absent, returns room
+    "join"    -> payload: { name }  sets playerB.name if empty, returns room
+    "write"   -> payload: { side: "A"|"B", answers:{}, guesses:{}, done:bool }
+                 MONOTONIC MERGE: never overwrite an existing non-empty field
+                 with an empty one. Merge maps key-by-key. Then write back and
+                 RETURN the merged room.
+    "poll"    -> returns current room (for the waiting screen)
+
+  Redis: SET game:{code} JSON, EX 86400 (24h expiry). Key design: game:{code}.
+  ============================================================================
+-->
+<style>
+  :root{
+    --bg:#1b1033;          /* deep grape night */
+    --card:#241645;        /* raised panel */
+    --card2:#2e1c56;       /* input panel */
+    --ink:#fdf5ff;         /* near-white text */
+    --muted:#b79fd6;       /* soft lavender */
+    --line:#3d2a6b;        /* hairline */
+    --a:#ff5d8f;           /* candy pink (player A) */
+    --b:#37e0c4;           /* candy mint (player B) */
+    --pop:#ffd23f;         /* candy yellow accent */
+    --pop2:#8b5cf6;        /* violet accent */
+    --good:#37e0c4;
+    --bad:#ff5d8f;
+    --radius:14px;
+    --tap:56px;
+    font-size:16px;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;height:100%;}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    overflow:hidden;
+  }
+  #app{
+    height:100dvh;
+    max-width:480px;
+    margin:0 auto;
+    display:flex;
+    flex-direction:column;
+    padding:16px;
+    padding-top:max(16px,env(safe-area-inset-top));
+    padding-bottom:max(16px,env(safe-area-inset-bottom));
+  }
+
+  /* ---- shared scaffolding: header / body / footer, one screen each ---- */
+  .top{display:flex;align-items:center;justify-content:space-between;min-height:32px;margin-bottom:12px;}
+  .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:.82rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);}
+  .brand svg{width:18px;height:18px;stroke:var(--pop);}
+  .count{font-size:.82rem;font-weight:700;color:var(--muted);letter-spacing:.04em;}
+
+  .stage{flex:1;display:flex;flex-direction:column;justify-content:center;gap:18px;min-height:0;}
+  .foot{margin-top:12px;}
+
+  h1{font-size:1.9rem;line-height:1.1;margin:0;font-weight:800;letter-spacing:-.02em;}
+  h2{font-size:1.35rem;line-height:1.2;margin:0;font-weight:800;letter-spacing:-.01em;}
+  .lead{color:var(--muted);font-size:1rem;line-height:1.45;margin:0;}
+  .eyebrow{font-size:.78rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--pop);margin:0;}
+
+  /* progress bar */
+  .bar{height:6px;background:var(--line);border-radius:99px;overflow:hidden;}
+  .bar > i{display:block;height:100%;background:var(--pop);border-radius:99px;transition:width .35s ease;}
+
+  /* buttons */
+  .btn{
+    display:flex;align-items:center;justify-content:center;gap:10px;
+    width:100%;min-height:var(--tap);
+    border:none;border-radius:var(--radius);
+    font-size:1.05rem;font-weight:700;color:#1b1033;
+    background:var(--pop);cursor:pointer;
+    transition:transform .08s ease,filter .15s ease;
+  }
+  .btn:active{transform:scale(.97);}
+  .btn.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--line);}
+  .btn.mint{background:var(--b);}
+  .btn svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;}
+  .btn[disabled]{opacity:.4;pointer-events:none;}
+
+  /* option list */
+  .opts{display:flex;flex-direction:column;gap:10px;}
+  .opt{
+    display:flex;align-items:center;gap:12px;
+    width:100%;min-height:var(--tap);padding:0 16px;
+    border:1.5px solid var(--line);border-radius:var(--radius);
+    background:var(--card2);color:var(--ink);
+    font-size:1.02rem;font-weight:600;text-align:left;cursor:pointer;
+    transition:transform .08s ease,border-color .15s ease,background .15s ease;
+  }
+  .opt:active{transform:scale(.98);}
+  .opt.sel{border-color:var(--pop);background:#3a2668;}
+  .opt .dot{width:20px;height:20px;border-radius:50%;border:2px solid var(--muted);flex:0 0 auto;transition:.15s;}
+  .opt.sel .dot{border-color:var(--pop);background:var(--pop);box-shadow:inset 0 0 0 4px var(--card2);}
+
+  /* slider */
+  .slide-wrap{display:flex;flex-direction:column;gap:14px;}
+  .slide-val{font-size:2.6rem;font-weight:800;text-align:center;color:var(--pop);letter-spacing:-.02em;}
+  input[type=range]{-webkit-appearance:none;width:100%;height:8px;border-radius:99px;background:var(--line);outline:none;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:34px;height:34px;border-radius:50%;background:var(--pop);border:4px solid var(--bg);cursor:pointer;}
+  .slide-ends{display:flex;justify-content:space-between;font-size:.82rem;color:var(--muted);font-weight:600;}
+
+  /* code input */
+  .code-in{
+    width:100%;min-height:var(--tap);text-align:center;
+    font-size:1.6rem;font-weight:800;letter-spacing:.35em;text-transform:uppercase;
+    background:var(--card2);border:1.5px solid var(--line);border-radius:var(--radius);
+    color:var(--ink);padding:0 8px 0 16px;
+  }
+  .code-in::placeholder{letter-spacing:.1em;color:var(--muted);opacity:.5;}
+  .name-in{
+    width:100%;min-height:var(--tap);
+    font-size:1.1rem;font-weight:600;
+    background:var(--card2);border:1.5px solid var(--line);border-radius:var(--radius);
+    color:var(--ink);padding:0 16px;
+  }
+  .name-in::placeholder{color:var(--muted);opacity:.6;}
+
+  /* the big shared code display */
+  .codebox{background:var(--card);border:1.5px dashed var(--pop);border-radius:var(--radius);padding:18px;text-align:center;}
+  .codebox .lbl{font-size:.78rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);}
+  .codebox .code{font-size:2.6rem;font-weight:900;letter-spacing:.3em;color:var(--pop);margin:6px 0 2px;}
+
+  /* category cards */
+  .cats{display:flex;flex-direction:column;gap:12px;}
+  .cat{
+    display:flex;align-items:center;gap:14px;
+    padding:16px;border-radius:var(--radius);cursor:pointer;
+    border:1.5px solid var(--line);background:var(--card2);
+    transition:transform .08s ease,border-color .15s;
+  }
+  .cat:active{transform:scale(.98);}
+  .cat .ic{width:44px;height:44px;flex:0 0 auto;border-radius:12px;display:flex;align-items:center;justify-content:center;}
+  .cat .ic svg{width:24px;height:24px;fill:none;stroke-width:2;}
+  .cat .txt{flex:1;min-width:0;}
+  .cat .txt b{display:block;font-size:1.05rem;font-weight:800;}
+  .cat .txt span{font-size:.85rem;color:var(--muted);}
+  .cat.wholesome .ic{background:rgba(55,224,196,.15);} .cat.wholesome .ic svg{stroke:var(--b);}
+  .cat.spicy .ic{background:rgba(255,93,143,.15);} .cat.spicy .ic svg{stroke:var(--a);}
+  .cat.chaotic .ic{background:rgba(255,210,63,.15);} .cat.chaotic .ic svg{stroke:var(--pop);}
+
+  /* reveal */
+  .verdict{text-align:center;}
+  .verdict .tag{display:inline-block;font-size:.82rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;padding:6px 14px;border-radius:99px;}
+  .tag.nailed{background:rgba(55,224,196,.18);color:var(--good);}
+  .tag.close{background:rgba(255,210,63,.18);color:var(--pop);}
+  .tag.miss{background:rgba(255,93,143,.18);color:var(--bad);}
+  .qtext{font-size:1.15rem;font-weight:700;line-height:1.3;margin:10px 0;}
+  .rowpair{display:flex;flex-direction:column;gap:8px;}
+  .ans{display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:12px;background:var(--card2);font-weight:600;font-size:.95rem;}
+  .ans .who{font-size:.72rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;flex:0 0 auto;}
+  .ans.guess .who{color:var(--muted);}
+  .ans.truth .who{color:var(--pop);}
+
+  /* final card */
+  .finalcard{background:linear-gradient(160deg,var(--card),var(--card2));border:1.5px solid var(--line);border-radius:18px;padding:22px;text-align:center;}
+  .finalcard .score{font-size:4rem;font-weight:900;line-height:1;letter-spacing:-.03em;background:none;color:var(--pop);}
+  .finalcard .title{font-size:1.4rem;font-weight:900;margin:8px 0 4px;letter-spacing:-.01em;}
+  .finalcard .sub{color:var(--muted);font-size:.95rem;line-height:1.4;margin:0 0 16px;}
+  .insights{display:flex;flex-direction:column;gap:8px;text-align:left;}
+  .insight{display:flex;gap:10px;align-items:flex-start;font-size:.92rem;line-height:1.35;padding:10px 12px;background:rgba(0,0,0,.18);border-radius:10px;}
+  .insight svg{width:18px;height:18px;flex:0 0 auto;margin-top:1px;stroke:var(--pop);fill:none;stroke-width:2;}
+  .split{display:flex;gap:10px;margin:14px 0;}
+  .split .p{flex:1;padding:12px;border-radius:12px;background:rgba(0,0,0,.18);}
+  .split .p b{display:block;font-size:1.6rem;font-weight:900;}
+  .split .p span{font-size:.75rem;color:var(--muted);font-weight:700;letter-spacing:.06em;text-transform:uppercase;}
+  .split .pa b{color:var(--a);} .split .pb b{color:var(--b);}
+
+  /* upgraded final screen */
+  .grade{display:inline-flex;align-items:center;justify-content:center;width:96px;height:96px;border-radius:50%;font-size:3rem;font-weight:900;letter-spacing:-.04em;margin:0 auto 4px;border:3px solid currentColor;}
+  .grade.g-high{color:var(--b);background:rgba(55,224,196,.12);}
+  .grade.g-mid{color:var(--pop);background:rgba(255,210,63,.12);}
+  .grade.g-low{color:var(--a);background:rgba(255,93,143,.12);}
+  .potm{display:flex;align-items:center;gap:10px;justify-content:center;margin:14px 0 4px;padding:10px 12px;border-radius:12px;background:rgba(255,210,63,.1);border:1px solid rgba(255,210,63,.3);font-size:.9rem;font-weight:600;line-height:1.3;}
+  .potm svg{width:20px;height:20px;flex:0 0 auto;stroke:var(--pop);fill:none;stroke-width:2;}
+  .potm b{color:var(--pop);}
+  .sharecard{margin-top:14px;padding:14px;border-radius:12px;background:rgba(0,0,0,.22);border:1px dashed var(--line);font-size:.9rem;line-height:1.4;text-align:left;color:var(--ink);}
+  .sharecard .sc-label{font-size:.7rem;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;}
+  .cta-note{font-size:.9rem;line-height:1.4;text-align:center;color:var(--muted);margin:4px 2px 0;}
+  .cta-note b{color:var(--ink);}
+
+  .center{text-align:center;}
+  .spin{width:40px;height:40px;border:3px solid var(--line);border-top-color:var(--pop);border-radius:50%;margin:0 auto;animation:sp 1s linear infinite;}
+  @keyframes sp{to{transform:rotate(360deg);}}
+  .fade{animation:fade .4s ease;}
+  @keyframes fade{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+  .err{color:var(--a);font-size:.88rem;text-align:center;font-weight:600;min-height:1.1em;}
+  .hint{font-size:.82rem;color:var(--muted);text-align:center;line-height:1.4;}
+  @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important;}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* ==========================================================================
+   CONFIG
+   ========================================================================== */
+var API = "/api/km-state";          // set to your serverless endpoint
+var DEMO = false;                   // true = run fully local (no backend) for testing
+var ROUND_SIZE = 10;                // questions drawn per game (3 warmup + 4 middle + 3 danger)
+
+/* ==========================================================================
+   QUESTION BANK  (universal, answerable by anyone about anyone)
+   type: "choice" | "this" | "slide"
+   tier: 1 warmup -> 3 danger  (drives escalating rounds)
+   ========================================================================== */
+var BANK = [
+  /* ======================= WHOLESOME ======================= */
+  // tier 1 - warmups
+  {id:"w1",cat:"wholesome",tier:1,type:"this",q:"Which are they, deep down?",opts:["Tea person","Coffee person"]},
+  {id:"w2",cat:"wholesome",tier:1,type:"choice",q:"Their perfect lazy Sunday?",opts:["Sleep till noon","Big breakfast out","A long walk","Zero plans, all snacks"]},
+  {id:"w3",cat:"wholesome",tier:1,type:"choice",q:"Comfort food they'd never turn down?",opts:["Something cheesy","Something spicy","Something sweet","A big bowl of carbs"]},
+  {id:"w4",cat:"wholesome",tier:1,type:"slide",q:"How adventurous are they with new food?",lo:"Same order forever",hi:"Eats anything once"},
+  {id:"w5",cat:"wholesome",tier:1,type:"this",q:"On a free evening they'd rather...",opts:["Stay in","Go out"]},
+  {id:"w6",cat:"wholesome",tier:1,type:"choice",q:"Their love language, honestly?",opts:["Words","Quality time","Little gifts","Acts of help"]},
+  {id:"w7",cat:"wholesome",tier:1,type:"slide",q:"How much of a morning person are they?",lo:"Total night owl",hi:"Sunrise gremlin"},
+  // tier 2 - middle, more subtle
+  {id:"w8",cat:"wholesome",tier:2,type:"choice",q:"What actually recharges them after a rough day?",opts:["Total silence","Being fussed over","A good meal","Sorting/cleaning something"]},
+  {id:"w9",cat:"wholesome",tier:2,type:"choice",q:"Which compliment lands hardest for them?",opts:["\"You're so funny\"","\"You're so kind\"","\"You're so clever\"","\"You're so strong\""]},
+  {id:"w10",cat:"wholesome",tier:2,type:"slide",q:"How openly do they show they're upset?",lo:"Bottles it completely",hi:"You'll know instantly"},
+  {id:"w11",cat:"wholesome",tier:2,type:"choice",q:"Their quiet weakness they'd admit to?",opts:["A soft-hearted cry at films","Baby animals","A good underdog story","An unexpected kindness"]},
+  {id:"w12",cat:"wholesome",tier:2,type:"this",q:"When you're sad, they instinctively...",opts:["Try to fix it","Just sit with you"]},
+  {id:"w13",cat:"wholesome",tier:2,type:"choice",q:"What would they secretly love to be praised for?",opts:["Their taste","Their patience","Their loyalty","Their instincts"]},
+  {id:"w14",cat:"wholesome",tier:2,type:"slide",q:"How sentimental are they about old things?",lo:"Throws it all out",hi:"Keeps every ticket stub"},
+  // tier 3 - danger, genuinely revealing
+  {id:"w15",cat:"wholesome",tier:3,type:"choice",q:"What do they quietly worry they're not enough of?",opts:["Interesting","Successful","Needed","Good enough as they are"]},
+  {id:"w16",cat:"wholesome",tier:3,type:"choice",q:"The kindness from you they noticed but never mentioned?",opts:["A small daily habit","Defending them once","Remembering a detail","Just staying"]},
+  {id:"w17",cat:"wholesome",tier:3,type:"slide",q:"How much do they need to feel chosen, not just loved?",lo:"Doesn't think about it",hi:"It's everything"},
+  {id:"w18",cat:"wholesome",tier:3,type:"choice",q:"What version of themselves are they proudest of?",opts:["Who they were as a kid","Who they are now","Who they're becoming","Who they are with you"]},
+
+  /* ======================= SPICY ======================= */
+  // tier 1
+  {id:"s1",cat:"spicy",tier:1,type:"this",q:"Who's the messier one, be honest?",opts:["Definitely them","Definitely me"]},
+  {id:"s2",cat:"spicy",tier:1,type:"choice",q:"Their most-used excuse?",opts:["\"I'm five minutes away\"","\"I never got the message\"","\"I'm just tired\"","\"It wasn't me\""]},
+  {id:"s3",cat:"spicy",tier:1,type:"this",q:"They secretly think they're the...",opts:["Funniest in the room","Smartest in the room"]},
+  {id:"s4",cat:"spicy",tier:1,type:"choice",q:"Their biggest toxic trait?",opts:["Always late","Never wrong","Ghosts replies","Petty about small things"]},
+  {id:"s5",cat:"spicy",tier:1,type:"slide",q:"How competitive are they, really?",lo:"It's just a game",hi:"Would flip the board"},
+  {id:"s6",cat:"spicy",tier:1,type:"this",q:"In a group plan, they're the one who...",opts:["Makes the plan","Bails last minute"]},
+  {id:"s7",cat:"spicy",tier:1,type:"choice",q:"Their pettiest fight move?",opts:["Silent treatment","Bringing up the past","Weaponised politeness","Leaving the room"]},
+  // tier 2
+  {id:"s8",cat:"spicy",tier:2,type:"choice",q:"What are they secretly a bit of a hypocrite about?",opts:["Being on their phone","Giving advice they ignore","Judging others' choices","Wanting the last word"]},
+  {id:"s9",cat:"spicy",tier:2,type:"slide",q:"How likely to say \"I'm fine\" when they're not?",lo:"Always says the truth",hi:"Fine is a threat"},
+  {id:"s10",cat:"spicy",tier:2,type:"choice",q:"What do they judge people for most quickly?",opts:["Being rude to staff","Bad punctuality","Bad taste","Being fake"]},
+  {id:"s11",cat:"spicy",tier:2,type:"choice",q:"Their most annoying habit when they're bored?",opts:["Picks a small fight","Doomscrolls at you","Gets suddenly hungry","Reorganises something"]},
+  {id:"s12",cat:"spicy",tier:2,type:"this",q:"In an argument they'd rather...",opts:["Win and be right","Be comforted and right"]},
+  {id:"s13",cat:"spicy",tier:2,type:"slide",q:"How much do they enjoy a bit of drama?",lo:"Hates it, avoids it",hi:"Pass the popcorn"},
+  {id:"s14",cat:"spicy",tier:2,type:"choice",q:"What would they never admit they're jealous of?",opts:["Other people's free time","Confidence","Effortless charm","Not caring what others think"]},
+  // tier 3
+  {id:"s15",cat:"spicy",tier:3,type:"choice",q:"What's their most self-sabotaging pattern?",opts:["Assuming the worst","Pushing people away first","Overthinking it dead","Never asking for help"]},
+  {id:"s16",cat:"spicy",tier:3,type:"choice",q:"When they go quiet on you, it usually means...",opts:["They're hurt","They're plotting","They need space","They've moved on already"]},
+  {id:"s17",cat:"spicy",tier:3,type:"slide",q:"How much of their confidence is actually a front?",lo:"None, it's real",hi:"It's mostly armour"},
+  {id:"s18",cat:"spicy",tier:3,type:"choice",q:"The criticism that would sting them the most?",opts:["\"You're selfish\"","\"You're boring\"","\"You're a pushover\"","\"You've changed\""]},
+
+  /* ======================= CHAOTIC ======================= */
+  // tier 1
+  {id:"c1",cat:"chaotic",tier:1,type:"choice",q:"In a zombie apocalypse, they'd last...",opts:["Till the credits","One week, tops","Day one, gone","They ARE the threat"]},
+  {id:"c2",cat:"chaotic",tier:1,type:"this",q:"Big red mystery button. They...",opts:["Press it instantly","Never trust it"]},
+  {id:"c3",cat:"chaotic",tier:1,type:"this",q:"Free skydive or free spa day?",opts:["Skydive, obviously","Spa, obviously"]},
+  {id:"c4",cat:"chaotic",tier:1,type:"choice",q:"Their villain origin would start with...",opts:["A parking fine","Being ignored","Slow WiFi","A bad haircut"]},
+  {id:"c5",cat:"chaotic",tier:1,type:"slide",q:"How chaotic is their normal day?",lo:"Colour-coded calendar",hi:"Held together by vibes"},
+  {id:"c6",cat:"chaotic",tier:1,type:"this",q:"Last slice of pizza. They...",opts:["Grab it guilt-free","Offer it, then sulk"]},
+  {id:"c7",cat:"chaotic",tier:1,type:"choice",q:"Their move in a haunted house?",opts:["Leads the group","Hides at the back","Nopes out entirely","Befriends the ghost"]},
+  // tier 2
+  {id:"c8",cat:"chaotic",tier:2,type:"choice",q:"If they went viral, it'd be for...",opts:["An unhinged opinion","A meltdown","A weirdly wholesome moment","A questionable dance"]},
+  {id:"c9",cat:"chaotic",tier:2,type:"choice",q:"Given a totally free day and no phone, they'd...",opts:["Panic within an hour","Love it, then get bored","Sleep most of it","Start ten projects"]},
+  {id:"c10",cat:"chaotic",tier:2,type:"slide",q:"How likely to say yes to a mad idea at midnight?",lo:"Absolutely not",hi:"Grabbing keys already"},
+  {id:"c11",cat:"chaotic",tier:2,type:"choice",q:"Their most irrational fear?",opts:["Something tiny (a bug)","The deep sea","Being perceived","Missing out"]},
+  {id:"c12",cat:"chaotic",tier:2,type:"this",q:"Surprise party FOR them. They'd secretly...",opts:["Love it","Want the ground to swallow them"]},
+  {id:"c13",cat:"chaotic",tier:2,type:"choice",q:"What would they blow a sudden windfall on first?",opts:["A ridiculous treat","Paying stuff off (boring)","A trip, booked tonight","Something petty they've wanted"]},
+  {id:"c14",cat:"chaotic",tier:2,type:"slide",q:"How much of a menace are they when overtired?",lo:"Just goes quiet",hi:"Full gremlin mode"},
+  // tier 3
+  {id:"c15",cat:"chaotic",tier:3,type:"choice",q:"The secret they'd take to the grave (light version)?",opts:["An embarrassing old crush","A lie they never corrected","A guilty pleasure","Who really broke the thing"]},
+  {id:"c16",cat:"chaotic",tier:3,type:"choice",q:"If they could read your mind for a day, they'd check...",opts:["What you really think of them","What you're hiding","If you're happy","Nothing, too scary"]},
+  {id:"c17",cat:"chaotic",tier:3,type:"slide",q:"How likely are they to text an ex at a low moment?",lo:"Never in a million years",hi:"Phone's already in hand"},
+  {id:"c18",cat:"chaotic",tier:3,type:"choice",q:"What impulsive thing do they most regret NOT doing?",opts:["Saying how they felt","A trip they skipped","Quitting something sooner","Taking a big risk"]}
+];
+
+/* combinatorial final-card banks (multiply for near-infinite unique cards) */
+var CARD_TITLES = {
+  high:["Mind Readers","Two Halves, One Brain","Suspiciously In Sync","Cut From The Same Cloth","Basically Telepathic","One Shared Brain Cell","The Uncanny Duo","Practically Psychic","Same Wavelength, Same Nonsense","Finishing Each Other's Sentences"],
+  mid:["Getting There","A Beautiful Mess","Work In Progress","Close, But Chaos","Half A Brain Cell Shared","Almost, Kinda, Sorta","Right Church, Wrong Pew","Promising, With Gaps","Loveably Out Of Sync","Solid Guesswork"],
+  low:["Do You Even Know Each Other?","Two Separate Movies","Strangers Who Met Once","Wildly Off The Mark","Back To The Drawing Board","Bless Your Hearts","Confidently Incorrect","A Total Mystery To Each Other","Reading From Different Books","Nice Try, Both Of You"]
+};
+var CARD_SUBS = {
+  high:["You two share one working brain cell and it's thriving.","Frankly this is a little unsettling. In a good way.","You could finish each other's sentences and probably do.","Genuinely impressive. Slightly spooky.","This is the kind of score that ends arguments.","You know each other better than you know yourselves."],
+  mid:["Solid effort. A few blind spots, but the vibe is there.","You know the big stuff and guess the rest confidently wrong.","Middle of the pack, and honestly the funnier for it.","Room to grow, plenty to laugh about.","You're close. Close counts. Sometimes.","Not bad at all. The gaps are where the fun is."],
+  low:["Have you two actually met? Genuine question.","Bold guesses. Confidently, hilariously incorrect.","The good news: it can only go up from here.","You may be dating a stranger. Exciting.","Points for confidence. None for accuracy.","This is either day one or a cry for help."]
+};
+
+/* ==========================================================================
+   STATE
+   ========================================================================== */
+var S = {
+  screen:"home",   // home | create | join | wait | category | quiz | waitReveal | reveal | final
+  code:"",
+  side:null,       // "A" or "B"
+  name:"",
+  room:null,       // server room object
+  category:null,
+  qids:[],
+  phase:"answer",  // answer (about self) | guess (about partner)
+  idx:0,
+  answers:{}, guesses:{},
+  revealIdx:0,
+  demoRoom:null    // local room when DEMO
+};
+
+/* ==========================================================================
+   ICONS (line art)
+   ========================================================================== */
+var IC = {
+  spark:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2 2M16 16l2 2M18 6l-2 2M8 16l-2 2"/></svg>',
+  arrow:'<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
+  users:'<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M16 6a3 3 0 0 1 0 6M21 20a6 6 0 0 0-4-5.6"/></svg>',
+  plus:'<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  heart:'<svg viewBox="0 0 24 24"><path d="M12 20s-7-4.5-9.5-8A5 5 0 0 1 12 6a5 5 0 0 1 9.5 6c-2.5 3.5-9.5 8-9.5 8z"/></svg>',
+  flame:'<svg viewBox="0 0 24 24"><path d="M12 22c4 0 6-2.7 6-6 0-2.5-1.5-4-2.5-6C14.5 8 14 5 14 3c-2 1.5-4 4-4 7 0 .5-1-1-1-3-2 1.5-3 4-3 6 0 3.3 2 6 6 6z"/></svg>',
+  dice:'<svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="3"/><circle cx="9" cy="9" r="1"/><circle cx="15" cy="15" r="1"/><circle cx="15" cy="9" r="1"/><circle cx="9" cy="15" r="1"/></svg>',
+  check:'<svg viewBox="0 0 24 24"><path d="M4 12l5 5L20 6"/></svg>',
+  eye:'<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>',
+  trophy:'<svg viewBox="0 0 24 24"><path d="M7 4h10v5a5 5 0 0 1-10 0V4zM7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3M9 20h6M12 15v5"/></svg>',
+  bulb:'<svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 1 4 10.5c-.6.6-1 1.3-1 2.2H9c0-.9-.4-1.6-1-2.2A6 6 0 0 1 12 3z"/></svg>',
+  share:'<svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.6"/><circle cx="6" cy="12" r="2.6"/><circle cx="18" cy="19" r="2.6"/><path d="M8.3 10.8l7.4-4.3M8.3 13.2l7.4 4.3"/></svg>',
+  medal:'<svg viewBox="0 0 24 24"><circle cx="12" cy="14" r="5"/><path d="M12 12v0M8.5 9.5L5 3h5l2 4M15.5 9.5L19 3h-5l-2 4"/></svg>'
+};
+
+/* ==========================================================================
+   HELPERS
+   ========================================================================== */
+function $(id){return document.getElementById(id);}
+function el(){return document.getElementById("app");}
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+function shuffle(a){a=a.slice();for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=a[i];a[i]=a[j];a[j]=t;}return a;}
+function pick(a){return a[Math.floor(Math.random()*a.length)];}
+function mkCode(){var L="ABCDEFGHJKMNPQRSTUVWXYZ";var s="";for(var i=0;i<4;i++)s+=L[Math.floor(Math.random()*L.length)];return s;}
+function byId(id){for(var i=0;i<BANK.length;i++)if(BANK[i].id===id)return BANK[i];return null;}
+
+/* draw a fixed set for a game with a real difficulty ARC:
+   warmups, then a middle block, then a danger finish. Randomised within
+   each tier, so the same category still feels fresh every game while always
+   ending on the revealing questions. */
+function drawQuestions(cat){
+  var pool=BANK.filter(function(q){return q.cat===cat;});
+  var t1=shuffle(pool.filter(function(q){return q.tier===1;}));
+  var t2=shuffle(pool.filter(function(q){return q.tier===2;}));
+  var t3=shuffle(pool.filter(function(q){return q.tier===3;}));
+  // target shape of the round (warmup / middle / danger)
+  var want=[3,4,3];
+  var buckets=[t1,t2,t3];
+  var chosen=[];
+  for(var i=0;i<3;i++)chosen=chosen.concat(buckets[i].slice(0,want[i]));
+  // if any tier was short, backfill from the leftovers to hit ROUND_SIZE
+  if(chosen.length<ROUND_SIZE){
+    var used={};chosen.forEach(function(q){used[q.id]=1;});
+    var rest=shuffle(t1.concat(t2).concat(t3).filter(function(q){return !used[q.id];}));
+    chosen=chosen.concat(rest.slice(0,ROUND_SIZE-chosen.length));
+  }
+  chosen=chosen.slice(0,ROUND_SIZE);
+  // keep the tier arc order (warmups first, danger last) after backfill
+  chosen.sort(function(a,b){return a.tier-b.tier;});
+  return chosen.map(function(q){return q.id;});
+}
+
+/* scoring: choice/this exact match = 100; slide = closeness */
+function scoreOne(q,truth,guess){
+  if(truth==null||guess==null)return 0;
+  if(q.type==="slide"){var d=Math.abs(truth-guess);return Math.max(0,100-d);}
+  return truth===guess?100:0;
+}
+function verdictFor(pts){
+  if(pts>=90)return{tag:"nailed",label:"Nailed it"};
+  if(pts>=50)return{tag:"close",label:"So close"};
+  return{tag:"miss",label:"Not even close"};
+}
+
+/* ==========================================================================
+   NETWORK (with DEMO fallback that simulates a partner locally)
+   ========================================================================== */
+function call(action,payload){
+  if(DEMO)return demoCall(action,payload);
+  return fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({code:S.code,action:action,payload:payload})})
+    .then(function(r){if(!r.ok)throw new Error("net");return r.json();});
+}
+/* DEMO: keeps a room in memory; auto-fills the "partner" so you can play solo-test */
+function demoCall(action,payload){
+  return new Promise(function(res){
+    setTimeout(function(){
+      if(action==="create"){
+        S.demoRoom={code:S.code,category:payload.category,questionIds:payload.questionIds,
+          playerA:{name:payload.hostName,answers:{},guesses:{},done:false},
+          playerB:{name:"",answers:{},guesses:{},done:false}};
+        res({room:S.demoRoom});return;
+      }
+      var r=S.demoRoom;
+      if(action==="join"){r.playerB.name=payload.name;res({room:r});return;}
+      if(action==="write"){
+        var slot=payload.side==="A"?r.playerA:r.playerB;
+        merge(slot.answers,payload.answers);merge(slot.guesses,payload.guesses);
+        if(payload.done)slot.done=true;
+        // simulate the partner finishing shortly after you, so reveal can unlock
+        var other=payload.side==="A"?r.playerB:r.playerA;
+        if(!other.name)other.name=payload.side==="A"?"Partner":"Host";
+        simulatePartner(other,r.questionIds);
+        res({room:r});return;
+      }
+      if(action==="poll"){res({room:r});return;}
+      res({room:r});
+    },DEMO?450:0);
+  });
+}
+function merge(target,src){if(!src)return;for(var k in src){if(src[k]!=null&&src[k]!=="")target[k]=src[k];}}
+function simulatePartner(p,qids){
+  qids.forEach(function(id){
+    var q=byId(id);
+    if(p.answers[id]==null)p.answers[id]=randAns(q);
+    if(p.guesses[id]==null)p.guesses[id]=randAns(q);
+  });
+  p.done=true;
+}
+function randAns(q){if(q.type==="slide")return Math.floor(Math.random()*101);return Math.floor(Math.random()*q.opts.length);}
+
+/* ==========================================================================
+   RENDER ROUTER
+   ========================================================================== */
+function render(){
+  var v={home:vHome,create:vCreate,join:vJoin,wait:vWait,category:vCategory,
+    quiz:vQuiz,waitReveal:vWaitReveal,reveal:vReveal,final:vFinal}[S.screen];
+  el().innerHTML=v();
+  el().firstChild&&el().firstChild.classList&&el().firstChild.classList.add("fade");
+  bind();
+}
+function shell(count,inner,foot){
+  return '<div class="top">'+
+    '<div class="brand">'+IC.spark+'<span>Know Me</span></div>'+
+    (count?'<div class="count">'+count+'</div>':'<div></div>')+
+    '</div>'+
+    '<div class="stage">'+inner+'</div>'+
+    '<div class="foot">'+(foot||"")+'</div>';
+}
+
+/* ---- HOME ---- */
+function vHome(){
+  return shell("",
+    '<div>'+
+      '<p class="eyebrow">The two-player guessing game</p>'+
+      '<h1>How well do you<br>really know<br>each other?</h1>'+
+      '<p class="lead" style="margin-top:14px">One of you hosts, the other joins with the code. Answer about yourself, then guess your partner. No takebacks.</p>'+
+    '</div>',
+    '<button class="btn" data-go="create">'+IC.plus+'Start a game</button>'+
+    '<button class="btn ghost" data-go="join" style="margin-top:10px">'+IC.users+'Join with a code</button>'
+  );
+}
+
+/* ---- CREATE (name) ---- */
+function vCreate(){
+  return shell("",
+    '<div>'+
+      '<p class="eyebrow">Step 1 of 2</p>'+
+      '<h2>What should we call you?</h2>'+
+      '<p class="lead" style="margin:8px 0 16px">Your partner will see this name.</p>'+
+      '<input class="name-in" id="nm" placeholder="Your name" maxlength="14" autocomplete="off" />'+
+      '<p class="err" id="er"></p>'+
+    '</div>',
+    '<button class="btn" id="mk">'+IC.arrow+'Next: pick a vibe</button>'+
+    '<button class="btn ghost" data-go="home" style="margin-top:10px">Back</button>'
+  );
+}
+
+/* ---- CATEGORY ---- */
+function vCategory(){
+  return shell("",
+    '<div>'+
+      '<p class="eyebrow">Step 2 of 2</p>'+
+      '<h2>Pick your vibe</h2>'+
+      '<p class="lead" style="margin:8px 0 16px">Both of you get the same questions.</p>'+
+      '<div class="cats">'+
+        cat("wholesome","heart","Wholesome","Cosy, kind, easy laughs")+
+        cat("spicy","flame","Spicy","Toxic traits and hot takes")+
+        cat("chaotic","dice","Chaotic","Unhinged hypotheticals")+
+      '</div>'+
+      '<p class="err" id="catErr"></p>'+
+    '</div>',
+    '<button class="btn ghost" data-go="create">Back</button>'
+  );
+}
+function cat(id,ic,name,desc){
+  return '<div class="cat '+id+'" data-cat="'+id+'">'+
+    '<div class="ic">'+IC[ic]+'</div>'+
+    '<div class="txt"><b>'+name+'</b><span>'+desc+'</span></div>'+
+    IC.arrow.replace('<svg','<svg style="width:20px;height:20px;stroke:var(--muted);fill:none;stroke-width:2"')+
+  '</div>';
+}
+
+/* ---- WAIT (host shows code) ---- */
+function vWait(){
+  var joined=S.room&&S.room.playerB&&S.room.playerB.name;
+  return shell("",
+    '<div>'+
+      '<p class="eyebrow">Share this with your partner</p>'+
+      '<div class="codebox">'+
+        '<div class="lbl">Game code</div>'+
+        '<div class="code">'+esc(S.code)+'</div>'+
+      '</div>'+
+      '<p class="hint" style="margin-top:14px">They open the app, tap Join, and enter these 4 letters. Or send them the link.</p>'+
+      '<div class="center" style="margin-top:18px">'+
+        (joined
+          ? '<p class="lead"><b style="color:var(--b)">'+esc(S.room.playerB.name)+'</b> is in. Let\'s go.</p>'
+          : '<div class="spin"></div><p class="hint" style="margin-top:12px">Waiting for them to join...</p>')+
+      '</div>'+
+    '</div>',
+    joined
+      ? '<button class="btn" id="startHost">'+IC.arrow+'Start answering</button>'
+      : '<button class="btn ghost" id="copy">Copy invite link</button>'
+  );
+}
+
+/* ---- JOIN (code + name) ---- */
+function vJoin(){
+  return shell("",
+    '<div>'+
+      '<p class="eyebrow">Join a game</p>'+
+      '<h2>Enter the code</h2>'+
+      '<p class="lead" style="margin:8px 0 16px">Ask your partner for their 4 letters.</p>'+
+      '<input class="code-in" id="cd" placeholder="CODE" maxlength="4" autocomplete="off" value="'+esc(S.code)+'" />'+
+      '<input class="name-in" id="nm" placeholder="Your name" maxlength="14" autocomplete="off" style="margin-top:10px" />'+
+      '<p class="err" id="er"></p>'+
+    '</div>',
+    '<button class="btn mint" id="jn">'+IC.check+'Join game</button>'+
+    '<button class="btn ghost" data-go="home" style="margin-top:10px">Back</button>'
+  );
+}
+
+/* ---- QUIZ ---- */
+function vQuiz(){
+  var q=byId(S.qids[S.idx]);
+  var total=S.qids.length;
+  var about=S.phase==="answer"?"about you":"about "+esc(partnerName());
+  var head=S.phase==="answer"?"Answer honestly":"Guess their answer";
+  var pct=Math.round((S.idx/total)*100);
+  var body;
+  if(q.type==="slide"){
+    var cur=(S.phase==="answer"?S.answers:S.guesses)[q.id];
+    if(cur==null)cur=50;
+    body='<div class="slide-wrap">'+
+      '<div class="slide-val" id="sv">'+cur+'</div>'+
+      '<input type="range" min="0" max="100" value="'+cur+'" id="sl" />'+
+      '<div class="slide-ends"><span>'+esc(q.lo)+'</span><span>'+esc(q.hi)+'</span></div>'+
+    '</div>';
+  }else{
+    var chosen=(S.phase==="answer"?S.answers:S.guesses)[q.id];
+    body='<div class="opts">'+q.opts.map(function(o,i){
+      return '<button class="opt'+(chosen===i?' sel':'')+'" data-opt="'+i+'"><span class="dot"></span>'+esc(o)+'</button>';
+    }).join("")+'</div>';
+  }
+  return shell((S.idx+1)+" / "+total,
+    '<div>'+
+      '<div class="bar"><i style="width:'+pct+'%"></i></div>'+
+      '<p class="eyebrow" style="margin:16px 0 4px">'+head+' · '+about+'</p>'+
+      '<h2>'+esc(q.q)+'</h2>'+
+      '<div style="margin-top:18px">'+body+'</div>'+
+    '</div>',
+    '<button class="btn" id="nextq">'+(S.idx+1===total?(S.phase==="answer"?"Now guess them":"See results"):"Next")+IC.arrow+'</button>'
+  );
+}
+function partnerName(){
+  if(!S.room)return "them";
+  return S.side==="A"?(S.room.playerB.name||"them"):(S.room.playerA.name||"them");
+}
+
+/* ---- WAIT FOR REVEAL ---- */
+function vWaitReveal(){
+  return shell("",
+    '<div class="center">'+
+      '<div class="spin"></div>'+
+      '<h2 style="margin-top:18px">You\'re done!</h2>'+
+      '<p class="lead" style="margin-top:8px">Waiting for '+esc(partnerName())+' to finish. The results unlock the moment you\'re both done.</p>'+
+    '</div>',
+    '<button class="btn ghost" id="checkAgain">'+IC.eye+'Check if they\'re ready</button>'
+  );
+}
+
+/* ---- REVEAL (dramatic, one at a time) ---- */
+function vReveal(){
+  var pairs=buildPairs();
+  var i=S.revealIdx;
+  var total=pairs.length;
+  var p=pairs[i];
+  var v=verdictFor(p.you.pts);           // "you" = how well I guessed my partner
+  var mePts=Math.round(p.you.pts);
+  var qq=p.q;
+  var truthStr=ansStr(qq,p.you.truth);
+  var guessStr=ansStr(qq,p.you.guess);
+  return shell("Reveal "+(i+1)+" / "+total,
+    '<div class="verdict">'+
+      '<span class="tag '+v.tag+'">'+v.label+'</span>'+
+      '<div class="qtext">'+esc(qq.q)+'</div>'+
+    '</div>'+
+    '<div class="rowpair">'+
+      '<div class="ans guess"><span class="who">You guessed</span>'+esc(guessStr)+'</div>'+
+      '<div class="ans truth"><span class="who">'+esc(partnerName())+' said</span>'+esc(truthStr)+'</div>'+
+    '</div>',
+    '<button class="btn" id="nextReveal">'+
+      (i+1===total?"See your score"+IC.trophy:"Next reveal"+IC.arrow)+
+    '</button>'
+  );
+}
+function ansStr(q,val){
+  if(val==null)return "—";
+  if(q.type==="slide")return String(val)+" / 100";
+  return q.opts[val];
+}
+
+/* ---- FINAL CARD ---- */
+function vFinal(){
+  var pairs=buildPairs();
+  var youTot=0,partTot=0;
+  pairs.forEach(function(p){youTot+=p.you.pts;partTot+=p.them.pts;});
+  var youAvg=Math.round(youTot/pairs.length);
+  var partAvg=Math.round(partTot/pairs.length);
+  var combined=Math.round((youAvg+partAvg)/2);
+  var band=combined>=75?"high":combined>=45?"mid":"low";
+  var meName=S.side==="A"?(S.room.playerA.name||"You"):(S.room.playerB.name||"You");
+  var themName=partnerName();
+  var title=pick(CARD_TITLES[band]);
+  var sub=pick(CARD_SUBS[band]);
+  var insights=buildInsights(pairs,youAvg,partAvg,meName,themName);
+  var grade=gradeFor(combined);
+
+  // player of the match: who read the other better
+  var gap=youAvg-partAvg;
+  var potm;
+  if(Math.abs(gap)<8){
+    potm='<div class="potm">'+IC.medal+'<span>'+esc(pick(POTM_TIE))+'</span></div>';
+  }else{
+    var winner=gap>0?meName:themName, loser=gap>0?themName:meName;
+    potm='<div class="potm">'+IC.trophy+'<span>'+fill(pick(POTM_WIN),{w:'<b>'+esc(winner)+'</b>',l:esc(loser)})+'</span></div>';
+  }
+
+  // shareable brag/shame line, tuned to band
+  var shareLine=fill(pick(SHARE_LINES[band]),{me:esc(meName),them:esc(themName),score:combined});
+
+  // the closing call-to-action, funny and score-aware
+  var cta=fill(pick(CTA_LINES[band]),{me:esc(meName),them:esc(themName)});
+
+  return shell("",
+    '<div class="finalcard">'+
+      '<div class="grade g-'+band+'">'+grade+'</div>'+
+      '<div class="score" style="font-size:2.4rem;margin-top:2px">'+combined+'%</div>'+
+      '<div class="title">'+esc(title)+'</div>'+
+      '<p class="sub">'+esc(sub)+'</p>'+
+      potm+
+      '<div class="split">'+
+        '<div class="p pa"><b>'+youAvg+'%</b><span>'+esc(meName)+' knew '+esc(themName)+'</span></div>'+
+        '<div class="p pb"><b>'+partAvg+'%</b><span>'+esc(themName)+' knew '+esc(meName)+'</span></div>'+
+      '</div>'+
+      '<div class="insights">'+insights.map(function(t){
+        return '<div class="insight">'+IC.bulb+'<span>'+esc(t)+'</span></div>';
+      }).join("")+'</div>'+
+      '<div class="sharecard" id="scard">'+
+        '<div class="sc-label">Your verdict, ready to send</div>'+
+        esc(shareLine)+
+      '</div>'+
+    '</div>'+
+    '<p class="cta-note">'+cta+'</p>',
+    '<button class="btn" id="share">'+IC.share+'Share the verdict</button>'+
+    '<button class="btn ghost" id="again" style="margin-top:10px">'+IC.dice+'Rematch</button>'
+  );
+}
+
+/* letter grade from combined score */
+function gradeFor(n){
+  if(n>=90)return "S";
+  if(n>=80)return "A";
+  if(n>=65)return "B";
+  if(n>=50)return "C";
+  if(n>=35)return "D";
+  return "F";
+}
+
+/* build both directions of guessing */
+function buildPairs(){
+  var A=S.room.playerA,B=S.room.playerB;
+  return S.qids.map(function(id){
+    var q=byId(id);
+    // my direction: I (S.side) guessed my partner
+    var meSlot=S.side==="A"?A:B, themSlot=S.side==="A"?B:A;
+    var youPts=scoreOne(q,themSlot.answers[id],meSlot.guesses[id]);
+    var themPts=scoreOne(q,meSlot.answers[id],themSlot.guesses[id]);
+    return {q:q,
+      you:{pts:youPts,truth:themSlot.answers[id],guess:meSlot.guesses[id]},
+      them:{pts:themPts,truth:meSlot.answers[id],guess:themSlot.guesses[id]}};
+  });
+}
+
+/* ==========================================================================
+   HUMOUR ENGINE (offline, pattern-detecting)
+   The laughs come from pointing at the REAL result, not generic quips.
+   Each detector fires only when its pattern is actually true this game,
+   and pulls from a pool so repeat games stay fresh.
+   ========================================================================== */
+function fill(t,map){return t.replace(/\{(\w+)\}/g,function(_,k){return map[k]!=null?map[k]:"";});}
+function shorten(s){s=String(s).replace(/[?.!]+$/,"");return s.length>40?s.slice(0,38)+"…":s;}
+function optText(q,val){if(val==null)return "—";if(q.type==="slide")return val+"/100";return q.opts[val];}
+
+function buildInsights(pairs,youAvg,partAvg,meName,themName){
+  var lines=[];var used={};
+  function add(pool,map){
+    for(var tries=0;tries<8;tries++){var t=pick(pool);if(!used[t]){used[t]=1;lines.push(fill(t,map||{}));return;}}
+  }
+  var me=meName||"You",them=themName||"them";
+  var gap=youAvg-partAvg;
+
+  // DETECTOR 1: headline dynamic (always fires)
+  if(youAvg>=80&&partAvg>=80){add(BANK_BOTH_HIGH,{me:me,them:them});}
+  else if(youAvg<=35&&partAvg<=35){add(BANK_BOTH_LOW,{me:me,them:them});}
+  else if(Math.abs(gap)>=25){var k=gap>0?me:them,c=gap>0?them:me;add(BANK_LOPSIDED,{knower:k,clueless:c});}
+  else{add(BANK_MIDDLING,{me:me,them:them});}
+
+  // DETECTOR 2: confidently wrong (a choice/this they got backwards)
+  var cw=pairs.filter(function(p){return p.q.type!=="slide"&&p.you.pts===0;});
+  if(cw.length){var x=pick(cw);add(BANK_CONF_WRONG,{me:me,them:them,q:shorten(x.q.q),guess:optText(x.q,x.you.guess),truth:optText(x.q,x.you.truth)});}
+
+  // DETECTOR 3: slider self-image gap
+  var sm=pairs.filter(function(p){return p.q.type==="slide"&&Math.abs((p.you.truth||0)-(p.you.guess||0))>=40;});
+  if(sm.length){var s=pick(sm);var hi=(s.you.guess>s.you.truth);add(hi?BANK_SLIDER_OVER:BANK_SLIDER_UNDER,{me:me,them:them,q:shorten(s.q.q)});}
+
+  // DETECTOR 4: one read the other way better
+  if(gap<=-30){add(BANK_OUTREAD,{me:me,them:them});}
+  else if(gap>=30){add(BANK_OUTREAD_REV,{me:me,them:them});}
+
+  // DETECTOR 5: a perfect single hit
+  var best=pairs.slice().sort(function(a,b){return b.you.pts-a.you.pts;})[0];
+  if(best&&best.you.pts>=95&&best.q.type!=="slide"){add(BANK_DEAD_ON,{q:shorten(best.q.q),them:them});}
+
+  // DETECTOR 6: both whiffed the same question
+  var mm=pairs.filter(function(p){return p.you.pts<40&&p.them.pts<40;});
+  if(mm.length){add(BANK_MUTUAL_MISS,{q:shorten(pick(mm).q.q),me:me,them:them});}
+
+  // always end on a kicker
+  add(BANK_KICKER,{me:me,them:them});
+  return lines.slice(0,4);
+}
+
+var BANK_BOTH_HIGH=[
+  "You both scored suspiciously high. Either you're soulmates or you rehearsed this in the car.",
+  "This is a lot of correct answers for two people who argue about the dishwasher.",
+  "You know each other this well and STILL leave passive-aggressive notes. Fascinating.",
+  "Genuinely alarming accuracy. One of you is definitely reading the other's diary.",
+  "Both nearly perfect. Nothing left to discover, which is honestly a little sad. Kidding."
+];
+var BANK_BOTH_LOW=[
+  "You both bombed. Introduce yourselves. Start slow.",
+  "Two people, zero clue. It's almost sweet how little you've been listening.",
+  "This score suggests you met approximately yesterday.",
+  "Neither of you knew the other. The audacity to share a life anyway.",
+  "A double disaster. Frame this. It's the worst you'll ever be, hopefully."
+];
+var BANK_LOPSIDED=[
+  "{knower} clearly does the emotional labour of remembering things. {clueless} was guessing with vibes.",
+  "{knower} knows {clueless} inside out. {clueless} thinks {knower}'s favourite colour is 'nice'.",
+  "One of you paid attention. It was {knower}. It was not {clueless}.",
+  "{knower} has a whole dossier. {clueless} has a shrug and a smile.",
+  "{clueless}, mate. {knower} deserved better than those guesses."
+];
+var BANK_MIDDLING=[
+  "You nailed the easy stuff and completely lost the plot on the rest. Very on brand.",
+  "Solidly average, which is the most romantic thing of all, apparently.",
+  "You know each other's snack orders but not each other's souls. Priorities.",
+  "Middling. You've clearly learned the surface and stopped reading.",
+  "Half right, half tragic. A functioning relationship, basically."
+];
+var BANK_CONF_WRONG=[
+  "You said {them} would pick \"{guess}\". They picked \"{truth}\". Not close. Not adjacent.",
+  "On \"{q}\" you confidently went \"{guess}\". They went \"{truth}\". Bold. Wrong.",
+  "\"{guess}\"? For {them}? They said \"{truth}\". Do you two live together?",
+  "You were certain it was \"{guess}\". It was \"{truth}\". This is why you lose at charades.",
+  "\"{q}\" — you guessed \"{guess}\", reality said \"{truth}\". A swing and a full miss."
+];
+var BANK_SLIDER_OVER=[
+  "You wildly overestimated {them} on \"{q}\". They're far more boring than you think. Or hoped.",
+  "On \"{q}\" you set the slider way too high. {them} is not that person. At all.",
+  "You gave {them} way more credit than they gave themselves on \"{q}\". Sweet, but no."
+];
+var BANK_SLIDER_UNDER=[
+  "You lowballed {them} hard on \"{q}\". They're spicier than you gave them credit for.",
+  "On \"{q}\" you underestimated {them} by a mile. They contain multitudes, apparently.",
+  "You think {them} is milder than they are. \"{q}\" says otherwise. Watch out."
+];
+var BANK_OUTREAD=[
+  "{them} read you like a large-print book. You read them like it was in Latin.",
+  "{them} clocked your every move. You met them for the first time tonight, seemingly.",
+  "{them} knows your whole deal. You know their name and roughly their height."
+];
+var BANK_OUTREAD_REV=[
+  "You knew {them} cold. {them} guessed you like a stranger at a bus stop.",
+  "You aced them. They fumbled you completely. Savour this. It won't last.",
+  "You read {them} perfectly. They read you like a menu in the dark."
+];
+var BANK_DEAD_ON=[
+  "Dead on for \"{q}\". You've heard {them} rant about that exactly one thousand times.",
+  "Perfect hit on \"{q}\". Some things you just can't un-know about a person.",
+  "Nailed \"{q}\" without blinking. That one wasn't even a challenge, was it."
+];
+var BANK_MUTUAL_MISS=[
+  "You BOTH whiffed \"{q}\". A rare moment of unity: shared, total ignorance.",
+  "Neither of you got \"{q}\". At least you're wrong together. Teamwork.",
+  "\"{q}\" defeated you both. Add it to the list of things you'll never discuss."
+];
+var BANK_KICKER=[
+  "Screenshot this before someone claims it's rigged.",
+  "Rematch. Loser makes the tea and admits defeat out loud.",
+  "Run it back on a spicier vibe. See how brave you really are.",
+  "The danger round doesn't lie. It just laughs.",
+  "Best of three, and no denying the results this time.",
+  "Play again. Redemption is one bad guess away."
+];
+
+/* ---- player of the match ---- */
+var POTM_WIN=[
+  "Player of the match: {w}. {l}, sit down and take notes.",
+  "{w} wins the 'I actually listen' award. {l} was busy nodding along.",
+  "{w} takes it. {l} guessed like they'd met their partner at a bus stop.",
+  "MVP: {w}. {l} put up a valiant, deeply wrong effort.",
+  "{w} clearly pays attention. {l} clearly does not. The trophy is decided."
+];
+var POTM_TIE=[
+  "Dead heat. You're equally attentive, or equally guessing. Beautiful either way.",
+  "It's a tie. Nobody gets to win the 'I know you better' argument tonight.",
+  "Perfectly matched. Suspiciously so. Are you sure you didn't peek?",
+  "A draw. You're on exactly the same wavelength, for better or worse."
+];
+
+/* ---- shareable brag/shame line (auto-copies) ---- */
+var SHARE_LINES={
+  high:[
+    "{me} & {them} scored {score}% on Know Me. Basically telepathic. Beat that.",
+    "We got {score}% on Know Me and honestly it's a bit much. {me} & {them}, unbeatable.",
+    "{score}% on Know Me. {me} & {them} know each other scarily well. Your move."
+  ],
+  mid:[
+    "{me} & {them} got {score}% on Know Me. Room for improvement, comedy guaranteed. Try to beat us.",
+    "We scored {score}% on Know Me. Solidly mediocre and proud. Can you two do better?",
+    "{score}% on Know Me for {me} & {them}. We know the snacks, not the souls. Your turn."
+  ],
+  low:[
+    "{me} & {them} scored {score}% on Know Me. We may be strangers. Please beat this, it's embarrassing.",
+    "We got {score}% on Know Me. Genuinely who ARE we. Bet you can't do worse.",
+    "{score}% on Know Me. {me} & {them}, two people who clearly just met. Come laugh at us."
+  ]
+};
+
+/* ---- closing call-to-action, score-aware ---- */
+var CTA_LINES={
+  high:[
+    "Now <b>share it</b> and dare another couple to top that. Spoiler: they can't.",
+    "Send this to someone smug and watch them fail the rematch.",
+    "<b>Share the flex.</b> Then run it back before your luck runs out."
+  ],
+  mid:[
+    "<b>Share it</b>, then rematch and fight for a better grade. You've got one in you.",
+    "Not bad, not great. <b>Share it</b> and challenge a couple who thinks they're better.",
+    "Middle of the table. <b>Rematch</b> for glory, or share it and drag a friend in."
+  ],
+  low:[
+    "Yikes. <b>Share the shame</b> and make some friends feel superior. Then rematch immediately.",
+    "This was rough. <b>Share it</b> for sympathy, then rematch and salvage your dignity.",
+    "Bleak stuff. <b>Rematch now</b> before anyone sees, or share it and own the disaster."
+  ]
+};
+
+/* ==========================================================================
+   BIND (event handlers per screen)
+   ========================================================================== */
+function bind(){
+  // generic nav
+  Array.prototype.forEach.call(document.querySelectorAll("[data-go]"),function(b){
+    b.onclick=function(){S.screen=b.getAttribute("data-go");render();};
+  });
+
+  if(S.screen==="create"){
+    $("mk").onclick=function(){
+      var nm=$("nm").value.trim();
+      if(!nm){$("er").textContent="Pop your name in first.";return;}
+      S.name=nm;S.screen="category";render();
+    };
+  }
+
+  if(S.screen==="category"){
+    Array.prototype.forEach.call(document.querySelectorAll("[data-cat]"),function(c){
+      c.onclick=function(){
+        S.category=c.getAttribute("data-cat");
+        S.code=mkCode();S.side="A";S.qids=drawQuestions(S.category);
+        c.style.opacity="0.5";                         // instant tap feedback
+        call("create",{category:S.category,questionIds:S.qids,hostName:S.name})
+          .then(function(res){
+            if(!res||!res.room)throw new Error("no room");
+            S.room=res.room;S.screen="wait";render();pollWait();
+          })
+          .catch(function(){
+            c.style.opacity="";
+            showCatError();
+          });
+      };
+    });
+  }
+
+  if(S.screen==="wait"){
+    if($("copy"))$("copy").onclick=function(){
+      var link=location.origin+location.pathname+"?c="+S.code;
+      copy(link);$("copy").textContent="Link copied!";
+    };
+    if($("startHost"))$("startHost").onclick=function(){beginQuiz();};
+  }
+
+  if(S.screen==="join"){
+    $("jn").onclick=function(){
+      var cd=$("cd").value.trim().toUpperCase();
+      var nm=$("nm").value.trim();
+      if(cd.length!==4){$("er").textContent="Codes are 4 letters.";return;}
+      if(!nm){$("er").textContent="Add your name too.";return;}
+      S.code=cd;S.name=nm;S.side="B";
+      // in DEMO there is no host room, so fabricate one to let single-device testing work
+      if(DEMO&&!S.demoRoom){
+        S.qids=drawQuestions(pick(["wholesome","spicy","chaotic"]));
+        S.demoRoom={code:cd,category:"demo",questionIds:S.qids,
+          playerA:{name:"Host",answers:{},guesses:{},done:false},
+          playerB:{name:"",answers:{},guesses:{},done:false}};
+      }
+      call("join",{name:nm}).then(function(res){
+        if(!res||!res.room){$("er").textContent="Can't find that game. Check the code.";return;}
+        S.room=res.room;S.qids=res.room.questionIds;S.category=res.room.category;
+        beginQuiz();
+      }).catch(function(){
+        if($("er"))$("er").textContent="Can't find that game. Check the code.";
+      });
+    };
+  }
+
+  if(S.screen==="quiz"){
+    var q=byId(S.qids[S.idx]);
+    if(q.type==="slide"){
+      var sl=$("sl");
+      sl.oninput=function(){$("sv").textContent=sl.value;};
+    }else{
+      Array.prototype.forEach.call(document.querySelectorAll("[data-opt]"),function(o){
+        o.onclick=function(){
+          var i=parseInt(o.getAttribute("data-opt"),10);
+          (S.phase==="answer"?S.answers:S.guesses)[q.id]=i;
+          Array.prototype.forEach.call(document.querySelectorAll(".opt"),function(x){x.classList.remove("sel");});
+          o.classList.add("sel");
+        };
+      });
+    }
+    $("nextq").onclick=function(){
+      var store=S.phase==="answer"?S.answers:S.guesses;
+      if(q.type==="slide")store[q.id]=parseInt($("sl").value,10);
+      if(store[q.id]==null){/* require a pick for choice */ if(q.type!=="slide"){flash($("nextq"));return;} }
+      advanceQuiz();
+    };
+  }
+
+  if(S.screen==="waitReveal"){
+    $("checkAgain").onclick=function(){pollReveal(true);};
+  }
+
+  if(S.screen==="reveal"){
+    $("nextReveal").onclick=function(){
+      var total=S.qids.length;
+      if(S.revealIdx+1>=total){S.screen="final";render();}
+      else{S.revealIdx++;render();}
+    };
+  }
+
+  if(S.screen==="final"){
+    $("again").onclick=function(){resetGame();};
+    if($("share"))$("share").onclick=function(){
+      var text=$("scard")?$("scard").textContent.replace("Your verdict, ready to send","").trim():"";
+      var link=location.origin+location.pathname;
+      var payload=text+"\n\nPlay Know Me: "+link;
+      if(navigator.share){
+        navigator.share({title:"Know Me",text:text,url:link}).catch(function(){});
+      }else{
+        copy(payload);
+        $("share").innerHTML=IC.check+"Copied! Go paste it";
+      }
+    };
+  }
+}
+
+/* ==========================================================================
+   FLOW CONTROL
+   ========================================================================== */
+function beginQuiz(){
+  S.phase="answer";S.idx=0;S.answers={};S.guesses={};
+  S.screen="quiz";render();
+}
+function advanceQuiz(){
+  var total=S.qids.length;
+  if(S.idx+1<total){S.idx++;render();return;}
+  // finished a phase
+  if(S.phase==="answer"){
+    S.phase="guess";S.idx=0;render();return;
+  }
+  // finished guessing -> write everything, go wait for reveal
+  submitAll();
+}
+function submitAll(){
+  call("write",{side:S.side,answers:S.answers,guesses:S.guesses,done:true})
+    .then(function(res){
+      S.room=res.room;               // TRUST the merged room (no re-fetch)
+      if(bothDone()){S.revealIdx=0;S.screen="reveal";render();}
+      else{S.screen="waitReveal";render();pollReveal(false);}
+    })
+    .catch(function(){                // network hiccup: retry once shortly
+      setTimeout(submitAll,1500);
+    });
+}
+function bothDone(){return S.room&&S.room.playerA.done&&S.room.playerB.done;}
+
+var waitTimer=null,revealTimer=null;
+function pollWait(){
+  clearTimeout(waitTimer);
+  if(S.screen!=="wait")return;
+  call("poll",{}).then(function(res){
+    S.room=res.room;
+    if(S.screen==="wait"){render();
+      if(!(S.room.playerB&&S.room.playerB.name))waitTimer=setTimeout(pollWait,2500);
+    }
+  }).catch(function(){
+    if(S.screen==="wait")waitTimer=setTimeout(pollWait,3000);
+  });
+}
+function pollReveal(manual){
+  clearTimeout(revealTimer);
+  call("poll",{}).then(function(res){
+    S.room=res.room;
+    if(bothDone()){S.revealIdx=0;S.screen="reveal";render();return;}
+    if(S.screen==="waitReveal"&&!manual)revealTimer=setTimeout(function(){pollReveal(false);},2500);
+    if(manual)render();
+  }).catch(function(){
+    if(S.screen==="waitReveal"&&!manual)revealTimer=setTimeout(function(){pollReveal(false);},3000);
+  });
+}
+function resetGame(){
+  clearTimeout(waitTimer);clearTimeout(revealTimer);
+  S.demoRoom=null;
+  S.screen="home";S.code="";S.side=null;S.room=null;S.category=null;
+  S.qids=[];S.answers={};S.guesses={};S.idx=0;S.revealIdx=0;S.phase="answer";
+  render();
+}
+
+/* ==========================================================================
+   UTIL
+   ========================================================================== */
+function copy(t){
+  if(navigator.clipboard){navigator.clipboard.writeText(t);return;}
+  var i=document.createElement("input");i.value=t;document.body.appendChild(i);i.select();
+  try{document.execCommand("copy");}catch(e){}document.body.removeChild(i);
+}
+function flash(node){node.style.animation="none";void node.offsetWidth;node.style.animation="fade .3s ease";}
+function showCatError(){
+  var e=$("catErr");
+  if(e)e.textContent="Couldn't reach the server. Check your connection and try again.";
+}
+
+/* deep link ?c=CODE -> prefill join */
+(function(){
+  var m=location.search.match(/[?&]c=([A-Za-z]{4})/);
+  if(m){S.code=m[1].toUpperCase();S.screen="join";}
+})();
+
+render();
+</script>
+</body>
+</html>
