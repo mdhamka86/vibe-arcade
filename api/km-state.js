@@ -12,8 +12,8 @@
 //   UPSTASH_REDIS_REST_TOKEN
 // ============================================================================
 
-const REDIS_URL = process.env.UPSTASH_REDIS_REST_URL;
-const REDIS_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+const REDIS_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+const REDIS_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
 const TTL = 60 * 60 * 24; // 24h — games are ephemeral
 
 // ---- tiny Upstash REST helpers -------------------------------------------
