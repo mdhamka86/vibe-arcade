@@ -21,7 +21,7 @@
       "maxDuration": 10
     },
     "api/stewards.js": {
-      "maxDuration": 60
+      "maxDuration": 120
     },
     "api/trawl.js": {
       "maxDuration": 300
