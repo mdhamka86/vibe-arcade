@@ -187,6 +187,7 @@ const fmt=(n)=> (n==null||n==='')?'—':(typeof n==='number'?n.toLocaleString(un
 function GemCard({idea,ledgerId,onPass,onFlag,onTake}){
   const [busy,setBusy]=useState(false);
   const [taken,setTaken]=useState(false);
+  const [outcome,setOutcome]=useState(null); // 'passed' | 'flagged'
   const conv=(idea.conviction||'').toUpperCase();
   const convCls='conv-'+conv.replace(/[^A-Z]/gi,'');
   const dirCls=idea.direction==='BUY'?'b-buy':'b-sell';
@@ -209,10 +210,11 @@ function GemCard({idea,ledgerId,onPass,onFlag,onTake}){
       </div>
       <div className="levels">
         <div className="lvl"><div className="lk">Current</div><div className="lv">{fmt(idea.current_price)}</div></div>
-        <div className="lvl"><div className="lk">Entry</div><div className="lv ambr">{fmt(idea.entry)}</div></div>
+        <div className="lvl"><div className="lk">Entry</div><div className={"lv "+(idea.levels_broken?'red':'ambr')}>{fmt(idea.entry)}</div></div>
         <div className="lvl"><div className="lk">Target</div><div className="lv green">{fmt(idea.tp)}{idea.tpPct!=null&&<span className="dim" style={{fontSize:9}}> +{idea.tpPct}%</span>}</div></div>
         <div className="lvl"><div className="lk">Stop</div><div className="lv red">{fmt(idea.sl)}{idea.slPct!=null&&<span className="dim" style={{fontSize:9}}> -{idea.slPct}%</span>}</div></div>
       </div>
+      {idea.levels_recomputed && !idea.levels_broken && <div className="note" style={{marginTop:6}}><span className="steel">◆ LEVELS ADJUSTED</span> The desk's original levels were anchored to a stale price; these entry/target/stop have been recomputed around the real live price of {fmt(idea.current_price)}. Confirm on your chart.</div>}
       {Array.isArray(idea.signals)&&idea.signals.length>0&&
         <div className="signal-row">{idea.signals.map((s,i)=><span key={i} className="sig">{s}</span>)}</div>}
       <div className="thesis">{idea.reason}</div>
@@ -221,10 +223,14 @@ function GemCard({idea,ledgerId,onPass,onFlag,onTake}){
       <div className="note" style={{marginTop:10}}><Ic n="target"/> {idea.availability||'Confirm availability on your NOVA platform'}</div>
       {taken
         ? <div className="alertbox a-green" style={{marginTop:12,marginBottom:0}}><Ic n="check"/> Taken up. The desk will watch for {idea.ticker||idea.name} when you next sync your NOVA book, and carry its thesis and levels into the holding.</div>
+        : outcome==='passed'
+        ? <div className="alertbox a-amber" style={{marginTop:12,marginBottom:0}}>Passed. {idea.ticker||idea.name} moves to the shadow book, where the desk tracks how it would have done to learn from it.</div>
+        : outcome==='flagged'
+        ? <div className="alertbox a-amber" style={{marginTop:12,marginBottom:0}}>Noted as not on NOVA. The desk won't propose {idea.ticker||idea.name} again.</div>
         : <div className="row" style={{marginTop:12}}>
-            <button className="pri" disabled={busy} onClick={async()=>{setBusy(true); await onTake(ledgerId); setTaken(true); setBusy(false);}}><Ic n="check"/> Take position</button>
-            <button className="ghost" disabled={busy} onClick={async()=>{setBusy(true); await onPass(ledgerId); setBusy(false);}}><Ic n="x"/> Pass &amp; track</button>
-            <button className="ghost" disabled={busy} onClick={async()=>{setBusy(true); await onFlag(idea.ticker||idea.name); setBusy(false);}}>Not on NOVA</button>
+            <button className="pri" disabled={busy} onClick={async()=>{setBusy(true); try{ await onTake(ledgerId,idea); setTaken(true);}catch(e){alert(e.message);} setBusy(false);}}><Ic n="check"/> Take position</button>
+            <button className="ghost" disabled={busy} onClick={async()=>{setBusy(true); try{ await onPass(ledgerId,idea); setOutcome('passed');}catch(e){alert(e.message);} setBusy(false);}}><Ic n="x"/> Pass &amp; track</button>
+            <button className="ghost" disabled={busy} onClick={async()=>{setBusy(true); try{ await onFlag(idea.ticker||idea.name); setOutcome('flagged');}catch(e){alert(e.message);} setBusy(false);}}>Not on NOVA</button>
           </div>}
     </div>
   );
@@ -254,8 +260,8 @@ function Desk({state,refresh}){
     }catch(e){ alert(e.message); }
     setSeeding(false);
   };
-  const onPass=async(id)=>{ if(id) await eng('pass',{ideaLedgerId:id}); await refresh(); };
-  const onTake=async(id)=>{ if(id) await eng('takeup',{ideaLedgerId:id}); await refresh(); };
+  const onPass=async(id,idea)=>{ await eng('pass',{ideaLedgerId:id||null,idea:id?null:idea}); await refresh(); };
+  const onTake=async(id,idea)=>{ await eng('takeup',{ideaLedgerId:id||null,idea:id?null:idea}); await refresh(); };
   const onFlag=async(name)=>{ if(name){ await eng('flag',{name,available:false}); await refresh(); } };
   const ledgerIdFor=(idea)=> (ledger.slice().reverse().find(r=>r.idea && (r.idea.ticker===idea.ticker||r.idea.name===idea.name) && r.status==='offered')||{}).id;
 
