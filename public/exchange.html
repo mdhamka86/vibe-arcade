@@ -581,6 +581,7 @@ function Reviews({state,refresh}){
             {rv && <>
               {rv.level_note && <div className="alertbox a-amber" style={{marginTop:10,marginBottom:0}}><Ic n="target"/> {rv.level_note}</div>}
               <div className="thesis">{rv.reason}</div>
+              {(rv.sources||[]).length>0 && <div className="note" style={{marginTop:8}}><span className="steel">SOURCES{rv.source_convergence?` (${rv.source_convergence})`:''}</span> {(rv.sources||[]).join('  ·  ')}</div>}
               {rv.change_note && <div className="note" style={{marginTop:8}}><span className="steel">SINCE LAST REVIEW</span> {rv.change_note}</div>}
               {rv.hold_guidance&&<div className="note" style={{marginTop:8}}><span className="steel">HOLD GUIDANCE</span> {rv.hold_guidance}</div>}
               <div className="meta">
@@ -733,6 +734,7 @@ function Rebalance({state,refresh}){
             </div>
             <div className="meta">{v.sector&&<span className="steel">{v.sector}</span>}{v.weight&&<span className="dim">{v.weight} of book</span>}{v.exit_price&&v.exit_price!=='null'&&<span className="ambr" style={{fontWeight:600}}>exit ~{v.exit_price}</span>}</div>
             {v.reason && <div className="note" style={{marginTop:6}}>{v.reason}</div>}
+            {(v.sources||[]).length>0 && <div className="note" style={{marginTop:4}}><span className="steel">◆ SOURCES</span> {(v.sources||[]).join('  ·  ')}</div>}
           </div>
         ))}
         {p.next_step && <div className="alertbox a-green" style={{marginTop:8}}><span style={{fontWeight:600}}>Next step:</span> {p.next_step}</div>}
