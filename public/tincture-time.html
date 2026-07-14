@@ -90,6 +90,81 @@
 
   /* empty state */
   .empty{text-align:center;padding:56px 24px;color:var(--muted);}
+
+  /* More menu */
+  .moreRow{display:flex;align-items:center;gap:14px;width:100%;text-align:left;border:1px solid var(--line);}
+  .moreIc{color:var(--sage);flex-shrink:0;}
+  .moreBody{flex:1;min-width:0;}
+  .moreLabel{font-weight:650;font-size:15px;color:var(--sageDeep);}
+  .moreBlurb{font-size:12.5px;margin-top:1px;}
+  .moreArrow{color:var(--sageSoft);flex-shrink:0;}
+
+  /* stat cards (Stock + Sales) */
+  .statGrid{display:flex;gap:10px;margin-bottom:14px;}
+  .statCard{flex:1;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:15px 14px;text-align:center;}
+  .statCard.wide{flex:1.6;}
+  .statNum{font-size:26px;font-weight:700;color:var(--sageDeep);letter-spacing:-.5px;line-height:1;}
+  .statNum.small{font-size:19px;}
+  .statNum.pos{color:#3f7a43;}
+  .statNum.neg{color:var(--danger);}
+  .statLbl{font-size:11px;margin-top:6px;letter-spacing:.02em;}
+
+  /* low stock banner */
+  .lowBanner{display:flex;align-items:center;gap:9px;background:#fbf3e6;border:1px solid #e6cfa0;border-radius:var(--rs);padding:11px 13px;font-size:13px;color:#8a5a1f;font-weight:500;margin-bottom:14px;}
+
+  /* threshold setter */
+  .thresholdRow{display:flex;align-items:center;gap:8px;justify-content:center;margin-bottom:18px;}
+  .threshInp{width:54px;text-align:center;border:1px solid var(--line2);border-radius:8px;padding:5px;font-size:14px;font-weight:600;color:var(--sageDeep);}
+
+  /* stock rows */
+  .stockRow{display:flex;flex-direction:column;gap:9px;}
+  .stockTop{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+  .stockName{font-weight:650;font-size:15px;color:var(--sageDeep);}
+  .expTag{font-size:11px;font-weight:600;padding:2px 9px;border-radius:20px;white-space:nowrap;}
+  .expTag.ok{background:#e4efe0;color:#3f7a43;}
+  .expTag.soon{background:#fbf0dc;color:#9a6a2a;}
+  .expTag.exp{background:#f6e0da;color:#a6432f;}
+  .stockBar{height:7px;background:var(--surface2);border-radius:6px;overflow:hidden;}
+  .stockBarFill{height:100%;background:var(--sage);border-radius:6px;transition:width .3s;}
+  .stockNums{display:flex;gap:14px;font-size:12px;flex-wrap:wrap;}
+  .stockLeft{color:var(--sageDeep);font-size:13px;}
+
+  /* sales */
+  .btn.wide{width:100%;justify-content:center;margin-bottom:16px;}
+  .salesList{margin-top:6px;}
+  .saleRow{position:relative;display:flex;flex-direction:column;gap:5px;}
+  .saleTop{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding-right:24px;}
+  .saleWho{font-weight:650;font-size:14.5px;color:var(--sageDeep);}
+  .salePrice{font-weight:700;font-size:15px;color:#3f7a43;white-space:nowrap;}
+  .saleMeta{font-size:12px;line-height:1.4;}
+  .saleContact{font-size:11.5px;display:flex;align-items:center;gap:5px;}
+  .saleDel{position:absolute;top:12px;right:12px;width:22px;height:22px;border-radius:50%;background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center;padding:0;}
+  .saleDel:active{background:var(--line);}
+
+  /* sale form */
+  .saleForm{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:16px;display:flex;flex-direction:column;gap:13px;}
+  .formField{display:flex;flex-direction:column;gap:5px;}
+  .formField label{font-size:12px;font-weight:600;color:var(--muted);}
+  .formRow2{display:flex;gap:10px;}
+  .formRow2 .formField{flex:1;min-width:0;}
+  .formActions{display:flex;gap:9px;justify-content:flex-end;margin-top:2px;}
+  select.inp{appearance:none;-webkit-appearance:none;background:var(--surface2);}
+
+  /* batch record editor in cellar */
+  .recordBlock{border:1px solid var(--line);border-radius:var(--rs);overflow:hidden;}
+  .recordToggle{display:flex;align-items:center;gap:9px;width:100%;padding:11px 13px;background:var(--surface2);border:none;color:var(--sageDeep);font-size:13.5px;font-weight:600;text-align:left;}
+  .recordToggle .recordSummary{margin-left:auto;font-weight:500;font-size:12px;}
+  .recordChevron{color:var(--sageSoft);}
+  .recordFields{padding:14px 13px;display:flex;flex-direction:column;gap:12px;}
+  .recField{display:flex;flex-direction:column;gap:5px;}
+  .recField label{font-size:11.5px;font-weight:600;color:var(--muted);}
+  .recRow2{display:flex;gap:10px;}
+  .recRow2 .recField{flex:1;min-width:0;}
+  .expiryNote{background:#eef3ec;border-radius:var(--rs);padding:11px 12px;margin-top:2px;}
+  .expiryNoteHd{display:flex;gap:7px;font-size:12px;font-weight:600;color:var(--sageDeep);line-height:1.35;margin-bottom:8px;}
+  .expiryNoteHd .ic{flex-shrink:0;margin-top:1px;color:var(--sage);}
+  .keepList{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:5px;}
+  .keepList li{font-size:12px;line-height:1.4;color:#55645a;}
   .emptyIc{margin:0 auto 14px;color:var(--sageSoft);}
   .empty p{margin:2px 0;}
 
@@ -504,7 +579,8 @@ function Icon(props) {
     star: "M12 4l2.4 5 5.6.6-4 3.9 1 5.5L12 16l-5 2.9 1-5.5-4-3.9 5.6-.6Z",
     info: "M12 8h.01M11 12h1v4h1M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Z",
     warn: "M12 4l9 16H3L12 4ZM12 10v4M12 17h.01",
-    arrow: "M5 12h14M13 6l6 6-6 6"
+    arrow: "M5 12h14M13 6l6 6-6 6",
+    menu: "M4 7h16M4 12h16M4 17h16"
   };
   var d = paths[props.name] || paths.leaf;
   var s = props.size || 18;
@@ -550,6 +626,52 @@ var BATH = {
 var CANNA_INFUSE = { tempLo: 80, tempHi: 85, timeLo: 240, timeHi: 480, prefTemp: 85, prefTime: 240, label: "Warm infuse" };
 var RATIO = { dried: 5, fresh: 2 };
 
+/* ---------- shelf life / expiry ----------
+   Conservative: a refrigerated oil tincture in dark glass keeps ~6 months.
+   Expiry defaults to fill date + 6 months, editable per batch. */
+var SHELF_MONTHS = 6;
+var DAY_MS = 86400000;
+function addMonths(ts, months) {
+  var d = new Date(ts);
+  d.setMonth(d.getMonth() + months);
+  return d.getTime();
+}
+function proposeExpiry(fillTs) { return addMonths(fillTs || Date.now(), SHELF_MONTHS); }
+function daysLeft(expiryTs) {
+  if (!expiryTs) return null;
+  return Math.round((expiryTs - Date.now()) / DAY_MS);
+}
+function expiryState(expiryTs) {
+  var d = daysLeft(expiryTs);
+  if (d === null) return null;
+  if (d < 0) return { cls: "exp", label: "Expired", days: d };
+  if (d <= 30) return { cls: "soon", label: d + "d left", days: d };
+  return { cls: "ok", label: d + "d left", days: d };
+}
+var KEEP_STEPS = [
+  "Store in amber or dark glass to block light.",
+  "Keep it in the fridge, cold and steady beats warm and swinging.",
+  "Cap tight after every use so less air gets in.",
+  "Squeeze out excess air, a full bottle ages slower than a half-empty one.",
+  "Keep it away from the stove and windowsill, heat and sun are the enemies.",
+  "Smell before use. Sharp, bitter, or paint-like means it has turned, bin it."
+];
+
+/* THB money format, no decimals for whole baht */
+function fmtBaht(n) {
+  var v = Math.round((n || 0) * 100) / 100;
+  var whole = (v === Math.floor(v));
+  var s = whole ? String(Math.floor(v)) : v.toFixed(2);
+  s = s.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  return "\u0e3f" + s;
+}
+/* per-batch stock view: made, sold, left */
+function batchStock(e) {
+  var made = e.bottles || 0;
+  var sold = e.bottlesSold || 0;
+  return { made: made, sold: sold, left: Math.max(0, made - sold) };
+}
+
 /* ============================================================
    IMAGE LAYER - hotlinked from Wikimedia Commons (Special:FilePath,
    hotlinking permitted, royalty-free). Generic subjects only. Every
@@ -568,7 +690,9 @@ var IMG = {
   tincture: commonsUrl("Tinktur.jpg", 500),
   jars: commonsUrl("Mason jars.jpg", 500),
   bench: commonsUrl("Dropper bottle.jpg", 500),
-  kit: commonsUrl("Mortar and pestle.jpg", 500)
+  kit: commonsUrl("Mortar and pestle.jpg", 500),
+  stock: commonsUrl("Glass bottles with dropper.jpg", 500),
+  sales: commonsUrl("Cannabis oil.jpg", 500)
 };
 
 /* SmartImg: hotlinked image that fades in when loaded, and falls back to
@@ -948,6 +1072,18 @@ function fmtDate(ts) {
   function pad(n) { return n < 10 ? "0" + n : "" + n; }
   return d.getDate() + " " + months[d.getMonth()] + " " + d.getFullYear() + ", " + pad(d.getHours()) + ":" + pad(d.getMinutes());
 }
+function toDateInput(ts) {
+  if (!ts) return "";
+  var d = new Date(ts);
+  function pad(n) { return n < 10 ? "0" + n : "" + n; }
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+}
+function fromDateInput(str) {
+  if (!str) return null;
+  var parts = str.split("-");
+  if (parts.length !== 3) return null;
+  return new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 12, 0, 0).getTime();
+}
 function fmtMins(m) {
   if (m < 60) return m + " min";
   var h = Math.floor(m / 60); var r = m % 60;
@@ -1095,6 +1231,8 @@ function App() {
   var b = useState(function () { return load("tt_batches", []); }); var batches = b[0]; var setBatches = b[1];
   var lg = useState(function () { return load("tt_log", []); }); var logbook = lg[0]; var setLogbook = lg[1];
   var kt = useState(function () { return load("tt_kit", {}); }); var kitChecks = kt[0]; var setKitChecks = kt[1];
+  var sl = useState(function () { return load("tt_sales", []); }); var sales = sl[0]; var setSales = sl[1];
+  var cfg = useState(function () { return load("tt_cfg", { lowStock: 3 }); }); var settings = cfg[0]; var setSettings = cfg[1];
   var tk = useState(0); var setTick = tk[1];
 
   useEffect(function () {
@@ -1104,6 +1242,43 @@ function App() {
   useEffect(function () { store("tt_batches", batches); }, [batches]);
   useEffect(function () { store("tt_log", logbook); }, [logbook]);
   useEffect(function () { store("tt_kit", kitChecks); }, [kitChecks]);
+  useEffect(function () { store("tt_sales", sales); }, [sales]);
+  useEffect(function () { store("tt_cfg", settings); }, [settings]);
+
+  /* edit a stored batch field (fill date, strain, bottles, expiry, cost) */
+  function editBatch(id, field, value) {
+    setLogbook(logbook.map(function (e) {
+      if (e.id === id) { var c = {}; for (var k in e) c[k] = e[k]; c[field] = value; return c; }
+      return e;
+    }));
+  }
+  /* record a sale: decrements that batch's available bottles */
+  function addSale(sale) {
+    setSales([sale].concat(sales));
+    setLogbook(logbook.map(function (e) {
+      if (e.id === sale.batchId) {
+        var c = {}; for (var k in e) c[k] = e[k];
+        c.bottlesSold = (c.bottlesSold || 0) + sale.qty;
+        return c;
+      }
+      return e;
+    }));
+  }
+  function deleteSale(saleId) {
+    var s = null;
+    for (var i = 0; i < sales.length; i++) { if (sales[i].id === saleId) s = sales[i]; }
+    setSales(sales.filter(function (x) { return x.id !== saleId; }));
+    if (s) {
+      setLogbook(logbook.map(function (e) {
+        if (e.id === s.batchId) {
+          var c = {}; for (var k in e) c[k] = e[k];
+          c.bottlesSold = Math.max(0, (c.bottlesSold || 0) - s.qty);
+          return c;
+        }
+        return e;
+      }));
+    }
+  }
 
   function startBatch(batch) {
     var now = Date.now();
@@ -1126,7 +1301,12 @@ function App() {
     if (found) {
       var yieldMl = yieldFor(found.menstruumMl, found.track);
       var entry = {}; for (var k in found) entry[k] = found[k];
-      entry.finishedAt = Date.now(); entry.yieldMl = yieldMl; entry.proven = false;
+      var now = Date.now();
+      entry.finishedAt = now; entry.yieldMl = yieldMl; entry.proven = false;
+      entry.fillDate = now;                                   /* date of fill */
+      entry.bottles = yieldMl ? bottleCount(yieldMl, 30) : 0; /* finished 30ml bottles */
+      entry.bottlesSold = 0;                                  /* running tally for stock */
+      entry.expiry = proposeExpiry(now);                      /* proposed, editable */
       setLogbook([entry].concat(logbook));
     }
     setBatches(remaining);
@@ -1236,7 +1416,10 @@ function App() {
         onNew: function () { setView("new"); }
       }) : null,
       view === "new" ? React.createElement(Wizard, { start: startBatch, cancel: function () { setView("bench"); } }) : null,
-      view === "log" ? React.createElement(Logbook, { logbook: logbook, toggleProven: toggleProven, rateBatch: rateBatch, noteBatch: noteBatch, removeNote: removeNote, deleteBatch: deleteBatch, repeatBatch: repeatBatch, photoBatch: photoBatch, removePhoto: removePhoto, captionPhoto: captionPhoto }) : null,
+      view === "log" ? React.createElement(Logbook, { logbook: logbook, toggleProven: toggleProven, rateBatch: rateBatch, noteBatch: noteBatch, removeNote: removeNote, deleteBatch: deleteBatch, repeatBatch: repeatBatch, photoBatch: photoBatch, removePhoto: removePhoto, captionPhoto: captionPhoto, editBatch: editBatch }) : null,
+      view === "stock" ? React.createElement(Stock, { logbook: logbook, settings: settings, setSettings: setSettings, setView: setView }) : null,
+      view === "sales" ? React.createElement(Sales, { logbook: logbook, sales: sales, addSale: addSale, deleteSale: deleteSale }) : null,
+      view === "more" ? React.createElement(MoreMenu, { setView: setView }) : null,
       view === "guides" ? React.createElement(Guides, null) : null,
       view === "sousweed" ? React.createElement(SousWeed, null) : null,
       view === "kit" ? React.createElement(Kit, { kitChecks: kitChecks, toggleKit: toggleKit }) : null
@@ -1253,19 +1436,40 @@ function Header(props) {
   );
 }
 
+/* ---------- More menu (groups the reference screens) ---------- */
+function MoreMenu(props) {
+  var items = [
+    { id: "sousweed", label: "Sous Weed", blurb: "The sous vide cannabis playbook", icon: "leaf" },
+    { id: "guides", label: "Guides", blurb: "Trusted sources, stage by stage", icon: "book" },
+    { id: "kit", label: "Kit", blurb: "Tools, carriers, and where to buy", icon: "box" }
+  ];
+  return React.createElement("section", { className: "screen" },
+    React.createElement("div", { className: "screenHead" }, React.createElement("h1", null, "More")),
+    React.createElement("div", { className: "list" },
+      items.map(function (it) {
+        return React.createElement("button", { key: it.id, className: "card moreRow", onClick: function () { props.setView(it.id); } },
+          React.createElement(Icon, { name: it.icon, size: 22, weight: 1.5, className: "moreIc" }),
+          React.createElement("div", { className: "moreBody" },
+            React.createElement("div", { className: "moreLabel" }, it.label),
+            React.createElement("div", { className: "moreBlurb muted" }, it.blurb)),
+          React.createElement(Icon, { name: "arrow", size: 16, weight: 1.7, className: "moreArrow" }));
+      })));
+}
+
 /* ---------- Bottom tab bar (line-art icons) ---------- */
 function TabBar(props) {
   var tabs = [
     { id: "bench", label: "Bench", icon: "flame" },
     { id: "log", label: "Cellar", icon: "jar" },
-    { id: "sousweed", label: "Sous Weed", icon: "leaf" },
-    { id: "guides", label: "Guides", icon: "book" },
-    { id: "kit", label: "Kit", icon: "box" }
+    { id: "stock", label: "Stock", icon: "box" },
+    { id: "sales", label: "Sales", icon: "cart" },
+    { id: "more", label: "More", icon: "menu" }
   ];
   return React.createElement("nav", { className: "tabbar" },
     tabs.map(function (t) {
+      var active = props.view === t.id || (t.id === "more" && (props.view === "sousweed" || props.view === "guides" || props.view === "kit"));
       return React.createElement("button", {
-        key: t.id, className: "tab" + (props.view === t.id ? " on" : ""),
+        key: t.id, className: "tab" + (active ? " on" : ""),
         onClick: function () { props.setView(t.id); }
       },
         React.createElement(Icon, { name: t.icon, size: 21, weight: 1.6 }),
@@ -1688,7 +1892,7 @@ function Logbook(props) {
           return React.createElement(CellarRow, {
             key: e.id, entry: e,
             toggleProven: props.toggleProven, rateBatch: props.rateBatch,
-            noteBatch: props.noteBatch, removeNote: props.removeNote, deleteBatch: props.deleteBatch, repeatBatch: props.repeatBatch, photoBatch: props.photoBatch, removePhoto: props.removePhoto, captionPhoto: props.captionPhoto
+            noteBatch: props.noteBatch, removeNote: props.removeNote, deleteBatch: props.deleteBatch, repeatBatch: props.repeatBatch, photoBatch: props.photoBatch, removePhoto: props.removePhoto, captionPhoto: props.captionPhoto, editBatch: props.editBatch
           });
         }))
   );
@@ -1702,6 +1906,7 @@ function CellarRow(props) {
   var cf = useState(false); var confirmDel = cf[0]; var setConfirmDel = cf[1];
   var capState = useState(-1); var capIdx = capState[0]; var setCapIdx = capState[1];
   var capVal = useState(""); var capText = capVal[0]; var setCapText = capVal[1];
+  var rec = useState(false); var recOpen = rec[0]; var setRecOpen = rec[1];
   var fileRef = useRef(null);
   var rated = e.rating ? ratingMeta(e.rating) : null;
 
@@ -1766,6 +1971,39 @@ function CellarRow(props) {
           React.createElement(Icon, { name: "star", size: 20, weight: e.proven ? 1.8 : 1.5 })))),
 
     detailLine ? React.createElement("div", { className: "jarDetail" }, detailLine) : null,
+
+    e.bottles ? React.createElement("div", { className: "recordBlock" },
+      React.createElement("button", { className: "recordToggle", type: "button", onClick: function () { setRecOpen(!recOpen); } },
+        React.createElement(Icon, { name: "box", size: 14, weight: 1.6 }),
+        React.createElement("span", null, "Batch record"),
+        React.createElement("span", { className: "recordSummary muted" }, (batchStock(e).left) + "/" + (e.bottles) + " left"),
+        React.createElement(Icon, { name: recOpen ? "close" : "arrow", size: 13, weight: 1.7, className: "recordChevron" })),
+      recOpen ? React.createElement("div", { className: "recordFields" },
+        React.createElement("div", { className: "recField" },
+          React.createElement("label", null, "Strain name"),
+          React.createElement("input", { className: "inp", type: "text", value: e.strain || "", placeholder: "strain", onChange: function (ev) { props.editBatch(e.id, "strain", ev.target.value); } })),
+        React.createElement("div", { className: "recRow2" },
+          React.createElement("div", { className: "recField" },
+            React.createElement("label", null, "Fill date"),
+            React.createElement("input", { className: "inp", type: "date", value: toDateInput(e.fillDate), onChange: function (ev) { props.editBatch(e.id, "fillDate", fromDateInput(ev.target.value)); } })),
+          React.createElement("div", { className: "recField" },
+            React.createElement("label", null, "30ml bottles"),
+            React.createElement("input", { className: "inp", type: "number", value: e.bottles || 0, onChange: function (ev) { props.editBatch(e.id, "bottles", parseInt(ev.target.value, 10) || 0); } }))),
+        React.createElement("div", { className: "recRow2" },
+          React.createElement("div", { className: "recField" },
+            React.createElement("label", null, "Expiry date"),
+            React.createElement("input", { className: "inp", type: "date", value: toDateInput(e.expiry), onChange: function (ev) { props.editBatch(e.id, "expiry", fromDateInput(ev.target.value)); } })),
+          React.createElement("div", { className: "recField" },
+            React.createElement("label", null, "Batch cost (\u0e3f)"),
+            React.createElement("input", { className: "inp", type: "number", value: (e.cost === undefined || e.cost === null) ? "" : e.cost, placeholder: "0", onChange: function (ev) { props.editBatch(e.id, "cost", parseFloat(ev.target.value) || 0); } }))),
+        React.createElement("div", { className: "expiryNote" },
+          React.createElement("div", { className: "expiryNoteHd" },
+            React.createElement(Icon, { name: "info", size: 13, weight: 1.6 }),
+            React.createElement("span", null, "Proposed expiry is 6 months from fill (conservative). To keep it good the longest:")),
+          React.createElement("ul", { className: "keepList" },
+            KEEP_STEPS.map(function (step, i) {
+              return React.createElement("li", { key: i }, step);
+            })))) : null) : null,
 
     (bottles30 > 0 || strength) ? React.createElement("div", { className: "insight" },
       bottles30 > 0 ? React.createElement("div", { className: "insightRow" },
@@ -1834,6 +2072,214 @@ function CellarRow(props) {
         React.createElement(ActionButton, { className: "btn ghost sm", onAct: function () { setConfirmDel(false); } }, "Keep"),
         React.createElement(ActionButton, { className: "btn primary sm danger", onAct: function () { props.deleteBatch(e.id); } }, "Delete"))) : null
   );
+}
+
+/* ---------- Stock (inventory at a glance) ---------- */
+function Stock(props) {
+  var log = props.logbook;
+  var lowStock = (props.settings && props.settings.lowStock) || 0;
+
+  /* only cannabis batches with bottles count toward sellable stock */
+  var rows = [];
+  var totMade = 0, totSold = 0, totLeft = 0;
+  for (var i = 0; i < log.length; i++) {
+    var e = log[i];
+    if (!e.bottles) continue;
+    var s = batchStock(e);
+    totMade += s.made; totSold += s.sold; totLeft += s.left;
+    rows.push({ e: e, s: s });
+  }
+
+  var low = totLeft <= lowStock;
+
+  return React.createElement("section", { className: "screen" },
+    React.createElement("div", { className: "screenHead" }, React.createElement("h1", null, "Stock")),
+
+    React.createElement("div", { className: "statGrid" },
+      React.createElement("div", { className: "statCard" },
+        React.createElement("div", { className: "statNum" }, totLeft),
+        React.createElement("div", { className: "statLbl muted" }, "bottles in stock")),
+      React.createElement("div", { className: "statCard" },
+        React.createElement("div", { className: "statNum" }, totMade),
+        React.createElement("div", { className: "statLbl muted" }, "made all-time")),
+      React.createElement("div", { className: "statCard" },
+        React.createElement("div", { className: "statNum" }, totSold),
+        React.createElement("div", { className: "statLbl muted" }, "sold all-time"))),
+
+    low ? React.createElement("div", { className: "lowBanner" },
+      React.createElement(Icon, { name: "warn", size: 15, weight: 1.7 }),
+      React.createElement("span", null, totLeft === 0 ? "Out of stock. Time to brew a fresh batch." : "Running low, only " + totLeft + " left. Worth brewing soon.")) : null,
+
+    React.createElement("div", { className: "thresholdRow" },
+      React.createElement("span", { className: "muted small" }, "Warn me when stock drops to"),
+      React.createElement("input", { className: "threshInp", type: "number", value: lowStock, onChange: function (ev) {
+        var c = {}; for (var k in props.settings) c[k] = props.settings[k]; c.lowStock = parseInt(ev.target.value, 10) || 0; props.setSettings(c);
+      } }),
+      React.createElement("span", { className: "muted small" }, "bottles")),
+
+    rows.length === 0 ?
+      React.createElement("div", null,
+        React.createElement(SmartImg, { src: IMG.stock, alt: "Dropper bottles", h: 150, icon: "box", label: "Your stock room", sublabel: "Finished bottles, ready to go" }),
+        React.createElement("div", { className: "empty" },
+          React.createElement(Icon, { name: "box", size: 34, weight: 1.3, className: "emptyIc" }),
+          React.createElement("p", null, "No stock yet."),
+          React.createElement("p", { className: "muted" }, "Finished batches show up here as sellable stock."))) :
+      React.createElement("div", { className: "list" },
+        rows.map(function (r) {
+          var e = r.e; var s = r.s;
+          var exp = expiryState(e.expiry);
+          return React.createElement("div", { key: e.id, className: "card stockRow" },
+            React.createElement("div", { className: "stockTop" },
+              React.createElement("div", { className: "stockName" }, e.strain || e.name || e.botanicalName),
+              exp ? React.createElement("span", { className: "expTag " + exp.cls }, exp.label) : null),
+            React.createElement("div", { className: "stockBar" },
+              React.createElement("div", { className: "stockBarFill", style: { width: (s.made ? Math.round((s.left / s.made) * 100) : 0) + "%" } })),
+            React.createElement("div", { className: "stockNums muted" },
+              React.createElement("span", null, React.createElement("b", { className: "stockLeft" }, s.left), " left"),
+              React.createElement("span", null, s.sold + " sold"),
+              React.createElement("span", null, s.made + " made"),
+              e.fillDate ? React.createElement("span", null, "filled " + fmtDay(e.fillDate)) : null));
+        })));
+}
+
+/* short day format for stock/sales, e.g. "13 Jul" */
+function fmtDay(ts) {
+  if (!ts) return "";
+  var d = new Date(ts);
+  var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return d.getDate() + " " + months[d.getMonth()];
+}
+
+/* ---------- Sales (ledger + reconciliation) ---------- */
+function Sales(props) {
+  var log = props.logbook;
+  var sales = props.sales;
+  var op = useState(false); var open = op[0]; var setOpen = op[1];
+
+  /* sellable batches (have bottles left) */
+  var sellable = [];
+  for (var i = 0; i < log.length; i++) {
+    var e = log[i];
+    if (!e.bottles) continue;
+    var s = batchStock(e);
+    if (s.left > 0) sellable.push({ e: e, left: s.left });
+  }
+
+  /* finance rollup */
+  var revenue = 0, bottlesSold = 0;
+  for (var j = 0; j < sales.length; j++) { revenue += (sales[j].price || 0); bottlesSold += (sales[j].qty || 0); }
+
+  /* cost of goods: sum each batch cost spread across bottles made, for bottles actually sold */
+  var cogs = 0;
+  for (var k = 0; k < log.length; k++) {
+    var b = log[k];
+    if (!b.bottles || !b.cost) continue;
+    var perBottle = b.cost / b.bottles;
+    cogs += perBottle * (b.bottlesSold || 0);
+  }
+  var profit = revenue - cogs;
+
+  return React.createElement("section", { className: "screen" },
+    React.createElement("div", { className: "screenHead" }, React.createElement("h1", null, "Sales")),
+
+    React.createElement("div", { className: "statGrid" },
+      React.createElement("div", { className: "statCard wide" },
+        React.createElement("div", { className: "statNum" }, fmtBaht(revenue)),
+        React.createElement("div", { className: "statLbl muted" }, "revenue")),
+      React.createElement("div", { className: "statCard" },
+        React.createElement("div", { className: "statNum" }, bottlesSold),
+        React.createElement("div", { className: "statLbl muted" }, "bottles sold"))),
+    React.createElement("div", { className: "statGrid" },
+      React.createElement("div", { className: "statCard" },
+        React.createElement("div", { className: "statNum small" }, fmtBaht(cogs)),
+        React.createElement("div", { className: "statLbl muted" }, "cost of goods")),
+      React.createElement("div", { className: "statCard" },
+        React.createElement("div", { className: "statNum small " + (profit >= 0 ? "pos" : "neg") }, fmtBaht(profit)),
+        React.createElement("div", { className: "statLbl muted" }, "profit"))),
+
+    React.createElement(ActionButton, { className: "btn primary wide", onAct: function () { setOpen(true); } },
+      React.createElement(Icon, { name: "plus", size: 16, weight: 2 }), "Record a sale"),
+
+    open ? React.createElement(SaleForm, { sellable: sellable, onSave: function (sale) { props.addSale(sale); setOpen(false); }, onCancel: function () { setOpen(false); } }) : null,
+
+    sales.length === 0 ?
+      React.createElement("div", null,
+        React.createElement(SmartImg, { src: IMG.sales, alt: "Amber oil", h: 150, icon: "cart", label: "Sales ledger", sublabel: "Every bottle out the door" }),
+        React.createElement("div", { className: "empty" },
+          React.createElement(Icon, { name: "cart", size: 34, weight: 1.3, className: "emptyIc" }),
+          React.createElement("p", null, "No sales logged yet."))) :
+      React.createElement("div", { className: "list salesList" },
+        sales.map(function (sale) {
+          var bname = sale.strain || "batch";
+          return React.createElement("div", { key: sale.id, className: "card saleRow" },
+            React.createElement("div", { className: "saleTop" },
+              React.createElement("div", { className: "saleWho" }, sale.buyer || "Someone"),
+              React.createElement("div", { className: "salePrice" }, fmtBaht(sale.price))),
+            React.createElement("div", { className: "saleMeta muted" },
+              sale.qty + " \u00d7 30ml \u00b7 " + bname + (sale.source ? " \u00b7 " + sale.source : "") + " \u00b7 " + fmtDay(sale.date)),
+            sale.contact ? React.createElement("div", { className: "saleContact muted" },
+              React.createElement(Icon, { name: "book", size: 12, weight: 1.6 }), sale.contact) : null,
+            React.createElement(ActionButton, { className: "saleDel", onAct: function () { props.deleteSale(sale.id); } },
+              React.createElement(Icon, { name: "close", size: 13, weight: 2 })));
+        })));
+}
+
+function SaleForm(props) {
+  var sellable = props.sellable;
+  var bt = useState(sellable.length ? sellable[0].e.id : ""); var batchId = bt[0]; var setBatchId = bt[1];
+  var q = useState(1); var qty = q[0]; var setQty = q[1];
+  var pr = useState(""); var price = pr[0]; var setPrice = pr[1];
+  var by = useState(""); var buyer = by[0]; var setBuyer = by[1];
+  var sr = useState(""); var source = sr[0]; var setSource = sr[1];
+  var ct = useState(""); var contact = ct[0]; var setContact = ct[1];
+
+  var chosen = null;
+  for (var i = 0; i < sellable.length; i++) { if (sellable[i].e.id === batchId) chosen = sellable[i]; }
+  var maxQty = chosen ? chosen.left : 0;
+
+  function save() {
+    if (!batchId || !chosen) return;
+    var qn = Math.min(parseInt(qty, 10) || 1, maxQty);
+    if (qn < 1) return;
+    props.onSave({
+      id: "s" + Date.now(), batchId: batchId, strain: chosen.e.strain || chosen.e.name || chosen.e.botanicalName,
+      qty: qn, price: parseFloat(price) || 0, buyer: buyer, source: source, contact: contact, date: Date.now()
+    });
+  }
+
+  if (sellable.length === 0) {
+    return React.createElement("div", { className: "saleForm" },
+      React.createElement("p", { className: "muted" }, "No bottles in stock to sell. Finish a batch first."),
+      React.createElement(ActionButton, { className: "btn ghost sm", onAct: props.onCancel }, "Close"));
+  }
+
+  return React.createElement("div", { className: "saleForm" },
+    React.createElement("div", { className: "formField" },
+      React.createElement("label", null, "Batch"),
+      React.createElement("select", { className: "inp", value: batchId, onChange: function (ev) { setBatchId(ev.target.value); } },
+        sellable.map(function (x) {
+          return React.createElement("option", { key: x.e.id, value: x.e.id }, (x.e.strain || x.e.name || x.e.botanicalName) + " (" + x.left + " left)");
+        }))),
+    React.createElement("div", { className: "formRow2" },
+      React.createElement("div", { className: "formField" },
+        React.createElement("label", null, "Bottles (max " + maxQty + ")"),
+        React.createElement("input", { className: "inp", type: "number", value: qty, min: 1, max: maxQty, onChange: function (ev) { setQty(ev.target.value); } })),
+      React.createElement("div", { className: "formField" },
+        React.createElement("label", null, "Price (\u0e3f total)"),
+        React.createElement("input", { className: "inp", type: "number", value: price, placeholder: "0", onChange: function (ev) { setPrice(ev.target.value); } }))),
+    React.createElement("div", { className: "formField" },
+      React.createElement("label", null, "Sold to"),
+      React.createElement("input", { className: "inp", type: "text", value: buyer, placeholder: "name", onChange: function (ev) { setBuyer(ev.target.value); } })),
+    React.createElement("div", { className: "formRow2" },
+      React.createElement("div", { className: "formField" },
+        React.createElement("label", null, "Source"),
+        React.createElement("input", { className: "inp", type: "text", value: source, placeholder: "LINE, TikTok...", onChange: function (ev) { setSource(ev.target.value); } })),
+      React.createElement("div", { className: "formField" },
+        React.createElement("label", null, "Contact"),
+        React.createElement("input", { className: "inp", type: "text", value: contact, placeholder: "optional", onChange: function (ev) { setContact(ev.target.value); } }))),
+    React.createElement("div", { className: "formActions" },
+      React.createElement(ActionButton, { className: "btn ghost sm", onAct: props.onCancel }, "Cancel"),
+      React.createElement(ActionButton, { className: "btn primary sm", onAct: save }, "Save sale")));
 }
 
 /* ---------- Guides ---------- */
