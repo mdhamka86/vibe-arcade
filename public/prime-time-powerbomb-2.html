@@ -29,6 +29,10 @@
   @keyframes ptpSlideL { from { opacity:0; transform:translateX(-12px); } to { opacity:1; transform:none; } }
   @keyframes ptpShimmer { 0%,100% { opacity:.85; } 50% { opacity:1; } }
   @keyframes ptpGlow { 0%,100% { opacity:.5; } 50% { opacity:.9; } }
+  /* floating damage number: pop in, rise, fade (System 2 no-GSAP fallback). */
+  @keyframes ptpFloat { 0% { opacity:0; transform:translateY(6px) scale(.8); } 16% { opacity:1; transform:translateY(-10px) scale(1); } 100% { opacity:0; transform:translateY(-62px) scale(1); } }
+  /* finisher flash: slam in, hold, fade (System 4 no-GSAP fallback). */
+  @keyframes ptpSlam { 0% { opacity:0; transform:scale(1.7); } 13% { opacity:1; transform:scale(1); } 70% { opacity:1; transform:scale(1); } 100% { opacity:0; transform:scale(1.1); } }
   /* staggered children: each direct child rises a beat after the last */
   .ptp-stagger > * { opacity:0; animation:ptpRise .42s cubic-bezier(.2,.8,.2,1) forwards; }
   .ptp-stagger > *:nth-child(1){ animation-delay:.02s; }
@@ -92,6 +96,16 @@ function formatSaveTime(ts) {
 }
 const avg = (arr) => arr.length ? arr.reduce((s, n) => s + n, 0) / arr.length : 0;
 
+// ---------- motion ----------
+// Live reduced-motion check, re-read on every call so a mid-session OS change
+// is honoured. GSAP tweens and canvas-confetti are JS-driven, so the CSS
+// reduced-motion guard in <head> can't reach them — every JS effect consults
+// this and settles snappier / skips the floaty parts when it's true.
+const PREFERS_REDUCED_MOTION = () =>
+  (typeof window !== "undefined" && window.matchMedia)
+    ? window.matchMedia("(prefers-reduced-motion: reduce)").matches : false;
+const HAS_GSAP = () => typeof window !== "undefined" && !!window.gsap;
+
 // ============================================================
 // DESIGN TOKENS — one place, derived everywhere.
 // ============================================================
@@ -105,6 +119,25 @@ const T = {
 };
 const SANS = "'Archivo', system-ui, sans-serif";
 const MONO = "'JetBrains Mono', ui-monospace, monospace";
+
+// ---------- celebration confetti (System 5) ----------
+// Fires our own palette colours only (pink, gold, mint, violet) on a match win;
+// a grander two-cannon burst on a title match. canvas-confetti paints to its own
+// fixed full-screen canvas, so it plays over whatever screen is showing. Skipped
+// under reduced motion (the calmest choice) and when the lib failed to load.
+function fireConfetti(grand) {
+  const confetti = (typeof window !== "undefined") && window.confetti;
+  if (!confetti || PREFERS_REDUCED_MOTION()) return;
+  const colors = [T.pink, T.gold, T.mint, T.violet];
+  const base = { colors, zIndex: 250, disableForReducedMotion: true, scalar: 0.9, ticks: 200 };
+  confetti({ ...base, particleCount: grand ? 90 : 55, spread: grand ? 100 : 72,
+    startVelocity: grand ? 48 : 40, origin: { y: 0.6 } });
+  if (grand) {
+    // side cannons for the big-title moment
+    confetti({ ...base, particleCount: 55, angle: 60, spread: 74, startVelocity: 46, origin: { x: 0, y: 0.68 } });
+    confetti({ ...base, particleCount: 55, angle: 120, spread: 74, startVelocity: 46, origin: { x: 1, y: 0.68 } });
+  }
+}
 
 // ============================================================
 // LINE-ART ICONS — inline SVG, stroke style, currentColor.
@@ -1567,12 +1600,16 @@ const PROMO_LINES = {
   ],
 };
 // Resolve one promo beat: skill vs the line's demand decides how hot it lands.
+// Tuned so even a green wrestler's promos are worth doing (they mostly land, and
+// a flop cools rather than craters), while high charisma/promo still dominates.
 function resolvePromoLine(line, wr) {
   const skillVal = (wr.skills && wr.skills[line.skill]) || 40;
-  const roll = skillVal + rand(-18, 18);
-  const landed = roll >= 45;
-  // a line that lands heats the crowd; one that flops actively cools them
-  const heat = landed ? line.base + Math.round(skillVal / 12) : -Math.round(line.base * 0.5);
+  const roll = skillVal + rand(-15, 18);
+  const landed = roll >= 36;
+  // a line that lands heats the crowd; one that flops cools them only mildly
+  const heat = landed
+    ? Math.round(line.base * 0.8) + Math.round(skillVal / 12)
+    : -Math.round(line.base * 0.3);
   return { landed, heat, note: line.line + (landed ? "" : " ...but it doesn't quite land.") };
 }
 
@@ -1799,11 +1836,123 @@ function Btn({ onClick, children, kind, disabled, icon, iconRight, style, small 
     style:{ ...base, ...(kinds[kind]||kinds.ghost), ...glow, ...style } }, inner);
 }
 
-// Progress bar with tabular readout option.
+// Progress bar with tabular readout option. The fill EASES to each new value
+// with GSAP (power3.out) so the match gauges — crowd heat, momentum, gas —
+// flow between beats instead of snapping. It grows in from zero on first paint
+// (the same feel the CSS ptpBar keyframe gave), then tweens on every change.
+// Reduced-motion settles near-instantly; with no GSAP it falls back to the
+// static width + CSS mount animation, so the bar is always correct either way.
 function Bar({ value, max, hue, h }) {
+  const fillRef = useRef(null);
+  const pct = clamp((value/(max||100))*100, 0, 100);
+  const gsapDriven = HAS_GSAP();
+  useEffect(() => {
+    if (!gsapDriven) return;
+    const el = fillRef.current;
+    if (!el) return;
+    const reduce = PREFERS_REDUCED_MOTION();
+    window.gsap.to(el, { width: pct + "%", duration: reduce ? 0.12 : 0.55,
+      ease: reduce ? "power1.out" : "power3.out", overwrite: "auto" });
+  }, [pct, gsapDriven]);
   return React.createElement("div", { style:{ height:h||8, background:T.panel2, borderRadius:20, overflow:"hidden", border:`1px solid ${T.line}` } },
-    React.createElement("div", { style:{ height:"100%", width:`${clamp((value/(max||100))*100,0,100)}%`, background:hue||T.pink,
-      borderRadius:20, transformOrigin:"left", animation:"ptpBar .5s cubic-bezier(.2,.8,.2,1)" } }));
+    React.createElement("div", { ref:fillRef, style:{ height:"100%",
+      // GSAP grows it in from 0; without GSAP, paint the real width + CSS grow.
+      width: gsapDriven ? "0%" : `${pct}%`, background:hue||T.pink,
+      borderRadius:20, transformOrigin:"left",
+      animation: gsapDriven ? "none" : "ptpBar .5s cubic-bezier(.2,.8,.2,1)" } }));
+}
+
+// A floating "damage" number that pops in, rises, and fades over the wrestler
+// when a spot lands (System 2). GSAP drives the motion; reduced-motion keeps the
+// rise low and quick; with no GSAP a CSS keyframe + timed cleanup stands in. The
+// outer div owns horizontal placement so GSAP animates only the inner transform
+// (no fighting over the same transform property).
+function Floater({ text, size, big, hue, x, onDone }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current; if (!el) { onDone && onDone(); return; }
+    const reduce = PREFERS_REDUCED_MOTION();
+    if (HAS_GSAP()) {
+      const rise = reduce ? -26 : -64;
+      const tl = window.gsap.timeline({ onComplete: onDone });
+      tl.fromTo(el, { y: 0, opacity: 0, scale: big ? 0.6 : 0.85 },
+          { y: reduce ? -8 : -12, opacity: 1, scale: 1, duration: reduce ? 0.09 : 0.18, ease: "back.out(2.2)" })
+        .to(el, { y: rise, opacity: 0, duration: reduce ? 0.34 : 0.85, ease: "power2.in" }, reduce ? ">" : ">-0.02");
+      return () => tl.kill();
+    }
+    // fallback: CSS keyframe, then self-remove after it finishes.
+    el.style.animation = (reduce ? "ptpFloat .5s" : "ptpFloat 1.05s") + " cubic-bezier(.2,.8,.2,1) forwards";
+    const t = setTimeout(onDone, reduce ? 520 : 1080);
+    return () => clearTimeout(t);
+  }, []);
+  return React.createElement("div", { style:{ position:"absolute", left:`calc(50% + ${x}px)`, top:"36%",
+    transform:"translateX(-50%)", pointerEvents:"none", zIndex:6, whiteSpace:"nowrap" } },
+    React.createElement("div", { ref, style:{ fontFamily:SANS, fontWeight:900, fontSize:size, lineHeight:1,
+      color:hue, letterSpacing:"-.02em", textShadow:`0 2px 12px ${T.bg}, 0 1px 3px ${T.bg}`, willChange:"transform,opacity" } }, text));
+}
+
+// A number that rolls smoothly to its new value instead of snapping (System 3).
+// GSAP tweens a proxy and writes the formatted text each frame; useLayoutEffect
+// paints the start value before the browser does, so there's no flash of the
+// final number. An optional `id` remembers the last value shown across remounts
+// (via COUNT_LAST), so e.g. reputation rolls up when you land back on the hub
+// after a win, not just while a screen stays mounted. Reduced motion, no GSAP,
+// first paint, and large jumps (a save load) all snap straight to the value.
+const COUNT_LAST = {};
+function CountUp({ value, id, format, dur, style }) {
+  const ref = useRef(null);
+  const prev = useRef((id != null && id in COUNT_LAST) ? COUNT_LAST[id] : value);
+  const fmt = format || ((n) => String(Math.round(n)));
+  React.useLayoutEffect(() => {
+    const el = ref.current;
+    const from = prev.current;
+    prev.current = value;
+    if (id != null) COUNT_LAST[id] = value;
+    if (!el) return;
+    if (from === value || Math.abs(value - from) > 30 || !HAS_GSAP() || PREFERS_REDUCED_MOTION()) {
+      el.textContent = fmt(value); return;
+    }
+    el.textContent = fmt(from);
+    const obj = { n: from };
+    const tw = window.gsap.to(obj, { n: value, duration: dur || 0.55, ease: "power2.out",
+      onUpdate: () => { el.textContent = fmt(obj.n); } });
+    return () => tw.kill();
+  }, [value]);
+  return React.createElement("span", { ref, style }, fmt(prev.current));
+}
+
+// The finisher flash (System 4): when a named finisher connects, its name slams
+// onto the screen, shakes, and fades. Rendered as a fixed top-level overlay so
+// it plays OVER the instant match-end -> result transition. The outer div owns
+// centering; GSAP animates only the inner element (scale/opacity for the slam,
+// an x-jitter for the shake). Reduced motion drops the shake for a calm quick
+// pulse; with no GSAP a CSS keyframe + timed cleanup stands in.
+function FinisherFlash({ name, hue, onDone }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const el = ref.current; if (!el) { onDone && onDone(); return; }
+    const reduce = PREFERS_REDUCED_MOTION();
+    if (HAS_GSAP()) {
+      const tl = window.gsap.timeline({ onComplete: onDone });
+      if (reduce) {
+        tl.fromTo(el, { opacity:0, scale:1.04 }, { opacity:1, scale:1, duration:0.12, ease:"power2.out" })
+          .to(el, { opacity:0, duration:0.4, ease:"power1.in" }, "+=0.55");
+      } else {
+        tl.fromTo(el, { opacity:0, scale:1.7 }, { opacity:1, scale:1, duration:0.19, ease:"power4.out" })
+          .to(el, { keyframes:[{x:-11,duration:.045},{x:9,duration:.045},{x:-7,duration:.045},{x:6,duration:.045},{x:-3,duration:.045},{x:0,duration:.045}] })
+          .to(el, { opacity:0, scale:1.1, duration:0.42, ease:"power2.in" }, "+=0.44");
+      }
+      return () => tl.kill();
+    }
+    el.style.animation = (reduce ? "ptpIn .5s ease forwards" : "ptpSlam 1.5s cubic-bezier(.2,.8,.2,1) forwards");
+    const t = setTimeout(onDone, reduce ? 950 : 1500);
+    return () => clearTimeout(t);
+  }, []);
+  return React.createElement("div", { style:{ position:"fixed", inset:0, display:"flex", alignItems:"center", justifyContent:"center", pointerEvents:"none", zIndex:200 } },
+    React.createElement("div", { ref, style:{ textAlign:"center", padding:"0 24px", willChange:"transform,opacity" } },
+      React.createElement("div", { style:{ fontFamily:SANS, fontSize:11, fontWeight:800, letterSpacing:".42em", textTransform:"uppercase", color:hue, marginBottom:8, marginLeft:".42em" } }, "Finisher"),
+      React.createElement("div", { style:{ fontFamily:SANS, fontWeight:900, fontSize:"min(13vw,58px)", lineHeight:1, letterSpacing:"-.02em", color:T.ink, textTransform:"uppercase",
+        textShadow:`0 0 34px ${hue}, 0 4px 4px ${T.bg}` } }, name)));
 }
 
 // Chip / tag.
@@ -1883,6 +2032,8 @@ function App() {
   const [cardReport, setCardReport] = useState([]); // undercard results from the last show
   const [msg, setMsg] = useState(null);
   const [match, setMatch] = useState(null);
+  const [floaters, setFloaters] = useState([]); // floating damage numbers over the wrestler (System 2)
+  const [finisherFlash, setFinisherFlash] = useState(null); // { id, name } for the finisher name slam (System 4)
   const [showGuide, setShowGuide] = useState(false);
   // Light-touch coaching: each contextual tip shows once, remembers dismissal in
   // localStorage, and never nags again. A wrestling fan can wave them off fast.
@@ -2272,7 +2423,7 @@ function App() {
     const res = resolvePromoLine(line, wr);
     setPromoGame(prev => {
       if (!prev) return prev;
-      const crowd = clamp(prev.crowd + res.heat - 4, 0, 100); // small natural decay keeps it a challenge
+      const crowd = clamp(prev.crowd + res.heat - 3, 0, 100); // slight natural decay keeps it a challenge
       const log = [...prev.log, { note: res.note, landed: res.landed }];
       return { ...prev, round: prev.round + 1, crowd, log };
     });
@@ -2363,6 +2514,12 @@ function App() {
       const beats = [...m.beats, { spot:spot.id, out }];
       const log = [...m.log, { label, note, botched:out.botched, injured:out.injured, flow:flowNote }];
       const injured = m.injured || out.injured;
+      // Transient display hook for the floating-damage-number overlay (System 2).
+      // Visual only — scoring never reads it. Captures THIS spot's real outcome
+      // (magnitude, botch, flush) so the floater reflects what actually landed.
+      const lastHit = { id: uid(), q: out.quality, botched: out.botched, injured: out.injured,
+        great: !out.botched && out.roll > wr.skills[spot.skill],
+        big: isFinish || spot.id === "highspot" || spot.id === "highrisk" };
       if (isFinish) {
         const g = gimmickById(wr.gimmick);
         const avgQ = (quality + bigBonus) / Math.max(beats.length, 1);
@@ -2381,11 +2538,47 @@ function App() {
           : overallFor(m.opp.skills, promo);
         const you = overallFor(wr.skills, promo) + avgQ*1.2 + (m.title?3:0) + (m.mainEvent?2:0) + partnerBoost;
         const them = oppBase + 6 + rand(0, 20);
-        return { ...m, beats, log, quality, heat, fatigue, injured, momentum, peakMomentum, done:true, star, won: you >= them };
+        // finisher CONNECTED (not botched) -> fire the finisher-name flash (System 4)
+        const finisherHit = out.botched ? null : { id: uid(), name: finisherName };
+        return { ...m, beats, log, quality, heat, fatigue, injured, momentum, peakMomentum, lastHit, finisherHit, done:true, star, won: you >= them };
       }
-      return { ...m, beats, log, quality, heat, fatigue, injured, momentum, peakMomentum };
+      return { ...m, beats, log, quality, heat, fatigue, injured, momentum, peakMomentum, lastHit };
     });
   };
+
+  // Spawn a floating damage number each time a spot lands (System 2). Watches the
+  // transient match.lastHit set by callSpot above; the number's SIZE scales with
+  // the move's magnitude, so a finisher lands bigger than a chain-wrestle. A
+  // botch reads as a small red "miss". Motion itself lives in the Floater.
+  const lastHitId = match && match.lastHit ? match.lastHit.id : null;
+  useEffect(() => {
+    if (!match || !match.lastHit) return;
+    const h = match.lastHit;
+    const val = Math.max(1, Math.round(h.q));
+    const size = h.botched ? 15 : h.big ? 38 : clamp(16 + val * 0.9, 18, 32);
+    const hue = (h.botched || h.injured) ? T.coral : h.big ? T.gold : h.great ? T.mint : T.ink;
+    const text = h.botched ? "miss" : "+" + val;
+    const x = (Math.random() - 0.5) * 54;
+    setFloaters(prev => [...prev, { id: h.id, text, size, big: h.big && !h.botched, hue, x }]);
+  }, [lastHitId]);
+
+  // Fire the finisher name-slam when a finisher connects (System 4). Watches the
+  // transient match.finisherHit set by callSpot; the overlay itself is rendered
+  // at the App root so it survives the instant match -> result transition.
+  const finisherHitId = match && match.finisherHit ? match.finisherHit.id : null;
+  useEffect(() => {
+    if (!match || !match.finisherHit) return;
+    setFinisherFlash({ id: match.finisherHit.id, name: match.finisherHit.name });
+  }, [finisherHitId]);
+
+  // Confetti when the result screen lands on a WIN (System 5). A title or tag-
+  // title match wins the grander two-cannon burst; any other win gets a single
+  // pop. Keyed on the phase change so it fires exactly once per result.
+  useEffect(() => {
+    if (phase === "matchResult" && match && match.won) {
+      fireConfetti(!!(match.title || match.tagTitle));
+    }
+  }, [phase]);
 
   const finalizeMatch = (finished) => {
     // `finished` is the fresh, just-completed match object passed in from the
@@ -2986,7 +3179,7 @@ function App() {
       React.createElement("div", { style:{ display:"flex", justifyContent:"space-between", alignItems:"baseline", marginBottom:5 } },
         React.createElement("span", { style:{ fontFamily:SANS, fontSize:11, fontWeight:700, color:T.dim, textTransform:"uppercase", letterSpacing:".08em" } }, label,
           sub && React.createElement("span", { style:{ color:hue, marginLeft:8, textTransform:"none", letterSpacing:0, fontWeight:600 } }, sub)),
-        React.createElement("span", { style:{ fontFamily:MONO, fontSize:12, fontWeight:700, color:hue } }, Math.round(val))),
+        React.createElement(CountUp, { value:val, id:"vital-"+label, style:{ fontFamily:MONO, fontSize:12, fontWeight:700, color:hue } })),
       React.createElement(Bar, { value:val, max, hue }));
   }
 
@@ -3208,7 +3401,8 @@ function App() {
                   React.createElement("span", null, `${o.wins}-${o.losses}`),
                   (o.form && o.form.length>0) && React.createElement("span", { style:{ display:"flex", gap:2 } },
                     o.form.slice(0,5).map((f,fi)=>React.createElement("span", { key:fi, style:{ width:5, height:5, borderRadius:"50%", background: f==="W"?T.mint:T.coral, opacity:1-fi*0.13 } }))))),
-              React.createElement("div", { key:"pts", style:{ fontFamily:MONO, fontSize:12, fontWeight:700, color: i===0?T.gold:T.ink2, flexShrink:0 } }, `${o.points} pts`),
+              React.createElement("div", { key:"pts", style:{ fontFamily:MONO, fontSize:12, fontWeight:700, color: i===0?T.gold:T.ink2, flexShrink:0 } },
+                React.createElement(CountUp, { value:o.points, id:"pts-"+o.name, format:(n)=>Math.round(n)+" pts" })),
               i===0 ? React.createElement(Icon, { key:"cr", name:"crown", size:15, color:T.gold })
                     : (tappable ? React.createElement(Icon, { key:"ch", name:"arrow", size:13, color:T.faint }) : null),
             ];
@@ -3413,12 +3607,16 @@ function App() {
 
       // versus
       React.createElement("div", { style:{ display:"flex", alignItems:"center", gap:12, marginBottom:16 } },
-        React.createElement("div", { style:{ textAlign:"center", flex:1 } },
+        React.createElement("div", { style:{ textAlign:"center", flex:1, position:"relative" } },
           React.createElement("div", { style:{ display:"flex", justifyContent:"center", gap:m.tag?-8:0 } },
             React.createElement(Portrait, { seed:wr.seed, skinSeed:wr.skinSeed, hue:wr.hue, size:58, ring:true, mood:m.fatigue>90?"hurt":"normal" }),
             m.tag && m.tagPartner && React.createElement("div", { style:{ marginLeft:-14 } }, React.createElement(Portrait, { seed:m.tagPartner.id, hue:m.tagPartner.hue, size:44 }))),
           React.createElement("div", { style:{ fontFamily:SANS, fontSize:12, fontWeight:700, color:T.ink, marginTop:5, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" } },
-            m.tag && m.tagPartner ? `${wr.name.split(" ")[0]} & ${m.tagPartner.name.split(" ")[0]}` : wr.name)),
+            m.tag && m.tagPartner ? `${wr.name.split(" ")[0]} & ${m.tagPartner.name.split(" ")[0]}` : wr.name),
+          // floating damage numbers rise out of the wrestler as spots land (System 2)
+          React.createElement("div", { style:{ position:"absolute", inset:0, overflow:"visible", pointerEvents:"none" } },
+            floaters.map(f => React.createElement(Floater, { key:f.id, text:f.text, size:f.size, big:f.big, hue:f.hue, x:f.x,
+              onDone:()=>setFloaters(fs=>fs.filter(x=>x.id!==f.id)) })))),
         React.createElement("div", { style:{ fontFamily:SANS, fontWeight:900, fontSize:15, color:T.pink, letterSpacing:".1em" } }, "VS"),
         React.createElement("div", { style:{ textAlign:"center", flex:1 } },
           React.createElement("div", { style:{ display:"flex", justifyContent:"center" } },
@@ -3430,11 +3628,11 @@ function App() {
 
       // gauges
       React.createElement(Panel, { style:{ marginBottom:14, padding:13 } },
-        gauge("Crowd heat", `${Math.round(m.heat)}%`, m.heat, heatHue),
+        gauge("Crowd heat", `${Math.round(m.heat)}%`, m.heat, heatHue, { value:m.heat, format:(n)=>Math.round(n)+"%" }),
         React.createElement("div", { style:{ height:9 } }),
         gauge("Momentum", momentumLabel(m.momentum||1), ((m.momentum||1)-0.7)/0.9*100, momoHue),
         React.createElement("div", { style:{ height:9 } }),
-        gauge("Your gas tank", `${gasLeft}%`, gasLeft, gasHue),
+        gauge("Your gas tank", `${gasLeft}%`, gasLeft, gasHue, { value:gasLeft, format:(n)=>Math.round(n)+"%" }),
         React.createElement("div", { style:{ display:"flex", justifyContent:"space-between", marginTop:11, fontFamily:MONO, fontSize:10.5, color:T.dim } },
           React.createElement("span", null, `Beat ${beatNo}`),
           React.createElement("span", null, `Quality ${Math.round(m.quality)}`))),
@@ -3494,11 +3692,17 @@ function App() {
     if (m >= 0.9) return "Cooling";
     return "Flat";
   }
-  function gauge(label, read, val, hue) {
+  function gauge(label, read, val, hue, count) {
+    // `count` (optional): { value, format } renders the readout as a rolling
+    // CountUp instead of static text — used for the numeric gauges (crowd heat,
+    // gas). Momentum stays a word label, so it passes no count.
+    const readStyle = { fontFamily:MONO, fontSize:11.5, fontWeight:700, color:hue };
     return React.createElement("div", null,
       React.createElement("div", { style:{ display:"flex", justifyContent:"space-between", marginBottom:5 } },
         React.createElement("span", { style:{ fontFamily:SANS, fontSize:10, fontWeight:700, color:T.dim, letterSpacing:".1em", textTransform:"uppercase" } }, label),
-        React.createElement("span", { style:{ fontFamily:MONO, fontSize:11.5, fontWeight:700, color:hue } }, read)),
+        count
+          ? React.createElement(CountUp, { value:count.value, format:count.format, style:readStyle })
+          : React.createElement("span", { style:readStyle }, read)),
       React.createElement(Bar, { value:val, max:100, hue }));
   }
 
@@ -3636,7 +3840,7 @@ function App() {
       // crowd meter
       React.createElement("div", { style:{ margin:"18px 0 6px", display:"flex", justifyContent:"space-between" } },
         React.createElement("span", { style:{ fontFamily:SANS, fontSize:11, fontWeight:800, letterSpacing:".1em", textTransform:"uppercase", color:T.dim } }, "Crowd"),
-        React.createElement("span", { style:{ fontFamily:MONO, fontSize:12, fontWeight:700, color:crowdHue } }, `${Math.round(pg.crowd)}%`)),
+        React.createElement(CountUp, { value:pg.crowd, format:(n)=>Math.round(n)+"%", style:{ fontFamily:MONO, fontSize:12, fontWeight:700, color:crowdHue } })),
       React.createElement("div", { style:{ height:10, borderRadius:20, background:T.line, overflow:"hidden", marginBottom:16 } },
         React.createElement("div", { style:{ width:`${pg.crowd}%`, height:"100%", background:crowdHue, borderRadius:20, transition:"width .4s cubic-bezier(.2,.8,.2,1)" } })),
       React.createElement(Coach, { id:"promo_intro", icon:"mic", tone:promo.colour, title:"Three beats to sell it" },
@@ -3807,7 +4011,11 @@ function App() {
   return React.createElement("div", { style:{ maxWidth:520, margin:"0 auto", minHeight:"100dvh", background:T.bg, color:T.ink } },
     screen,
     scouted && renderScout(),
-    showProtegePick && renderProtegePick());
+    showProtegePick && renderProtegePick(),
+    // finisher name-slam overlay (System 4) — top-level so it plays over the
+    // match -> result transition; removes itself when the animation finishes.
+    finisherFlash && React.createElement(FinisherFlash, { key:finisherFlash.id, name:finisherFlash.name, hue:(promo && promo.colour) || T.pink,
+      onDone:()=>setFinisherFlash(null) }));
 }
 
 // ============================================================
@@ -3865,6 +4073,12 @@ class ErrorBoundary extends React.Component {
   var REACT = ["https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js","https://unpkg.com/react@18.3.1/umd/react.production.min.js","https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"];
   var REACTDOM = ["https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js","https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js","https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"];
   var BABEL = ["https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js","https://unpkg.com/@babel/standalone@7.25.6/babel.min.js","https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"];
+  // Optional polish libs: GSAP (smooth motion) + canvas-confetti (celebrations).
+  // Same multi-CDN fallback as the core libs, but they must NEVER block the
+  // game — if every mirror fails we still boot and the app degrades gracefully.
+  var GSAP = ["https://cdn.jsdelivr.net/npm/gsap@3.12.5/dist/gsap.min.js","https://unpkg.com/gsap@3.12.5/dist/gsap.min.js","https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"];
+  var CONFETTI = ["https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js","https://unpkg.com/canvas-confetti@1.9.3/dist/confetti.browser.min.js","https://cdnjs.cloudflare.com/ajax/libs/canvas-confetti/1.9.3/confetti.browser.min.js"];
+  function loadOptional(urls, done) { loadScript(urls, done, done); }
   function boot() {
     try {
       if (!window.React || !window.ReactDOM) { showError("React did not load from any CDN."); return; }
@@ -3878,7 +4092,15 @@ class ErrorBoundary extends React.Component {
   }
   loadScript(REACT, function () {
     loadScript(REACTDOM, function () {
-      loadScript(BABEL, boot, function () { showError("Could not load Babel."); });
+      loadScript(BABEL, function () {
+        // Core libs are up. Pull in the optional polish libs (GSAP, then
+        // confetti) BEFORE boot so window.gsap / window.confetti exist by the
+        // time the app first renders. loadOptional never fails the chain, so a
+        // dead CDN just means the game boots without that effect.
+        loadOptional(GSAP, function () {
+          loadOptional(CONFETTI, boot);
+        });
+      }, function () { showError("Could not load Babel."); });
     }, function () { showError("Could not load ReactDOM."); });
   }, function () { showError("Could not load React."); });
 })();
