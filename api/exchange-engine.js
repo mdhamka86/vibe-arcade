@@ -136,6 +136,24 @@ function num(v) {
   const m = String(v).match(/-?\d+(\.\d+)?/);
   return m ? parseFloat(m[0]) : null;
 }
+// When an idea's stated levels are anchored to a wrong price but we KNOW the real live
+// price, derive sensible entry/target/stop around the REAL price so the card never shows
+// levels that are tens of percent off. Uses conservative swing-trade geometry. Returns the
+// recomputed level strings, or null if we cannot (no real price / bad direction).
+function recomputeLevels(idea, realPrice) {
+  const dir = (idea.direction || '').toUpperCase();
+  const px = num(realPrice);
+  if (px == null || px <= 0 || (dir !== 'BUY' && dir !== 'SELL')) return null;
+  // sensible one-week swing defaults: entry a touch off current, ~5% target, ~4% stop (R:R ~1.25)
+  const round = (v) => px >= 20 ? +v.toFixed(2) : +v.toFixed(4);
+  if (dir === 'BUY') {
+    const entryLo = round(px * 0.995), entryHi = round(px * 1.005);
+    return { entry: `${entryLo}-${entryHi}`, tp: String(round(px * 1.05)), sl: String(round(px * 0.96)), recomputed: true };
+  }
+  const entryLo = round(px * 0.995), entryHi = round(px * 1.005);
+  return { entry: `${entryLo}-${entryHi}`, tp: String(round(px * 0.95)), sl: String(round(px * 1.04)), recomputed: true };
+}
+
 function checkLevels(idea, realPrice) {
   const dir = (idea.direction || '').toUpperCase();
   const entry = num(idea.entry);
@@ -335,19 +353,33 @@ Respond ONLY with JSON, no markdown:
     (ideas.ideas || []).forEach((i) => {
       if (isBanned(i)) i.reason = ((i.reason || '') + ' [DUPLICATE/HELD WARNING]').trim();
       const real = realFor(i);
-      const lc = checkLevels(i, real);
+      let lc = checkLevels(i, real);
       // only trust the feed price for display when it is NOT flagged as a wrong-instrument hit
       if (real != null && !lc.feedSuspect) i.current_price = String(real); // show the true market price
-      if (!lc.ok) { i.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; i.conviction = 'LOW'; }
+      // If levels are anchored to a wrong price (but the ticker itself is fine), RECOMPUTE
+      // sensible entry/TP/SL around the real live price rather than showing numbers tens of
+      // percent off. These levels are what he acts on manually, so they must be right.
+      if (!lc.ok && !lc.feedSuspect && real != null) {
+        const rl = recomputeLevels(i, real);
+        if (rl) {
+          i.entry = rl.entry; i.tp = rl.tp; i.sl = rl.sl; i.levels_recomputed = true;
+          lc = checkLevels(i, real);
+        }
+      }
+      if (!lc.ok) { i.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; i.conviction = 'LOW'; i.levels_broken = true; }
       else { i.rr = lc.rr; i.slPct = lc.slPct; i.tpPct = lc.tpPct; }
     });
   } else {
     (ideas.ideas || []).forEach((i) => {
       const real = realFor(i);
-      const lc = checkLevels(i, real);
+      let lc = checkLevels(i, real);
       if (real != null && !lc.feedSuspect) i.current_price = String(real);
-      if (!lc.ok) { i.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; i.conviction = 'LOW'; }
-      i.rr = lc.rr; i.slPct = lc.slPct; i.tpPct = lc.tpPct;
+      if (!lc.ok && !lc.feedSuspect && real != null) {
+        const rl = recomputeLevels(i, real);
+        if (rl) { i.entry = rl.entry; i.tp = rl.tp; i.sl = rl.sl; i.levels_recomputed = true; lc = checkLevels(i, real); }
+      }
+      if (!lc.ok) { i.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; i.conviction = 'LOW'; i.levels_broken = true; }
+      else { i.rr = lc.rr; i.slPct = lc.slPct; i.tpPct = lc.tpPct; }
     });
   }
 
@@ -916,21 +948,33 @@ JSON only: {"guidance":[{"text":"concrete actionable note, max 22 words","basis"
 }
 
 // ---------- Pass an idea (begin shadow tracking) ----------
-async function actPass(ideaLedgerId) {
+async function actPass(ideaLedgerId, idea) {
   const s = await loadAll();
-  const rec = s.ledger.find((r) => r.id === ideaLedgerId);
+  let rec = ideaLedgerId ? s.ledger.find((r) => r.id === ideaLedgerId) : null;
+  // fall back: if no ledger record (the idea wasn't tracked with an id), create one from
+  // the idea passed in, so passing ALWAYS registers rather than silently doing nothing.
+  if (!rec && idea) {
+    rec = { id: `idea_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, idea, status: 'offered', at: new Date().toISOString() };
+    s.ledger.push(rec);
+  }
   if (rec) { rec.status = 'passed'; rec.passedAt = Date.now(); }
   await rSet('exchange:ledger', s.ledger.slice(-400));
-  return { ok: true };
+  return { ok: true, passed: !!rec };
 }
 
 // ---------- Take up an idea (commit to it, awaiting confirmation on next sync) ----------
 // The first half of a two-stage flow: you signal intent here, then when you next sync
 // your NOVA book and the position genuinely appears, actSync links it back to this gem
 // so its thesis and proposed levels travel into the holding rather than being lost.
-async function actTakeUp(ideaLedgerId) {
+async function actTakeUp(ideaLedgerId, idea) {
   const s = await loadAll();
-  const rec = s.ledger.find((r) => r.id === ideaLedgerId);
+  let rec = ideaLedgerId ? s.ledger.find((r) => r.id === ideaLedgerId) : null;
+  // fall back: create a ledger record from the idea itself if none was tracked, so taking
+  // a position ALWAYS works rather than throwing "idea not found".
+  if (!rec && idea) {
+    rec = { id: `idea_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, idea, status: 'offered', at: new Date().toISOString() };
+    s.ledger.push(rec);
+  }
   if (!rec) throw new Error('Idea not found to take up.');
   rec.status = 'taken';
   rec.takenAt = Date.now();
@@ -1310,8 +1354,8 @@ export default async function handler(req, res) {
     else if (action === 'setlevels') out = await actSetLevels(p.holdingId, p.sl, p.tp);
     else if (action === 'rebalance') out = await actRebalance();
     else if (action === 'proofofclose') out = await actProofOfClose(p.positionsImage);
-    else if (action === 'pass') out = await actPass(p.ideaLedgerId);
-    else if (action === 'takeup') out = await actTakeUp(p.ideaLedgerId);
+    else if (action === 'pass') out = await actPass(p.ideaLedgerId, p.idea);
+    else if (action === 'takeup') out = await actTakeUp(p.ideaLedgerId, p.idea);
     else if (action === 'flag') out = await actFlagUnavailable(p.name, p.available);
     else if (action === 'learn') out = await actLearn(p.priceMap);
     else if (action === 'seed') out = await actSeed(p.seedBook, p.seedWatchlist);
