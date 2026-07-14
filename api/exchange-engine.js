@@ -672,17 +672,17 @@ By geography: ${geoLines}
 Total semiconductor/chip exposure: ${chipPct}% of position value (this is the core problem to reduce).
 Account: net liquidity ~${netLiq ?? '?'}, buying power ~${buyingPower ?? '?'}.
 
-FRESH MARKET & COMPANY NEWS (ground every verdict in this, not just price and weight — if a name has a live catalyst, a broken story, or news that changes its outlook, that must shape the HOLD/TRIM/CLOSE call and the exit price):
+FRESH MARKET & COMPANY NEWS (each item source-tagged in [brackets] — real finance/market outlets; ground every verdict in this, not just price and weight — if a name has a live catalyst, a broken story, or news that changes its outlook, that must shape the HOLD/TRIM/CLOSE call and the exit price):
 ${digest(news, 24)}
 
 YOUR TASK, in two parts:
 
 PART 1 — TARGET BALANCE: Decide and EXPLAIN the best target shape for his book. Give sensible target weights by sector and by geography that meaningfully cut the chip concentration and add daytime-tradeable regional exposure, following sound diversification principles (no single stock dominating, no single sector above ~25-30%, genuine geographic spread). Explain WHY in plain, warm language.
 
-PART 2 — PER-HOLDING VERDICT: For EACH current holding, judge HOLD, TRIM, or CLOSE in service of that target. For any TRIM or CLOSE, give ONE sensible exit price (a single clean number) and a SHORT one-line reason (max 18 words, telegram style). Base the exit price on the real current level and a sensible technical/valuation judgement; where he is underwater but the story is intact, it is fine to suggest holding or waiting for a better level rather than crystallising a loss, and where a name is a genuine winner or a broken story, say so. Ground verdicts in the concentration problem: over-weight chip names are prime trim/close candidates; genuine diversifiers and winners are keepers. Keep every field tight; brevity matters.
+PART 2 — PER-HOLDING VERDICT: For EACH current holding, judge HOLD, TRIM, or CLOSE in service of that target. For any TRIM or CLOSE, give ONE sensible exit price (a single clean number) and a SHORT one-line reason (max 18 words, telegram style). Base the exit price on the real current level and a sensible technical/valuation judgement; where he is underwater but the story is intact, it is fine to suggest holding or waiting for a better level rather than crystallising a loss, and where a name is a genuine winner or a broken story, say so. Ground verdicts in the concentration problem: over-weight chip names are prime trim/close candidates; genuine diversifiers and winners are keepers. Keep every field tight; brevity matters. WHERE A VERDICT TURNS ON NEWS (a catalyst, a broken or confirmed story), validate it against CONVERGENCE and cite the specific sources in that holding's "sources" as ["[Source] point"] from MULTIPLE outlets where the wire allows; leave "sources" empty for a purely weight/valuation-driven call. Never fabricate sources.
 
 Respond ONLY with JSON, no markdown:
-{"target":{"summary":"2-3 sentence plain explanation of the target shape and why","sectors":[{"name":"Semiconductors","current":"X%","target":"Y%"}],"geography":[{"name":"US","current":"X%","target":"Y%"}]},"verdicts":[{"ticker":"TICK","name":"Company","verdict":"HOLD|TRIM|CLOSE","exit_price":"single number or null for HOLD","reason":"one line","sector":"...","weight":"X%"}],"headline":"one honest sentence on the book's biggest imbalance","next_step":"what to do first, one line — and it MUST pair each named action with a window that ticker can actually trade in (US names at night, SGX/HK names in daytime); double-check every ticker's tagged window before writing this"}`, 8000);
+{"target":{"summary":"2-3 sentence plain explanation of the target shape and why","sectors":[{"name":"Semiconductors","current":"X%","target":"Y%"}],"geography":[{"name":"US","current":"X%","target":"Y%"}]},"verdicts":[{"ticker":"TICK","name":"Company","verdict":"HOLD|TRIM|CLOSE","exit_price":"single number or null for HOLD","reason":"one line","sources":["[Source] point — only when the verdict turns on news, from multiple outlets; else empty"],"sector":"...","weight":"X%"}],"headline":"one honest sentence on the book's biggest imbalance","next_step":"what to do first, one line — and it MUST pair each named action with a window that ticker can actually trade in (US names at night, SGX/HK names in daytime); double-check every ticker's tagged window before writing this"}`, 8000);
 
   const result = {
     clock: t,
@@ -781,8 +781,8 @@ ${levelEvent}
 FINANCIAL MINDFULNESS (weigh the account's health, not just this stock in isolation):
 ${financeBlock}
 
-FRESH COMPANY & MARKET NEWS:
-${digest(news, 16)}
+FRESH COMPANY & MARKET NEWS (each item is source-tagged in [brackets] — real finance/market outlets):
+${digest(news, 20)}
 
 LESSONS ARCHIVE:
 ${priorLessons}
@@ -794,17 +794,20 @@ ${isFirstReview
   : '2. DO NOT propose or change any stop or target. The levels are LOCKED and are shown above. Your job is only to judge hold or close against them and the story. Do NOT output new levels.'}
 3. WHAT'S CHANGED: explicitly note how your view has shifted (or held firm) since the last review, referencing it.
 4. HOLDING HORIZON & FINANCES: offer a sensible sense of how long to keep holding or what milestone/catalyst to hold toward, and note briefly whether holding on or closing helps or hurts his margin and buying power.
+5. SOURCE VALIDATION (mandatory): your HOLD/TRIM/CLOSE verdict must be validated against the market news above and grounded in CONVERGENCE — MULTIPLE independent sources pointing the same way, not a single headline. In "sources", list the SPECIFIC items you relied on, each as "[Source] the specific point", drawn from DIFFERENT outlets where possible. State honesty in "source_convergence": STRONG if several independent sources agree, MODERATE if some, WEAK/THIN if only one or the wire is quiet on this name — and let a thin read temper confidence. Do NOT fabricate sources or attribute claims to outlets that did not make them; if the wire is quiet on this name, say so plainly.
 
 Respond ONLY with JSON, no markdown:
 ${isFirstReview
-  ? '{"verdict":"HOLD|CLOSE|TRIM","reason":"2-3 sentences grounded in current facts","proposed_sl":"price level to LOCK","proposed_tp":"price level to LOCK","level_note":"","change_note":"one sentence on your initial read","hold_guidance":"how long / toward what, one sentence","conviction":"how sure you are, one short phrase"}'
-  : '{"verdict":"HOLD|CLOSE|TRIM","reason":"2-3 sentences grounded in current facts, referencing how the view has evolved since the last review","level_note":"one sentence on whether a LOCKED level was hit and what to do, or empty if none","change_note":"one sentence on what has changed since the last review","hold_guidance":"how long / toward what, one sentence","conviction":"how sure you are, one short phrase"}'}`, 1500);
+  ? '{"verdict":"HOLD|CLOSE|TRIM","reason":"2-3 sentences grounded in current facts","proposed_sl":"price level to LOCK","proposed_tp":"price level to LOCK","level_note":"","change_note":"one sentence on your initial read","hold_guidance":"how long / toward what, one sentence","sources":["[Source] specific point relied on, from MULTIPLE outlets where the wire allows"],"source_convergence":"STRONG|MODERATE|WEAK/THIN","conviction":"how sure you are, one short phrase"}'
+  : '{"verdict":"HOLD|CLOSE|TRIM","reason":"2-3 sentences grounded in current facts, referencing how the view has evolved since the last review","level_note":"one sentence on whether a LOCKED level was hit and what to do, or empty if none","change_note":"one sentence on what has changed since the last review","hold_guidance":"how long / toward what, one sentence","sources":["[Source] specific point relied on, from MULTIPLE outlets where the wire allows"],"source_convergence":"STRONG|MODERATE|WEAK/THIN","conviction":"how sure you are, one short phrase"}'}`, 1500);
 
   // build this review record
   const record = {
     verdict: verdict.verdict, reason: verdict.reason,
     level_note: verdict.level_note || null, change_note: verdict.change_note || null,
     hold_guidance: verdict.hold_guidance || null,
+    sources: Array.isArray(verdict.sources) ? verdict.sources : [],
+    source_convergence: verdict.source_convergence || null,
     priceAtReview: priceNow ?? null, at: t.iso,
     lockedSL: hasLocked ? lockedSL : (num(verdict.proposed_sl) ?? null),
     lockedTP: hasLocked ? lockedTP : (num(verdict.proposed_tp) ?? null),
