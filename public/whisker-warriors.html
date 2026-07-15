@@ -284,6 +284,26 @@
     border:2px solid var(--gold);
     box-shadow:0 12px 30px rgba(0,0,0,.6),0 0 22px rgba(216,182,74,.5);
     transform-origin:center center}
+  /* ===== run deck view ===== */
+  .chip-btn{cursor:pointer;font-family:inherit;transition:all .18s}
+  .chip-btn:hover{border-color:var(--gold);background:rgba(216,182,74,.16)}
+  .chip-btn:active{transform:scale(.95)}
+  .chip-hint{font-style:normal;font-size:9px;letter-spacing:.08em;text-transform:uppercase;
+    opacity:.6;margin-left:5px;border-left:1px solid var(--line);padding-left:5px}
+  .rd-list{max-height:46vh;overflow-y:auto;display:flex;flex-direction:column;gap:4px;
+    padding-right:2px}
+  .rd-row{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:8px;
+    background:rgba(0,0,0,.22);border:1px solid var(--line)}
+  .rd-row.trained{border-color:var(--gold-dim);background:rgba(216,182,74,.08)}
+  .rd-cost{flex:none;width:20px;height:20px;border-radius:50%;background:var(--gold);
+    color:#1a1208;font-family:var(--font-d);font-weight:700;font-size:11px;
+    display:flex;align-items:center;justify-content:center}
+  .rd-name{flex:1;min-width:0;font-size:13px;color:var(--ink);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rd-stats{flex:none;display:flex;align-items:center;gap:3px;font-family:var(--font-d);font-size:13px}
+  .rd-stats i{color:var(--ink-dim);font-style:normal;opacity:.5}
+  .rd-buff{font-style:normal;font-size:9px;color:var(--gold);margin-left:6px;
+    border:1px solid var(--gold-dim);border-radius:4px;padding:1px 4px}
   /* ===== THE ASCENT: legend faces ===== */
   .rung-face{flex:none;width:34px;height:34px;border-radius:50%;overflow:hidden;
     border:1px solid var(--line);position:relative;
@@ -292,15 +312,6 @@
   .rung.boss.here .rung-face{border-color:#b8483a;filter:grayscale(0) brightness(1);
     box-shadow:0 0 0 1px #b8483a,0 0 14px rgba(184,72,58,.6)}
   .rung.done .rung-face{filter:grayscale(1) brightness(.5)}
-  .watch-face{flex:none;width:52px;height:52px;border-radius:10px;overflow:hidden;
-    position:relative;border:1px solid rgba(184,72,58,calc(.3 + var(--heat)*.6));
-    box-shadow:0 0 calc(var(--heat)*18px) rgba(184,72,58,calc(var(--heat)*.6));
-    filter:grayscale(calc(1 - var(--heat)*0.85)) contrast(calc(1 + var(--heat)*.25))}
-  .watch-face img{width:100%;height:100%;object-fit:cover;display:block}
-  .watch-face .watch-scan{position:absolute;inset:0;pointer-events:none;
-    background:
-      linear-gradient(rgba(184,72,58,calc(var(--heat)*.22)),rgba(184,72,58,calc(var(--heat)*.22))),
-      repeating-linear-gradient(0deg,transparent 0 2px,rgba(0,0,0,.30) 2px 3px)}
   .end-portrait{width:96px;height:96px;margin:12px auto 4px;border-radius:12px;
     overflow:hidden;border:2px solid var(--gold);
     box-shadow:0 8px 24px rgba(0,0,0,.55),0 0 22px rgba(216,182,74,.35);
@@ -316,30 +327,58 @@
     cursor:pointer;transition:all .18s;padding:0}
   .snd-btn:hover{border-color:var(--gold);background:rgba(216,182,74,.2)}
   .snd-btn:active{transform:scale(.92)}
-  /* ===== THE ASCENT: legend watching panel ===== */
-  .watch{--heat:0;display:flex;gap:11px;align-items:flex-start;margin:18px 0 6px;padding:12px 13px;
-    border-radius:12px;position:relative;overflow:hidden;
-    border:1px solid rgba(184,72,58,calc(.22 + var(--heat)*.55));
+  /* ===== THE ASCENT: the house group chat ===== */
+  .chat-panel{--heat:0;margin:16px 0 6px;border-radius:12px;overflow:hidden;
+    border:1px solid rgba(184,72,58,calc(.20 + var(--heat)*.5));
     background:
-      radial-gradient(120% 90% at 50% 0%, rgba(184,72,58,calc(.05 + var(--heat)*.16)), transparent 70%),
+      radial-gradient(120% 80% at 50% 0%, rgba(184,72,58,calc(.04 + var(--heat)*.12)), transparent 70%),
       rgba(10,7,4,.42);
-    box-shadow:0 0 calc(var(--heat)*26px) rgba(184,72,58,calc(var(--heat)*.30))}
-  .watch::before{content:'';position:absolute;inset:0;pointer-events:none;
-    background:repeating-linear-gradient(90deg,transparent 0 3px,rgba(0,0,0,.16) 3px 4px);
-    opacity:calc(.25 + var(--heat)*.3)}
-  .watch-eyes{flex:none;display:flex;gap:6px;padding-top:3px;position:relative;z-index:1}
-  .watch-eyes i{width:9px;height:9px;border-radius:50%;display:block;
-    background:radial-gradient(circle at 50% 45%, #ffd76a, #e98a7a 45%, #6b2318 100%);
-    box-shadow:0 0 calc(5px + var(--heat)*9px) rgba(233,138,122,calc(.55 + var(--heat)*.45));
-    animation:watchBlink 4.4s infinite}
-  .watch-eyes i:last-child{animation-delay:.09s}
-  @keyframes watchBlink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.08)}}
-  .watch-body{flex:1;min-width:0;position:relative;z-index:1}
-  .watch-who{font-family:var(--font-d);font-weight:700;font-size:10px;letter-spacing:.09em;
-    text-transform:uppercase;color:#e98a7a;display:block}
-  .watch-who em{font-style:normal;color:var(--ink-dim);letter-spacing:.05em;opacity:.75;font-weight:400}
-  .watch-body p{font-size:13.5px;line-height:1.5;color:#e9c8a0;font-style:italic;
-    margin-top:4px;min-height:20px}
+    box-shadow:0 0 calc(var(--heat)*22px) rgba(184,72,58,calc(var(--heat)*.26))}
+  .chat-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
+    padding:8px 11px;border-bottom:1px solid var(--line);
+    background:rgba(0,0,0,.28)}
+  .chat-title{font-family:var(--font-d);font-weight:700;font-size:12px;letter-spacing:.06em;
+    text-transform:uppercase;color:#e98a7a;display:inline-flex;align-items:center;gap:5px}
+  .chat-sub{font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-dim);opacity:.7}
+  .chat-list{max-height:230px;overflow-y:auto;padding:10px 10px 12px;
+    display:flex;flex-direction:column;gap:7px;scroll-behavior:smooth}
+  .chat-list::-webkit-scrollbar{width:4px}
+  .chat-list::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px}
+  .msg{display:flex;gap:7px;align-items:flex-end;max-width:88%;
+    animation:msgIn .28s cubic-bezier(.2,1.2,.4,1)}
+  @keyframes msgIn{0%{opacity:0;transform:translateY(7px) scale(.96)}100%{opacity:1;transform:none}}
+  .msg.left{align-self:flex-start}
+  .msg.right{align-self:flex-end;flex-direction:row-reverse}
+  .msg.grouped{margin-top:-4px}
+  .msg.left.grouped{padding-left:33px}
+  .msg.right.grouped{padding-right:33px}
+  .msg-av{flex:none;width:26px;height:26px;border-radius:50%;overflow:hidden;
+    border:1px solid var(--line);background:rgba(0,0,0,.4)}
+  .msg-av img{width:100%;height:100%;object-fit:cover;display:block}
+  .msg-av-fb{width:100%;height:100%;display:flex;align-items:center;justify-content:center;
+    color:var(--ink-dim)}
+  .msg-av.dim{opacity:.45}
+  .msg-col{min-width:0;display:flex;flex-direction:column;gap:2px}
+  .msg.right .msg-col{align-items:flex-end}
+  .msg-who{font-family:var(--font-d);font-weight:700;font-size:9px;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--ink-dim);padding:0 3px}
+  .msg-bub{font-size:12.5px;line-height:1.45;padding:6px 10px;border-radius:12px;
+    background:rgba(255,255,255,.05);border:1px solid var(--line);color:var(--ink);
+    word-break:break-word}
+  .msg.left .msg-bub{border-bottom-left-radius:4px}
+  .msg.right .msg-bub{border-bottom-right-radius:4px;
+    background:rgba(90,134,176,.14);border-color:rgba(90,134,176,.42);color:#dce8f2}
+  /* the cat waiting on the throne gets the red bubble wherever they sit */
+  .msg.throne .msg-bub{background:rgba(184,72,58,.18);border-color:rgba(184,72,58,.55);color:#f0d8c8}
+  .msg.throne .msg-who{color:#e98a7a}
+  .msg.final .msg-bub{background:rgba(184,72,58,.3);border-color:#b8483a;color:#ffd9c8;
+    font-weight:600;box-shadow:0 0 16px rgba(184,72,58,.4)}
+  .msg-bub.dots{display:flex;gap:3px;padding:9px 11px;align-items:center}
+  .msg-bub.dots i{width:4px;height:4px;border-radius:50%;background:var(--ink-dim);
+    animation:typeDot 1.2s infinite}
+  .msg-bub.dots i:nth-child(2){animation-delay:.16s}
+  .msg-bub.dots i:nth-child(3){animation-delay:.32s}
+  @keyframes typeDot{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
   /* ===== Deckbuilder ===== */
   .deck-bar.cap-hit{animation:capShake .4s ease-out;border-color:#b8483a}
   @keyframes capShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
@@ -1913,55 +1952,104 @@ const LEGEND_DIALOGUE={
     ],
   ],
 };
-// ---- THE ASCENT: the legend watches your climb, rung by rung ----
-// index = run.rung (0-6). The voice on the map before each fight.
-const LEGEND_WATCH={
-  selina:[
-    'Someone new is climbing. I should tell Oscar. Oscar? ...Oscar?',
-    'Two rungs. Cute. I have been on this one my whole life.',
-    'You fight alone. That is the saddest thing I have ever seen.',
-    'Still climbing? Nobody is coming to help you. I checked.',
-    'You are closer than the others got. That is not a compliment.',
-    'One more floor. Then you will see what devotion actually does.',
-    'You made it. Oscar is not here. So it is just us.',
+// ---- THE ASCENT: the house group chat ----
+// The five legends message each other as you climb. index = run.rung (0-6).
+// `who` is a legend id; the throne legend's lines get flagged at render time.
+// Alignment alternates automatically by speaker, Selina-left / Oscar-right etc.
+const HOUSE_CHAT=[
+  // ===== RUNG 1: The Alley =====
+  [
+    {who:'rocket', text:'SOMETHING IS IN THE ALLEY.'},
+    {who:'smokey', text:'Yes.'},
+    {who:'rocket', text:'YOU KNEW? AND YOU SAID NOTHING?'},
+    {who:'smokey', text:'You were asleep. Briefly. It was nice.'},
+    {who:'oscar',  text:'It is a climber. They never get past the Yard.'},
+    {who:'goku',   text:'Oh no. Should we say hello?'},
+    {who:'oscar',  text:'No.'},
   ],
-  rocket:[
-    'SOMEONE IS ON THE STAIRS. I AM AWAKE. I AM ALWAYS AWAKE.',
-    'STILL COMING? IT IS BARELY DAWN. THIS IS MY HOUR.',
-    'I HAVE YELLED ABOUT YOU THREE TIMES NOW. NOBODY CARES.',
-    'YOU ARE MAKING TOO MUCH NOISE. THAT IS MY JOB.',
-    'THE BEDROOM IS AHEAD. THAT IS WHERE I DO MY BEST WORK.',
-    'ONE FLOOR. I HAVE BEEN SCREAMING SINCE FOUR. I HAVE MORE.',
-    'YOU ARE HERE. GOOD. NOW EVERYONE IS UP.',
+  // ===== RUNG 2: The Yard =====
+  [
+    {who:'oscar',  text:'It got past the Yard.'},
+    {who:'selina', text:'You said they never get past the Yard.'},
+    {who:'oscar',  text:'I am aware of what I said, Selina.'},
+    {who:'rocket', text:'I AM GOING TO YELL ABOUT THIS.'},
+    {who:'smokey', text:'You yell about the bin lid.'},
+    {who:'rocket', text:'THE BIN LID MOVED ON ITS OWN. TWICE.'},
+    {who:'goku',   text:'It was the wind, sweetheart.'},
   ],
-  smokey:[
-    'Something moved in the alley. I am already aware.',
-    '...',
-    'You have not looked up once. I have been up here the whole time.',
-    'Halfway. I have watched every mistake you made getting here.',
-    'You are being followed. You have been for a while.',
-    'One more. I am not on the throne. I am behind you.',
-    'You found the room. You still have not found me.',
+  // ===== RUNG 3: The Terrace =====
+  [
+    {who:'selina', text:'Has anyone seen Oscar?'},
+    {who:'smokey', text:'He is behind you.'},
+    {who:'selina', text:'Oscar!! There you are!!'},
+    {who:'oscar',  text:'I was gone for four minutes.'},
+    {who:'selina', text:'It felt like a season.'},
+    {who:'goku',   text:'The climber is on the Terrace. They look tired.'},
+    {who:'rocket', text:'GOOD. TIRED IS GOOD. I AM NEVER TIRED.'},
+    {who:'smokey', text:'You slept through the entire Yard fight.'},
+    {who:'rocket', text:'THAT WAS TACTICAL.'},
   ],
-  goku:[
-    'Oh! Someone is climbing. That is exciting. Be careful though.',
-    'You are doing really well. I mean that. Do you want a break?',
-    'It gets harder from here. I am sorry about that in advance.',
-    'Are you hurt? You look hurt. There is sun on the landing.',
-    'I keep hoping you turn back. I do not think you will.',
-    'One floor left. I wish you would stop. I really do.',
-    'You came all the way. Alright. I will try not to enjoy this.',
+  // ===== RUNG 4: The Kitchen =====
+  [
+    {who:'rocket', text:'THEY ARE IN THE KITCHEN. THE KITCHEN.'},
+    {who:'rocket', text:'THAT IS WHERE THE FOOD LIVES.'},
+    {who:'oscar',  text:'That is where MY food lives.'},
+    {who:'goku',   text:'We could share?'},
+    {who:'oscar',  text:'Goku.'},
+    {who:'goku',   text:'I am just saying there is a lot of it.'},
+    {who:'smokey', text:'There is not a lot of it.'},
+    {who:'selina', text:'There is never a lot of it. Oscar sits on the bowl.'},
+    {who:'oscar',  text:'I am GUARDING the bowl.'},
+    {who:'smokey', text:'You are sitting on it.'},
   ],
-  oscar:[
-    'Something is in my alley. It will not be there long.',
-    'The yard is mine. The bins are mine. You are trespassing twice.',
-    'Selina says you are still coming. Selina worries. I do not.',
-    'You are in my kitchen now. Everything you touch is mine.',
-    'Halfway up MY house. Rocket is screaming. Let him.',
-    'You are outside my bedroom. Think very carefully.',
-    'You are in my house. Kneel, or be knelt.',
+  // ===== RUNG 5: The Landing =====
+  [
+    {who:'oscar',  text:'Halfway. Nobody has ever been halfway.'},
+    {who:'smokey', text:'One did. In the spring.'},
+    {who:'oscar',  text:'...What happened to them.'},
+    {who:'smokey', text:'I happened to them.'},
+    {who:'goku',   text:'Smokey!'},
+    {who:'smokey', text:'They are fine. They live under the shed now. They chose that.'},
+    {who:'rocket', text:'IS THAT WHAT THE NOISE UNDER THE SHED IS'},
+    {who:'smokey', text:'The noise under the shed is you, at 4am, yelling into it.'},
+    {who:'selina', text:'It really is, Rocket.'},
   ],
+  // ===== RUNG 6: The Bedroom =====
+  [
+    {who:'selina', text:'They are outside the bedroom.'},
+    {who:'selina', text:'Oscar. Oscar they are outside the bedroom.'},
+    {who:'oscar',  text:'I heard you the first time.'},
+    {who:'rocket', text:'THIS IS MY ROOM. THIS IS WHERE I DO MY BEST WORK.'},
+    {who:'rocket', text:'FOUR AM. EVERY MORNING. FULL VOLUME. ASK ANYONE.'},
+    {who:'goku',   text:'We know, Rocket. We all know.'},
+    {who:'smokey', text:'The whole street knows.'},
+    {who:'goku',   text:'Should someone warn them about the throne?'},
+    {who:'oscar',  text:'No. Let them find out.'},
+    {who:'selina', text:'That is so cool when you say things like that.'},
+    {who:'oscar',  text:'I know.'},
+  ],
+  // ===== RUNG 7: The Throne =====
+  [
+    {who:'rocket', text:'THEY MADE IT. THEY ACTUALLY MADE IT.'},
+    {who:'goku',   text:'Oh. Oh dear. Good luck. I mean that.'},
+    {who:'smokey', text:'I have watched every step. They are better than the spring one.'},
+    {who:'selina', text:'Is everyone watching this? Are we all watching?'},
+    {who:'oscar',  text:'Everyone is watching.'},
+    {who:'rocket', text:'I AM WATCHING SO LOUD.'},
+    {who:'smokey', text:'That is not a thing.'},
+  ],
+];
+
+// what the throne legend says when it is THEIR turn at the top.
+// appended as the final message of rung 7 so the last word is always theirs.
+const THRONE_LAST_WORD={
+  selina:'I never fight alone. Not really. Come up and see why.',
+  rocket:'I HAVE BEEN AWAKE SINCE FOUR WAITING FOR THIS.',
+  smokey:'I am not on the throne. I am already behind you.',
+  goku:'You came all the way. Alright. I will try not to enjoy this.',
+  oscar:'You are in my house. Kneel, or be knelt.',
 };
+
 const LEGEND_DEFEAT={
   selina:'Selina blinks slowly, then pads away to find Oscar.',
   rocket:'Rocket yells once more, quieter, and finally goes back to sleep.',
@@ -1981,12 +2069,15 @@ const LEGEND_WIN={
 // reward pool offered after each won rung
 function rollRewards(runDeck,owned,lives){
   const out=[];
-  // 1) recruit a card into the run deck (not permanent)
+  const deckFull = runDeck.length >= DECK_MAX;
+  // 1) recruit a card into the run deck (not permanent).
+  //    Once the deck hits DECK_MAX we stop offering recruits — the deckbuilder
+  //    promises a 12-card limit and the run must honour the same rule.
   const pool=ROSTER.filter(c=>!c.boss&&!runDeck.includes(c.id));
-  if(pool.length){
+  if(pool.length && !deckFull){
     const pick=pool[Math.floor(Math.random()*pool.length)];
     out.push({kind:'recruit',card:pick,title:'Recruit',
-      desc:pick.name+' joins this run.',icon:'paw'});
+      desc:pick.name+' is shuffled straight into your deck.',icon:'paw'});
   }
   // 2) upgrade a card already in the deck
   if(runDeck.length){
@@ -1994,7 +2085,18 @@ function rollRewards(runDeck,owned,lives){
     const c=BY_ID[id];
     const mode=Math.random()<0.5?'atk':'hp';
     out.push({kind:'upgrade',cardId:id,mode,title:'Train',
-      desc:c.name+' gains '+(mode==='atk'?'+1 ATK':'+2 HP')+' for this run.',icon:'swords'});
+      desc:c.name+' keeps '+(mode==='atk'?'+1 ATK':'+2 HP')+' for the rest of the climb.',icon:'swords'});
+  }
+  // 2b) deck is full: offer a SWAP instead of a recruit, so a full deck still
+  //     gets meaningful choices rather than falling back to fish every time.
+  if(deckFull && pool.length && runDeck.length){
+    const inc=pool[Math.floor(Math.random()*pool.length)];
+    const outId=runDeck[Math.floor(Math.random()*runDeck.length)];
+    const outC=BY_ID[outId];
+    if(outC){
+      out.push({kind:'swap',card:inc,outId,title:'Swap',
+        desc:inc.name+' replaces '+outC.name+'. Deck stays at '+DECK_MAX+'.',icon:'paw'});
+    }
   }
   // 3) heal / gain a life
   if(lives<RUN_LIVES){
@@ -2172,8 +2274,44 @@ function SoundBtn({className=''}){
   );
 }
 
+/* ---------- THE ASCENT: your current run deck ---------- */
+function RunDeckView({run,onClose}){
+  const cards=run.deck.map(id=>BY_ID[id]).filter(Boolean);
+  const byCost=[...cards].sort((a,b)=>a.cost-b.cost||a.name.localeCompare(b.name));
+  return (
+    <div className="modal-bg" onClick={onClose}>
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <h3 style={{textAlign:'center'}}><Icon name="paw" size={18} style={{marginRight:6}}/>Your Run Deck</h3>
+        <p style={{textAlign:'center',color:'var(--ink-dim)',fontSize:12,marginBottom:12}}>
+          {cards.length} / {DECK_MAX} cats{cards.length>=DECK_MAX?' · full':''}. Recruits and training are applied automatically — nothing to set up.
+        </p>
+        <div className="rd-list">
+          {byCost.map((c,i)=>{
+            const b=run.buffs[c.id];
+            return (
+              <div key={c.id+i} className={`rd-row ${b?'trained':''}`}>
+                <span className="rd-cost">{c.cost}</span>
+                <span className="rd-name">{c.name}</span>
+                <span className="rd-stats">
+                  <b style={{color:'#e98a7a'}}>{c.atk+((b&&b.atk)||0)}</b>
+                  <i>/</i>
+                  <b style={{color:'#7ac07a'}}>{c.hp+((b&&b.hp)||0)}</b>
+                  {b && <em className="rd-buff">+{b.atk?b.atk+' ATK':''}{b.atk&&b.hp?' ':''}{b.hp?b.hp+' HP':''}</em>}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{textAlign:'center',marginTop:14}}>
+          <button className="btn gold" onClick={onClose}>Back to the climb</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- THE ASCENT: the ladder map ---------- */
-function RunMap({run,onFight,onAbandon}){
+function RunMap({run,onFight,onAbandon,onShowDeck}){
   const rung=RUNGS[run.rung];
   const legend=run.legendId?BY_ID[run.legendId]:null;
   const isBoss=!!rung.boss;
@@ -2209,7 +2347,9 @@ function RunMap({run,onFight,onAbandon}){
       </div>
 
       <div className="run-deck-strip">
-        <span className="statchip"><Icon name="paw" size={12}/> {run.deck.length} cats</span>
+        <button className="statchip chip-btn" onClick={onShowDeck}>
+          <Icon name="paw" size={12}/> {run.deck.length}/{DECK_MAX} cats <em className="chip-hint">view</em>
+        </button>
         {Object.keys(run.buffs).length>0 && <span className="statchip"><Icon name="swords" size={12}/> {Object.keys(run.buffs).length} trained</span>}
         <span className="statchip"><Icon name="fish" size={12}/> {run.fish} earned</span>
       </div>
@@ -2226,44 +2366,107 @@ function RunMap({run,onFight,onAbandon}){
   );
 }
 
-/* ---------- THE ASCENT: the legend heckles you from the throne ---------- */
+/* ---------- THE ASCENT: the house group chat ---------- */
+// Messages arrive one at a time with a typing dot, like a real thread.
+// Alignment is per-speaker: the throne legend sits right, everyone else left.
 function LegendWatch({legendId,rung}){
-  const c=BY_ID[legendId];
-  const photo=(typeof BOSS_PHOTOS!=='undefined'&&BOSS_PHOTOS[legendId])||(c&&c.photo)||null;
-  const lines=LEGEND_WATCH[legendId]||[];
-  const text=lines[Math.min(rung,lines.length-1)]||'';
-  const [typed,setTyped]=useState('');
-  const boxRef=useRef(null);
-  // heat 0..1 — the closer you get, the more the panel glows
+  const script=HOUSE_CHAT[Math.min(rung,HOUSE_CHAT.length-1)]||[];
+  // at the throne, the legend facing you always gets the last word
+  const full=React.useMemo(()=>{
+    const base=script.slice();
+    if(rung>=6 && THRONE_LAST_WORD[legendId]){
+      base.push({who:legendId,text:THRONE_LAST_WORD[legendId],last:true});
+    }
+    return base;
+  },[rung,legendId]);
+
+  const [shown,setShown]=useState(0);   // how many messages are visible
+  const [typing,setTyping]=useState(false);
+  const listRef=useRef(null);
   const heat=Math.min(1,rung/6);
 
+  // play the thread out, message by message
   useEffect(()=>{
+    setShown(0); setTyping(false);
     const reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches;
-    if(reduce){ setTyped(text); return; }
-    setTyped('');
-    let i=0;
-    const iv=setInterval(()=>{
-      i++; setTyped(text.slice(0,i));
-      if(i>=text.length) clearInterval(iv);
-    },22);
-    if(boxRef.current) gsap.fromTo(boxRef.current,{y:8,opacity:0},{y:0,opacity:1,duration:.4,ease:'power2.out'});
-    return ()=>clearInterval(iv);
-  },[text]);
+    if(reduce){ setShown(full.length); return; }
+    let i=0; const timers=[];
+    const step=()=>{
+      if(i>=full.length){ setTyping(false); return; }
+      setTyping(true);
+      const t1=setTimeout(()=>{
+        setTyping(false);
+        setShown(n=>n+1);
+        SFX.blip();
+        i++;
+        const gap=380+Math.min(700,(full[i-1].text.length*14));
+        const t2=setTimeout(step,gap); timers.push(t2);
+      }, 420+Math.random()*260);
+      timers.push(t1);
+    };
+    const boot=setTimeout(step,300); timers.push(boot);
+    return ()=>timers.forEach(clearTimeout);
+  },[full]);
+
+  // keep the newest message in view
+  useEffect(()=>{
+    const el=listRef.current; if(!el)return;
+    el.scrollTop=el.scrollHeight;
+  },[shown,typing]);
+
+  const visible=full.slice(0,shown);
+  const lastWho=visible.length?visible[visible.length-1].who:null;
+  // Alignment: the throne legend always sits right (they're the one you're climbing to).
+  // Everyone else alternates by order of appearance, so the thread reads as a
+  // back-and-forth rather than one wall of left-aligned messages.
+  const sideOf=React.useMemo(()=>{
+    const map={}; let flip=false;
+    full.forEach(m=>{
+      if(map[m.who]!==undefined)return;
+      if(m.who===legendId){ map[m.who]='right'; return; }
+      map[m.who]=flip?'right':'left';
+      flip=!flip;
+    });
+    return map;
+  },[full,legendId]);
 
   return (
-    <div ref={boxRef} className="watch" style={{'--heat':heat}}>
-      <div className="watch-face">
-        {photo
-          ? <img src={photo} alt={c?c.name:''}
-              style={{objectPosition:(typeof BOSS_FRAME!=='undefined'&&c&&BOSS_FRAME[c.id])||'50% 30%'}}/>
-          : <div className="watch-eyes"><i/><i/></div>}
-        <span className="watch-scan"/>
+    <div className="chat-panel" style={{'--heat':heat}}>
+      <div className="chat-head">
+        <span className="chat-title"><Icon name="cat" size={12}/> The House</span>
+        <span className="chat-sub">{full.length} messages · they can see you</span>
       </div>
-      <div className="watch-body">
-        <span className="watch-who">
-          {c?c.name:'The Throne'} <em>watches from the throne</em>
-        </span>
-        <p>{text?<>"{typed}"</>:null}</p>
+      <div className="chat-list" ref={listRef}>
+        {visible.map((m,i)=>{
+          const c=BY_ID[m.who];
+          const photo=(typeof BOSS_PHOTOS!=='undefined'&&BOSS_PHOTOS[m.who])||(c&&c.photo)||null;
+          const isThrone=m.who===legendId;
+          const side=sideOf[m.who]||'left';
+          const prev=i>0?visible[i-1]:null;
+          const grouped=prev&&prev.who===m.who;   // consecutive msgs from same cat
+          return (
+            <div key={i} className={`msg ${side} ${isThrone?'throne':''} ${grouped?'grouped':''} ${m.last?'final':''}`}>
+              {!grouped && (
+                <div className="msg-av">
+                  {photo
+                    ? <img src={photo} alt={c?c.name:''}
+                        style={{objectPosition:(typeof BOSS_FRAME!=='undefined'&&BOSS_FRAME[m.who])||'50% 30%'}}/>
+                    : <span className="msg-av-fb"><Icon name="cat" size={12}/></span>}
+                </div>
+              )}
+              <div className="msg-col">
+                {!grouped && <span className="msg-who">{c?c.name:m.who}</span>}
+                <div className="msg-bub">{m.text}</div>
+              </div>
+            </div>
+          );
+        })}
+        {typing && lastWho!==null && (
+          <div className="msg typing-row left">
+            <div className="msg-av dim"><span className="msg-av-fb"><Icon name="cat" size={12}/></span></div>
+            <div className="msg-col"><div className="msg-bub dots"><i/><i/><i/></div></div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -2435,6 +2638,7 @@ function App(){
   const [run,setRun]=useState(null);
   const [rewards,setRewards]=useState(null);
   const [throne,setThrone]=useState(false);
+  const [deckView,setDeckView]=useState(false);
   const [runEnd,setRunEnd]=useState(null);
   const [bestRung,setBestRung]=useState(saved&&saved.bestRung?saved.bestRung:0);
   const [legendsBeaten,setLegendsBeaten]=useState(saved&&saved.legendsBeaten?saved.legendsBeaten:[]);
@@ -2512,9 +2716,27 @@ function App(){
   function takeReward(r){
     SFX.reward();
     setRewards(null);
+    // tell the player plainly what just happened — no deckbuilder trip needed
+    if(r.kind==='recruit') showToast(r.card.name+' added to your run deck.');
+    else if(r.kind==='swap') showToast(r.card.name+' swapped in for '+BY_ID[r.outId].name+'.');
+    else if(r.kind==='upgrade') showToast(BY_ID[r.cardId].name+' trained '+(r.mode==='atk'?'+1 ATK':'+2 HP')+'.');
+    else if(r.kind==='life') showToast('Rested. A life recovered.');
+    else if(r.kind==='fish') showToast('+'+r.amount+' fish foraged.');
     setRun(prev=>{
       if(!prev)return prev;
-      if(r.kind==='recruit') return {...prev,deck:[...prev.deck,r.card.id]};
+      if(r.kind==='recruit'){
+        // hard guard: never exceed the same cap the deckbuilder enforces
+        if(prev.deck.length>=DECK_MAX) return prev;
+        return {...prev,deck:[...prev.deck,r.card.id]};
+      }
+      if(r.kind==='swap'){
+        const i=prev.deck.indexOf(r.outId);
+        if(i<0) return prev;
+        const d=[...prev.deck]; d[i]=r.card.id;
+        // the removed cat's training goes with it
+        const b={...prev.buffs}; delete b[r.outId];
+        return {...prev,deck:d,buffs:b};
+      }
       if(r.kind==='upgrade'){
         const b={...prev.buffs};
         const cur=b[r.cardId]||{atk:0,hp:0};
@@ -2587,7 +2809,9 @@ function App(){
             <h3>The Ascent</h3>
             <p style={{marginBottom:10}}>A run is seven rungs, from <b>The Alley</b> up to <b>The Throne</b>. You carry <b>nine lives</b>: lose a fight and you spend one, then retry the same rung. Spend all nine and the run ends.</p>
             <h3>Rewards</h3>
-            <p style={{marginBottom:10}}>Clear a rung and you pick <b>one of three</b> spoils: <b>Recruit</b> a new cat into the run, <b>Train</b> a cat you already have (+1 ATK or +2 HP), <b>Rest</b> to recover a life, or <b>Forage</b> for fish. The others are gone, so choose well. Training and recruits last for that run only.</p>
+            <p style={{marginBottom:10}}>Clear a rung and you pick <b>one of three</b> spoils: <b>Recruit</b> a new cat, <b>Train</b> a cat you already have (+1 ATK or +2 HP), <b>Rest</b> to recover a life, or <b>Forage</b> for fish. The others are gone, so choose well.</p>
+            <p style={{marginBottom:10}}>Rewards apply <b>instantly</b> — a recruited cat is shuffled straight into your deck and can appear in your very next hand. You never need to return to the deckbuilder mid-run. Tap the <b>cats</b> chip on the map any time to see exactly what you are carrying. Recruits and training last for that run only.</p>
+            <p style={{marginBottom:10}}>Your run deck is capped at <b>{DECK_MAX}</b> cats, same as the deckbuilder. Once it's full, Recruit is replaced by <b>Swap</b>: a new cat takes an old one's place, and the cat you drop loses any training it had.</p>
             <h3>The Throne</h3>
             <p style={{marginBottom:10}}>One of the five legends waits at the top. Beat them and they join your roster <b>permanently</b>. Lose and the whole climb ends. Fish you banked along the way are yours either way.</p>
             <p style={{marginTop:12,fontSize:11,opacity:.7}}>Breed photos sourced from Wikimedia Commons (freely licensed). The five legendary bosses are Hammy and Naddy's own cats: Oscar, Rocket, Smokey, Goku and Selina.</p>
@@ -2605,7 +2829,7 @@ function App(){
       )}
 
       {screen==='runmap' && run && (
-        <RunMap run={run} onFight={fightRung} onAbandon={()=>{if(confirm('Abandon the run? You keep the fish you have earned.'))abandonRun();}}/>
+        <RunMap run={run} onFight={fightRung} onShowDeck={()=>setDeckView(true)} onAbandon={()=>{if(confirm('Abandon the run? You keep the fish you have earned.'))abandonRun();}}/>
       )}
 
       {screen==='battle' && run && (
@@ -2623,6 +2847,7 @@ function App(){
           onWin={onRungWin} onLose={onRungLose} onQuit={onRungLose}/>
       )}
 
+      {deckView && run && <RunDeckView run={run} onClose={()=>setDeckView(false)}/>}
       {rewards && <RewardPick rewards={rewards} onPick={takeReward}/>}
       {throne && run && <ThroneIntro legendId={run.legendId} onGo={()=>{setThrone(false);setScreen('battle');}}/>}
       {runEnd && <RunEnd run={runEnd.run} won={runEnd.won} onDone={finishRun}/>}
