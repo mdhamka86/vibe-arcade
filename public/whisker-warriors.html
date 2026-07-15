@@ -284,6 +284,31 @@
     border:2px solid var(--gold);
     box-shadow:0 12px 30px rgba(0,0,0,.6),0 0 22px rgba(216,182,74,.5);
     transform-origin:center center}
+  /* ===== THE ASCENT: legend faces ===== */
+  .rung-face{flex:none;width:34px;height:34px;border-radius:50%;overflow:hidden;
+    border:1px solid var(--line);position:relative;
+    filter:grayscale(.7) brightness(.7);transition:all .3s}
+  .rung-face img{width:100%;height:100%;object-fit:cover;display:block}
+  .rung.boss.here .rung-face{border-color:#b8483a;filter:grayscale(0) brightness(1);
+    box-shadow:0 0 0 1px #b8483a,0 0 14px rgba(184,72,58,.6)}
+  .rung.done .rung-face{filter:grayscale(1) brightness(.5)}
+  .watch-face{flex:none;width:52px;height:52px;border-radius:10px;overflow:hidden;
+    position:relative;border:1px solid rgba(184,72,58,calc(.3 + var(--heat)*.6));
+    box-shadow:0 0 calc(var(--heat)*18px) rgba(184,72,58,calc(var(--heat)*.6));
+    filter:grayscale(calc(1 - var(--heat)*0.85)) contrast(calc(1 + var(--heat)*.25))}
+  .watch-face img{width:100%;height:100%;object-fit:cover;display:block}
+  .watch-face .watch-scan{position:absolute;inset:0;pointer-events:none;
+    background:
+      linear-gradient(rgba(184,72,58,calc(var(--heat)*.22)),rgba(184,72,58,calc(var(--heat)*.22))),
+      repeating-linear-gradient(0deg,transparent 0 2px,rgba(0,0,0,.30) 2px 3px)}
+  .end-portrait{width:96px;height:96px;margin:12px auto 4px;border-radius:12px;
+    overflow:hidden;border:2px solid var(--gold);
+    box-shadow:0 8px 24px rgba(0,0,0,.55),0 0 22px rgba(216,182,74,.35);
+    animation:endPop .5s cubic-bezier(.2,1.3,.4,1)}
+  .end-portrait img{width:100%;height:100%;object-fit:cover;display:block}
+  .end-portrait.lost{border-color:#b8483a;box-shadow:0 8px 24px rgba(0,0,0,.55),0 0 22px rgba(184,72,58,.45)}
+  .end-portrait.lost img{filter:grayscale(.35) brightness(.85)}
+  @keyframes endPop{0%{opacity:0;transform:scale(.5) rotate(-6deg)}100%{opacity:1;transform:scale(1) rotate(0)}}
   /* ===== sound toggle ===== */
   .snd-btn{flex:0 0 auto;width:30px;height:30px;border-radius:50%;
     border:1px solid rgba(216,182,74,.4);background:rgba(216,182,74,.10);
@@ -2164,9 +2189,15 @@ function RunMap({run,onFight,onAbandon}){
         {RUNGS.slice().reverse().map(r=>{
           const idx=r.n-1;
           const done=idx<run.rung, here=idx===run.rung;
+          const bossPhoto = r.boss && legend && (typeof BOSS_PHOTOS!=='undefined') && BOSS_PHOTOS[legend.id];
           return (
             <div key={r.n} className={`rung ${done?'done':''} ${here?'here':''} ${r.boss?'boss':''}`}>
-              <div className="rung-dot">{done?<Icon name="paw" size={12}/>:r.n}</div>
+              {bossPhoto
+                ? <div className="rung-face">
+                    <img src={bossPhoto} alt={legend.name}
+                      style={{objectPosition:(typeof BOSS_FRAME!=='undefined'&&BOSS_FRAME[legend.id])||'50% 30%'}}/>
+                  </div>
+                : <div className="rung-dot">{done?<Icon name="paw" size={12}/>:r.n}</div>}
               <div className="rung-body">
                 <div className="rung-name">{r.boss&&legend?legend.name+' · '+legend.title:r.name}</div>
                 <div className="rung-sub">{done?'cleared':r.sub}</div>
@@ -2198,6 +2229,7 @@ function RunMap({run,onFight,onAbandon}){
 /* ---------- THE ASCENT: the legend heckles you from the throne ---------- */
 function LegendWatch({legendId,rung}){
   const c=BY_ID[legendId];
+  const photo=(typeof BOSS_PHOTOS!=='undefined'&&BOSS_PHOTOS[legendId])||(c&&c.photo)||null;
   const lines=LEGEND_WATCH[legendId]||[];
   const text=lines[Math.min(rung,lines.length-1)]||'';
   const [typed,setTyped]=useState('');
@@ -2220,8 +2252,12 @@ function LegendWatch({legendId,rung}){
 
   return (
     <div ref={boxRef} className="watch" style={{'--heat':heat}}>
-      <div className="watch-eyes">
-        <i/><i/>
+      <div className="watch-face">
+        {photo
+          ? <img src={photo} alt={c?c.name:''}
+              style={{objectPosition:(typeof BOSS_FRAME!=='undefined'&&c&&BOSS_FRAME[c.id])||'50% 30%'}}/>
+          : <div className="watch-eyes"><i/><i/></div>}
+        <span className="watch-scan"/>
       </div>
       <div className="watch-body">
         <span className="watch-who">
@@ -2351,6 +2387,7 @@ function ThroneIntro({legendId,onGo}){
 /* ---------- THE ASCENT: run summary ---------- */
 function RunEnd({run,won,onDone}){
   const legend=run.legendId?BY_ID[run.legendId]:null;
+  const photo=legend&&((typeof BOSS_PHOTOS!=='undefined'&&BOSS_PHOTOS[legend.id])||legend.photo);
   return (
     <div className="modal-bg">
       <div className="modal" onClick={e=>e.stopPropagation()}>
@@ -2358,6 +2395,12 @@ function RunEnd({run,won,onDone}){
           {won? <><Icon name="trophy" size={20} style={{marginRight:6}}/>The Ascent Complete</>
               : <><Icon name="skull" size={18} style={{marginRight:6}}/>The Run Ends</>}
         </h3>
+        {photo && (won || run.rung===6) && (
+          <div className={`end-portrait ${won?'won':'lost'}`}>
+            <img src={photo} alt={legend.name}
+              style={{objectPosition:(typeof BOSS_FRAME!=='undefined'&&BOSS_FRAME[legend.id])||'50% 30%'}}/>
+          </div>
+        )}
         {won && legend && <p className="throne-line" style={{marginTop:10}}>{LEGEND_DEFEAT[run.legendId]}</p>}
         {!won && legend && run.rung===6 && <p className="throne-line" style={{marginTop:10,color:'#e98a7a'}}>{LEGEND_WIN[run.legendId]}</p>}
         {!won && <p style={{textAlign:'center',color:'var(--ink-dim)',fontSize:13,marginTop:10}}>
