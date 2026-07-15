@@ -122,8 +122,6 @@
     display:flex;align-items:center;gap:2px}
   .card .spdpip .pip-lbl{font-family:var(--font-b);font-size:6px;font-weight:800;font-style:normal;letter-spacing:.5px;color:#9fd0f0;opacity:.85;margin-left:1px}
   .card.legendary{border-color:var(--gold)}
-  .ability-chip{margin:0 8px 8px;background:rgba(0,0,0,.3);border:1px solid var(--line);border-radius:8px;padding:4px 7px;font-size:9.5px;line-height:1.25;color:var(--ink-dim)}
-  .ability-chip b{color:var(--gold);font-size:10px}
   /* ===== Collection grid ===== */
   .topbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;flex-wrap:wrap}
   .topbar h2{font-size:22px;color:var(--gold)}
@@ -195,7 +193,93 @@
   .reveal-card .card{width:180px}
   .swap-hint{background:rgba(0,0,0,.25);border:1px dashed var(--gold-dim);border-radius:8px;padding:8px 10px;font-size:11px;color:var(--ink-dim);margin-top:10px}
   .swap-hint code{color:var(--gold);font-size:11px}
+  /* ===== THE ASCENT ===== */
+  .lives-chip{display:inline-flex;align-items:center;gap:5px;background:rgba(184,72,58,.16);border:1px solid #b8483a;
+    color:#e98a7a;border-radius:999px;padding:5px 11px;font-family:var(--font-d);font-weight:700;font-size:14px}
+  .ladder{display:flex;flex-direction:column;gap:6px;margin:12px 0}
+  .rung{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:10px;
+    border:1px solid var(--line);background:rgba(0,0,0,.15);opacity:.5;transition:all .25s}
+  .rung.done{opacity:.75;border-color:var(--gold-dim)}
+  .rung.done .rung-dot{background:var(--gold-dim);color:#1a1208;border-color:var(--gold-dim)}
+  .rung.here{opacity:1;border-color:var(--gold);background:rgba(216,182,74,.10);
+    box-shadow:0 0 0 1px var(--gold-dim),0 4px 18px rgba(216,182,74,.15)}
+  .rung.here .rung-dot{background:var(--gold);color:#1a1208;border-color:var(--gold)}
+  .rung.boss{border-style:dashed}
+  .rung.boss.here{border-style:solid;border-color:#b8483a;background:rgba(184,72,58,.12);
+    box-shadow:0 0 0 1px #b8483a,0 4px 22px rgba(184,72,58,.22)}
+  .rung.boss.here .rung-dot{background:#b8483a;color:#fff;border-color:#b8483a}
+  .rung-dot{flex:none;width:26px;height:26px;border-radius:50%;border:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;font-family:var(--font-d);font-weight:700;font-size:12px;color:var(--ink-dim)}
+  .rung-body{flex:1;min-width:0}
+  .rung-name{font-family:var(--font-d);font-weight:700;font-size:14px;color:var(--ink)}
+  .rung.here .rung-name{color:var(--gold)}
+  .rung.boss.here .rung-name{color:#e98a7a}
+  .rung-sub{font-size:11px;color:var(--ink-dim);margin-top:1px}
+  .rung-tag{flex:none;font-size:9px;font-weight:700;letter-spacing:.08em;color:var(--gold);
+    border:1px solid var(--gold-dim);border-radius:4px;padding:2px 5px}
+  .rung.boss.here .rung-tag{color:#e98a7a;border-color:#b8483a}
+  .run-deck-strip{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin:10px 0 4px}
+  .throne-warn{font-size:11px;color:#e98a7a;margin-top:8px;font-style:italic}
+  .btn.big-throne{background:linear-gradient(180deg,#c25446,#8f3628);border-color:#b8483a;color:#fff;
+    font-size:16px;padding:13px 22px;animation:thronePulse 2.2s ease-in-out infinite}
+  @keyframes thronePulse{0%,100%{box-shadow:0 0 0 0 rgba(184,72,58,.5)}50%{box-shadow:0 0 26px 4px rgba(184,72,58,.45)}}
+  .reward-row{display:flex;gap:8px;flex-wrap:wrap}
+  .reward-card{flex:1;min-width:100px;display:flex;flex-direction:column;align-items:center;gap:6px;
+    background:rgba(0,0,0,.22);border:1px solid var(--line);border-radius:12px;padding:14px 9px;
+    cursor:pointer;transition:all .18s;color:var(--ink);font-family:inherit;text-align:center}
+  .reward-card:hover,.reward-card:focus{border-color:var(--gold);background:rgba(216,182,74,.12);transform:translateY(-3px)}
+  .reward-card b{font-family:var(--font-d);font-size:14px;color:var(--gold)}
+  .reward-card span{font-size:11px;color:var(--ink-dim);line-height:1.35}
+  .throne-line{text-align:center;font-style:italic;font-size:14px;color:#e9c8a0;
+    line-height:1.5;padding:0 6px}
+  /* ===== THE THRONE: versus screen ===== */
+  .vs-screen{position:fixed;inset:0;z-index:80;background:radial-gradient(ellipse at 50% 40%,#2a1a10,#120c06 70%);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:18px;
+    overflow:hidden;cursor:pointer;animation:vsIn .25s ease-out}
+  @keyframes vsIn{from{opacity:0}to{opacity:1}}
+  .vs-rays{position:absolute;top:38%;left:50%;width:200vmax;height:200vmax;margin:-100vmax 0 0 -100vmax;
+    background:repeating-conic-gradient(from 0deg,rgba(184,72,58,.16) 0deg 7deg,transparent 7deg 14deg);
+    animation:vsSpin 26s linear infinite;pointer-events:none}
+  @keyframes vsSpin{to{transform:rotate(360deg)}}
+  .vs-top{position:relative;height:34px;display:flex;align-items:center;justify-content:center}
+  .vs-mark{font-family:var(--font-d);font-weight:900;font-size:42px;color:#e98a7a;
+    transform:rotate(-6deg);letter-spacing:.04em;
+    text-shadow:0 0 24px rgba(184,72,58,.85),0 3px 0 #6b2318}
+  .vs-card{position:relative;z-index:2}
+  .vs-card .card{width:172px;box-shadow:0 14px 44px rgba(0,0,0,.7),0 0 0 2px #b8483a,0 0 40px rgba(184,72,58,.4)}
+  .vs-name{position:relative;z-index:2;text-align:center;line-height:1.15;margin-top:2px}
+  .vs-name b{display:block;font-family:var(--font-d);font-size:24px;color:#e98a7a;
+    text-shadow:0 0 20px rgba(184,72,58,.6)}
+  .vs-name i{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-dim);font-style:normal}
+  .vs-line{position:relative;z-index:2;width:100%;max-width:400px;min-height:88px;
+    background:rgba(10,7,4,.82);border:1px solid var(--line);border-left:3px solid #b8483a;
+    border-radius:10px;padding:10px 13px 22px;margin-top:6px}
+  .vs-line.you{border-left-color:var(--gold);border-right:3px solid transparent}
+  .vs-who{font-family:var(--font-d);font-weight:700;font-size:11px;letter-spacing:.1em;
+    text-transform:uppercase;color:#e98a7a}
+  .vs-line.you .vs-who{color:var(--gold)}
+  .vs-line p{font-size:15px;line-height:1.45;color:var(--ink);margin-top:3px;min-height:44px}
+  .vs-line.you p{color:var(--ink-dim);font-style:italic}
+  .caret{color:#e98a7a;font-style:normal;animation:blink .7s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .vs-next{position:absolute;right:11px;bottom:6px;font-size:9px;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--ink-dim);opacity:.65;animation:nudge 1.4s ease-in-out infinite}
+  @keyframes nudge{0%,100%{transform:translateX(0)}50%{transform:translateX(3px)}}
+  .vs-go{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:7px;margin-top:8px;
+    animation:fadeUp .4s ease-out}
+  .vs-hint{font-size:11px;color:var(--ink-dim);font-style:italic}
+  .vs-dots{position:relative;z-index:2;display:flex;gap:5px;margin-top:4px}
+  .vs-dots i{width:5px;height:5px;border-radius:50%;background:var(--line);transition:background .2s}
+  .vs-dots i.on{background:#e98a7a}
+  .run-stats{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin-top:14px}
+  .rung-banner{display:flex;flex-direction:column;align-items:center;gap:1px;margin:2px 0 6px}
+  .rung-banner span{font-family:var(--font-d);font-weight:700;font-size:15px;color:var(--gold)}
+  .rung-banner span.rb-boss{color:#e98a7a;font-size:16px;text-shadow:0 0 16px rgba(184,72,58,.5)}
+  .rung-banner i{font-size:10px;letter-spacing:.1em;color:var(--ink-dim);font-style:normal;text-transform:uppercase}
+  .hero-hp.wide{width:100%;margin-bottom:6px}
   /* ===== Deckbuilder ===== */
+  .deck-bar.cap-hit{animation:capShake .4s ease-out;border-color:#b8483a}
+  @keyframes capShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
   .deck-bar{position:sticky;top:0;z-index:20;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:14px;box-shadow:var(--shadow)}
   .deck-count{font-family:var(--font-d);font-size:16px;font-weight:700}
   .deck-count b{color:var(--gold)}
@@ -214,8 +298,6 @@
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
   /* ===== HELP SYSTEM ===== */
-  .help-btn{flex:0 0 auto;width:26px;height:26px;border-radius:50%;border:1px solid rgba(216,182,74,.4);background:linear-gradient(180deg,#332617,#211810);color:var(--gold);font-family:var(--font-d);font-weight:800;font-size:14px;display:flex;align-items:center;justify-content:center;box-shadow:inset 0 1px 0 rgba(216,182,74,.15)}
-  .help-btn:active{transform:scale(.94)}
   .coach{background:linear-gradient(180deg,#2f2416,#211810);border:1px solid rgba(216,182,74,.35);border-radius:10px;padding:10px 12px;margin-bottom:10px;display:flex;gap:10px;align-items:flex-start;box-shadow:var(--shadow),inset 0 1px 0 rgba(216,182,74,.12);position:relative;animation:coachIn .4s ease-out}
   @keyframes coachIn{0%{opacity:0;transform:translateY(-8px)}100%{opacity:1;transform:translateY(0)}}
   .coach .cico{flex:0 0 auto;width:30px;height:30px;border-radius:50%;background:rgba(216,182,74,.14);display:flex;align-items:center;justify-content:center;color:var(--gold)}
@@ -832,7 +914,6 @@ const KEYWORDS = [
   {id:'speed', icon:'bolt', name:'Speed', text:'Higher speed strikes first and enables effects like Savannah\u2019s double-hit. Shown top-left of each card.'},
   {id:'heal', icon:'heart', name:'Heal', text:'Clerics like Ragdoll and Goku restore HP to your team when played. Green numbers mean healing.'},
 ];
-const KW_BY_ID = Object.fromEntries(KEYWORDS.map(k=>[k.id,k]));
 
 function KeyChip({kw,onShow}){
   return (
@@ -936,11 +1017,12 @@ function enemyDeck(tier){
   return deck.sort(()=>Math.random()-.5);
 }
 
-function Battle({owned,tier,deck,showCoach,onCoachDone,onWin,onLose,onQuit}){
+function Battle({owned,tier,deck,buffs,eHeroStart,bossId,rung,lives,showCoach,onCoachDone,onWin,onLose,onQuit}){
+  const BUFFS=buffs||{};
   const [pEnergy,setPEnergy]=useState(3);
   const [pMax,setPMax]=useState(3);
   const [pHero,setPHero]=useState(24);
-  const [eHero,setEHero]=useState(20);
+  const [eHero,setEHero]=useState(eHeroStart||20);
   const [pHand,setPHand]=useState([]);
   const [pBoard,setPBoard]=useState([]);
   const [eBoard,setEBoard]=useState([]);
@@ -953,6 +1035,7 @@ function Battle({owned,tier,deck,showCoach,onCoachDone,onWin,onLose,onQuit}){
   function showTip(kw,e){ const r=e.currentTarget.getBoundingClientRect(); setTipPos({x:r.left,y:r.bottom}); setTip(tip&&tip.id===kw.id?null:kw); }
   const [ended,setEnded]=useState(null);
   const [turnNo,setTurnNo]=useState(1);
+  const [justDrawn,setJustDrawn]=useState(null);
   const deckRef=useRef([]);
   const eDeckRef=useRef([]);
   const eEnergyRef=useRef(3);
@@ -968,18 +1051,30 @@ function Battle({owned,tier,deck,showCoach,onCoachDone,onWin,onLose,onQuit}){
   useEffect(()=>{
     // use the chosen deck (array of card ids) if given, else random
     let d;
-    if(deck&&deck.length){ d=deck.map(id=>BY_ID[id]).filter(Boolean).sort(()=>Math.random()-.5); }
+    if(deck&&deck.length){ d=deck.map(id=>BY_ID[id]).filter(Boolean).map(c=>buffedCard(c,BUFFS)).sort(()=>Math.random()-.5); }
     else { d=drawStarterDeck(owned); }
+    // stamp a unique instance id so React keys stay stable even with duplicate breeds
+    d=d.map(c=>({...c,_iid:'c'+(UNIT_SEQ++)}));
     setPHand(d.slice(0,4)); deckRef.current=d.slice(4);
-    eDeckRef.current=enemyDeck(tier);
+    // boss rung: the legend leads, backed by a tier-3 court
+    if(bossId && BY_ID[bossId]){
+      const court=enemyDeck(3).slice(0,8);
+      eDeckRef.current=[BY_ID[bossId],...court];
+    } else {
+      eDeckRef.current=enemyDeck(tier);
+    }
   },[]);
 
   const nodeRef=(uid)=>document.querySelector(`[data-uid="${uid}"]`);
 
-  // reliable win/loss watcher: fires once when either hero hits 0
+  // reliable win/loss watcher: fires exactly once when either hero hits 0.
+  // uses a ref guard because setEnded is async — two rapid HP drops could
+  // otherwise re-enter this effect before `ended` has re-rendered.
+  const settledRef=useRef(false);
   useEffect(()=>{
-    if(ended)return;
+    if(ended||settledRef.current)return;
     if(eHero<=0){
+      settledRef.current=true;
       setEnded('win');
       impactFlash(); screenShake();
       turnSweep('Victory!','#ffd76a');
@@ -991,6 +1086,7 @@ function Battle({owned,tier,deck,showCoach,onCoachDone,onWin,onLose,onQuit}){
       setTimeout(()=>onWin(),2900);
     }
     else if(pHero<=0){
+      settledRef.current=true;
       setEnded('lose');
       screenShake(); impactFlash();
       turnSweep('Defeat','#b8483a');
@@ -1221,7 +1317,9 @@ function Battle({owned,tier,deck,showCoach,onCoachDone,onWin,onLose,onQuit}){
       guard++;
       const playable=eDeckRef.current.filter(c=>c.cost<=energy);
       if(!playable.length)break;
-      const pick=playable.sort((a,b)=>b.cost-a.cost)[0];
+      // the legend always takes the field first when affordable
+      const legendInHand=playable.find(c=>c.boss);
+      const pick=legendInHand||playable.sort((a,b)=>b.cost-a.cost)[0];
       eDeckRef.current.splice(eDeckRef.current.indexOf(pick),1);
       energy-=pick.cost;
       plays.push(pick);
@@ -1257,7 +1355,12 @@ function Battle({owned,tier,deck,showCoach,onCoachDone,onWin,onLose,onQuit}){
         // start player turn
         setPBoard(b=>b.map(x=>({...x,hasAttacked:false,stealthTurns:Math.max(0,x.stealthTurns-1),stunned:false})));
         const nm=Math.min(10,pMax+1); setPMax(nm); setPEnergy(nm);
-        if(deckRef.current.length){const c=deckRef.current.shift(); setPHand(h=>h.length<7?[...h,c]:h);}
+        if(deckRef.current.length){
+          const c=deckRef.current.shift();
+          setPHand(h=>h.length<7?[...h,c]:h);
+          setJustDrawn(c._iid);
+          setTimeout(()=>setJustDrawn(null),500);
+        }
         setTurn('player');
         turnSweep('Your Turn','#d8b64a');
         setTurnNo(t=>{
@@ -1365,10 +1468,21 @@ function Battle({owned,tier,deck,showCoach,onCoachDone,onWin,onLose,onQuit}){
   return (
     <div className={`battle ${ended==='lose'?'lost':''}`}>
       <div className="topbar">
-        <button className="btn ghost" onClick={onQuit}><Icon name="arrowL" size={14}/> Retreat</button>
+        <button className="btn ghost" onClick={()=>{
+          if(ended)return;
+          const msg = (typeof lives==='number' && lives<=1)
+            ? 'Retreat? This is your last life — the run will end here.'
+            : 'Retreat costs a life'+(typeof lives==='number'?' ('+(lives-1)+' would remain)':'')+'. Fall back?';
+          if(confirm(msg)) onQuit&&onQuit();
+        }}><Icon name="arrowL" size={14}/> Retreat</button>
         <span className="turn-tag">Turn {turnNo}</span>
-        <div className="hero-hp" id="ehero"><span>Enemy</span><div className="bar"><i style={{width:Math.max(0,eHero/20*100)+'%'}}/></div><span>{Math.max(0,eHero)}</span></div>
+        {typeof lives==='number' && <span className="lives-chip" style={{fontSize:12,padding:'4px 9px'}}><Icon name="heart" size={12}/> {lives}</span>}
       </div>
+      {rung && <div className="rung-banner">
+        <span className={bossId?'rb-boss':''}>{bossId&&BY_ID[bossId]?BY_ID[bossId].name+' · '+BY_ID[bossId].title:rung.name}</span>
+        <i>{bossId?'The Throne':'Rung '+rung.n+' of 7'}</i>
+      </div>}
+      <div className="hero-hp wide" id="ehero"><span>{bossId&&BY_ID[bossId]?BY_ID[bossId].name:'Enemy'}</span><div className="bar"><i style={{width:Math.max(0,eHero/(eHeroStart||20)*100)+'%'}}/></div><span>{Math.max(0,eHero)}</span></div>
 
       {coachOpen && (
         <Coach onDone={()=>{setCoachOpen(false);onCoachDone&&onCoachDone();}} steps={[
@@ -1429,14 +1543,24 @@ function Battle({owned,tier,deck,showCoach,onCoachDone,onWin,onLose,onQuit}){
 
       <div className="hand">
         {pHand.map((c,i)=> c&&c.ability ? (
-          <Card key={i} card={c} className={`${c.cost<=pEnergy&&turn==='player'?'playable':'unplayable'}`} onClick={()=>playCard(i)}/>
+          <Card key={c._iid||('h'+i)} card={c}
+            className={`${c.cost<=pEnergy&&turn==='player'?'playable':'unplayable'} ${c._iid===justDrawn?'drawn':''}`}
+            onClick={()=>playCard(i)}/>
         ) : null)}
       </div>
 
       {ended && (
         <div className={`banner ${ended}`}>
-          <h2>{ended==='win'?<><Icon name="trophy" size={44} style={{marginRight:12}}/>Victory!</>:<><Icon name="skull" size={40} style={{marginRight:12}}/>Defeat</>}</h2>
-          <p className="banner-sub" style={{color:'var(--ink-dim)'}}>{ended==='win'?'The field is yours. A new card awaits.':'Your cats retreat to fight again.'}</p>
+          <h2>{ended==='win'
+            ? (bossId&&BY_ID[bossId] ? <><Icon name="trophy" size={44} style={{marginRight:12}}/>The Throne Falls</> : <><Icon name="trophy" size={44} style={{marginRight:12}}/>Victory!</>)
+            : <><Icon name="skull" size={40} style={{marginRight:12}}/>Defeat</>}</h2>
+          <p className="banner-sub" style={{color:'var(--ink-dim)'}}>{
+            ended==='win'
+              ? (bossId&&BY_ID[bossId] ? BY_ID[bossId].name+' yields. The house is yours.' : 'The rung is cleared. Choose your spoils.')
+              : (typeof lives==='number'
+                  ? (lives-1>0 ? 'A life spent. '+(lives-1)+' remain.' : 'The last life. The Ascent ends here.')
+                  : 'Your cats retreat to fight again.')
+          }</p>
         </div>
       )}
     </div>
@@ -1446,9 +1570,144 @@ function Battle({owned,tier,deck,showCoach,onCoachDone,onWin,onLose,onQuit}){
 /* ============================================================
    COLLECTION + META
    ============================================================ */
+/* ============================================================
+   THE ASCENT — nine lives run system
+   ============================================================ */
+const RUN_LIVES=9;
+
+// the ladder: 7 rungs, escalating, capped by a legend
+const RUNGS=[
+  {n:1,name:'The Alley',   sub:'Where every cat starts.',        tier:1,eHero:18,label:'Strays'},
+  {n:2,name:'The Yard',    sub:'Fences, bins, bad intentions.',  tier:1,eHero:20,label:'Yard Cats'},
+  {n:3,name:'The Terrace', sub:'Sunlit and territorial.',        tier:2,eHero:22,label:'Terrace Guard'},
+  {n:4,name:'The Kitchen', sub:'Where the food lives. Contested.',tier:2,eHero:24,label:'Counter Crew'},
+  {n:5,name:'The Landing', sub:'Halfway up. No way back.',       tier:2,eHero:26,label:'Stair Wardens'},
+  {n:6,name:'The Bedroom', sub:'The warmest ground of all.',      tier:3,eHero:28,label:'Duvet Court'},
+  {n:7,name:'The Throne',  sub:'One of the five is waiting.',     tier:3,eHero:30,label:'Legend',boss:true},
+];
+
+// ---- THE THRONE: staged pre-fight dialogue, Street Fighter style ----
+// each beat: {who:'legend'|'you', text}. A run picks one exchange per legend.
+const LEGEND_DIALOGUE={
+  selina:[
+    [
+      {who:'legend',text:'You climbed all this way. On your own.'},
+      {who:'you',   text:'Someone had to.'},
+      {who:'legend',text:'I have never done anything on my own. Not once.'},
+      {who:'legend',text:'And I have never once been beaten. Think about why.'},
+    ],
+    [
+      {who:'legend',text:'Where is Oscar. Have you seen Oscar.'},
+      {who:'you',   text:'He is not here.'},
+      {who:'legend',text:'Then I will go through you until he is.'},
+    ],
+  ],
+  rocket:[
+    [
+      {who:'legend',text:'IT IS SIX IN THE MORNING.'},
+      {who:'you',   text:'I know.'},
+      {who:'legend',text:'THEN WHY IS NOBODY UP. WHY IS THE FOOD BOWL A LIE.'},
+      {who:'legend',text:'I HAVE BEEN AWAKE SINCE FOUR. YOU WILL BE TOO.'},
+    ],
+    [
+      {who:'legend',text:'Did you hear that.'},
+      {who:'you',   text:'Hear what?'},
+      {who:'legend',text:'EXACTLY. SOMETHING IS WRONG. SOMETHING IS ALWAYS WRONG.'},
+    ],
+  ],
+  smokey:[
+    [
+      {who:'legend',text:'...'},
+      {who:'you',   text:'Where are you?'},
+      {who:'legend',text:'I have been beside you since the Landing.'},
+      {who:'legend',text:'You did not see me arrive. You will not see me leave.'},
+    ],
+    [
+      {who:'legend',text:'I watched every fight you had.'},
+      {who:'you',   text:'You could have helped.'},
+      {who:'legend',text:'I was not deciding whether to help. I was deciding whether you were worth watching.'},
+    ],
+  ],
+  goku:[
+    [
+      {who:'legend',text:'Oh! Hello. I did not expect a visitor.'},
+      {who:'you',   text:'I came to fight you.'},
+      {who:'legend',text:'That is alright. Are you cold? You look cold.'},
+      {who:'legend',text:'Half my face does not work. All of my heart does. Come on then.'},
+    ],
+    [
+      {who:'legend',text:'I do not really want to hurt you.'},
+      {who:'you',   text:'Then stand aside.'},
+      {who:'legend',text:'I said I did not want to. I did not say I would not.'},
+    ],
+  ],
+  oscar:[
+    [
+      {who:'legend',text:'You are in my house.'},
+      {who:'you',   text:'I climbed seven floors of it.'},
+      {who:'legend',text:'You climbed seven floors of MINE. Every rung. Every cat. Mine.'},
+      {who:'legend',text:'Kneel, or be knelt.'},
+    ],
+    [
+      {who:'legend',text:'Selina told me about you. Rocket screamed about you.'},
+      {who:'you',   text:'And Smokey?'},
+      {who:'legend',text:'Smokey says nothing. Smokey is already behind you.'},
+    ],
+  ],
+};
+const LEGEND_DEFEAT={
+  selina:'Selina blinks slowly, then pads away to find Oscar.',
+  rocket:'Rocket yells once more, quieter, and finally goes back to sleep.',
+  smokey:'Smokey retreats to the dark. She is not gone. She is just watching.',
+  goku:'Goku headbutts your leg and purrs. He was never really fighting.',
+  oscar:'Oscar sits. Considers. Permits you to remain. This is as close to defeat as he gets.',
+};
+// what they say if they beat you
+const LEGEND_WIN={
+  selina:'"I told you. I am never alone."',
+  rocket:'"GOOD TALK. SAME TIME TOMORROW. FOUR AM."',
+  smokey:'"You never found me."',
+  goku:'"Oh no. Are you okay? Do you want a cuddle?"',
+  oscar:'"Everything you climbed is still mine."',
+};
+
+// reward pool offered after each won rung
+function rollRewards(runDeck,owned,lives){
+  const out=[];
+  // 1) recruit a card into the run deck (not permanent)
+  const pool=ROSTER.filter(c=>!c.boss&&!runDeck.includes(c.id));
+  if(pool.length){
+    const pick=pool[Math.floor(Math.random()*pool.length)];
+    out.push({kind:'recruit',card:pick,title:'Recruit',
+      desc:pick.name+' joins this run.',icon:'paw'});
+  }
+  // 2) upgrade a card already in the deck
+  if(runDeck.length){
+    const id=runDeck[Math.floor(Math.random()*runDeck.length)];
+    const c=BY_ID[id];
+    const mode=Math.random()<0.5?'atk':'hp';
+    out.push({kind:'upgrade',cardId:id,mode,title:'Train',
+      desc:c.name+' gains '+(mode==='atk'?'+1 ATK':'+2 HP')+' for this run.',icon:'swords'});
+  }
+  // 3) heal / gain a life
+  if(lives<RUN_LIVES){
+    out.push({kind:'life',title:'Rest',desc:'Recover 1 life.',icon:'heart'});
+  } else {
+    out.push({kind:'fish',amount:40,title:'Forage',desc:'+40 fish.',icon:'fish'});
+  }
+  // 4) always a fish option as fallback variety
+  if(out.length<3) out.push({kind:'fish',amount:60,title:'Forage',desc:'+60 fish.',icon:'fish'});
+  return out.slice(0,3);
+}
+
+// apply run-scoped stat buffs on top of a base card
+function buffedCard(card,buffs){
+  const b=buffs[card.id];
+  if(!b)return card;
+  return {...card, atk:card.atk+(b.atk||0), hp:card.hp+(b.hp||0), _buffed:true};
+}
+
 const STARTER_OWNED=['dsh','dlh','amsh','bsh','muk','man','bur','siam','rag','mcoon'];
-// order breeds get unlocked as you win (excludes starter + bosses)
-const UNLOCK_ORDER=['exo','tonk','chart','aby','sphy','beng','russ','devon','scot','nfc','bomb','corn','birm','lykoi','pers','toyg','savan'];
 const BOSS_ORDER=['selina','rocket','smokey','goku','oscar'];
 
 // ---- save system (localStorage; degrades gracefully in sandboxes that block it) ----
@@ -1468,9 +1727,10 @@ function writeSave(state){
 }
 function clearSave(){ try{ localStorage.removeItem(SAVE_KEY); }catch(e){} }
 
-function Collection({owned,coins,wins,onBattle,onBack,onUnlock,onReset,saveOn}){
+function Collection({owned,coins,wins,onBattle,onBack,onUnlock,onReset,saveOn,bestRung,legendsBeaten}){
   const unlockable=ROSTER.filter(c=>!owned.includes(c.id)&&!c.boss);
   const bosses=ROSTER.filter(c=>c.boss);
+  const beaten=legendsBeaten||[];
   const cost=100;
   return (
     <div>
@@ -1482,11 +1742,13 @@ function Collection({owned,coins,wins,onBattle,onBack,onUnlock,onReset,saveOn}){
       <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:6}}>
         <span className="statchip"><Icon name="trophy" size={13}/> {wins} wins</span>
         <span className="statchip"><Icon name="paw" size={13}/> {owned.length}/{ROSTER.length} cards</span>
+        {bestRung>0 && <span className="statchip"><Icon name="star" size={12}/> best climb {Math.min(bestRung,7)}/7</span>}
+        {beaten.length>0 && <span className="statchip" style={{color:'#e98a7a',borderColor:'#b8483a'}}><Icon name="skull" size={12}/> {beaten.length}/5 legends</span>}
         <span className="statchip" style={{opacity:saveOn?1:.5}}><Icon name="save" size={12}/> {saveOn?'saved':'(save off)'}</span>
       </div>
-      <p className="collect-hint">Win battles to unlock a new card each time. Every 3rd win frees a legendary boss. Your progress saves automatically.</p>
+      <p className="collect-hint">Climb The Ascent: seven rungs, nine lives, one legend waiting at the throne. Beat a legend and they join your roster forever.</p>
       <div style={{display:'flex',gap:10,marginBottom:16,flexWrap:'wrap'}}>
-        <button className="btn gold" onClick={onBattle}><Icon name="swords" size={15}/> Battle</button>
+        <button className="btn gold" onClick={onBattle}><Icon name="swords" size={15}/> The Ascent</button>
         {unlockable.length>0 && <button className="btn" disabled={coins<cost} onClick={()=>onUnlock(unlockable[0],cost)}>Recruit breed · <Icon name="fish" size={13}/>{cost}</button>}
         <button className="btn ghost" style={{marginLeft:'auto',fontSize:12,padding:'8px 12px'}} onClick={onReset}>Reset</button>
       </div>
@@ -1520,10 +1782,14 @@ const DECK_MIN=8, DECK_MAX=12;
 function Deckbuilder({owned,initialDeck,onStart,onBack}){
   const ownedCards=ROSTER.filter(c=>owned.includes(c.id));
   const [picked,setPicked]=useState(initialDeck&&initialDeck.length?initialDeck:ownedCards.slice(0,Math.min(DECK_MAX,ownedCards.length)).map(c=>c.id));
+  const [capHit,setCapHit]=useState(false);
   function toggle(id){
     setPicked(p=>{
       if(p.includes(id))return p.filter(x=>x!==id);
-      if(p.length>=DECK_MAX)return p;
+      if(p.length>=DECK_MAX){
+        setCapHit(true); setTimeout(()=>setCapHit(false),450);
+        return p;
+      }
       return [...p,id];
     });
   }
@@ -1540,10 +1806,10 @@ function Deckbuilder({owned,initialDeck,onStart,onBack}){
         <h2>Build Your Deck</h2>
         <span/>
       </div>
-      <div className="deck-bar">
+      <div className={`deck-bar ${capHit?'cap-hit':''}`}>
         <div>
           <div className={`deck-count ${ok?'':'bad'}`}>Deck: <b>{count}</b> / {DECK_MAX}</div>
-          <div style={{fontSize:11,color:'var(--ink-dim)'}}>{count<DECK_MIN?`Pick at least ${DECK_MIN}`:count>=DECK_MAX?'Deck full':'Ready to march'}</div>
+          <div style={{fontSize:11,color:capHit?'#e98a7a':'var(--ink-dim)'}}>{capHit?'Deck is full — remove one first':count<DECK_MIN?`Pick at least ${DECK_MIN}`:count>=DECK_MAX?'Deck full':'Ready to march'}</div>
         </div>
         <div className="curve">
           {curve.map((c,i)=>(
@@ -1578,6 +1844,193 @@ function Deckbuilder({owned,initialDeck,onStart,onBack}){
   );
 }
 
+/* ---------- THE ASCENT: the ladder map ---------- */
+function RunMap({run,onFight,onAbandon}){
+  const rung=RUNGS[run.rung];
+  const legend=run.legendId?BY_ID[run.legendId]:null;
+  const isBoss=!!rung.boss;
+  return (
+    <div>
+      <div className="topbar">
+        <button className="btn ghost" onClick={onAbandon}><Icon name="arrowL" size={14}/> Abandon</button>
+        <h2>The Ascent</h2>
+        <span className="lives-chip"><Icon name="heart" size={14}/> {run.lives}</span>
+      </div>
+
+      <div className="ladder">
+        {RUNGS.slice().reverse().map(r=>{
+          const idx=r.n-1;
+          const done=idx<run.rung, here=idx===run.rung;
+          return (
+            <div key={r.n} className={`rung ${done?'done':''} ${here?'here':''} ${r.boss?'boss':''}`}>
+              <div className="rung-dot">{done?<Icon name="paw" size={12}/>:r.n}</div>
+              <div className="rung-body">
+                <div className="rung-name">{r.boss&&legend?legend.name+' · '+legend.title:r.name}</div>
+                <div className="rung-sub">{done?'cleared':r.sub}</div>
+              </div>
+              {here && <span className="rung-tag">YOU</span>}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="run-deck-strip">
+        <span className="statchip"><Icon name="paw" size={12}/> {run.deck.length} cats</span>
+        {Object.keys(run.buffs).length>0 && <span className="statchip"><Icon name="swords" size={12}/> {Object.keys(run.buffs).length} trained</span>}
+        <span className="statchip"><Icon name="fish" size={12}/> {run.fish} earned</span>
+      </div>
+
+      <div style={{textAlign:'center',marginTop:14}}>
+        <button className={`btn ${isBoss?'gold big-throne':'gold'}`} onClick={onFight}>
+          {isBoss? <>Face {legend?legend.name:'the Legend'}</> : <><Icon name="swords" size={15}/> Climb to {rung.name}</>}
+        </button>
+        {isBoss && <p className="throne-warn">Nothing beyond this. Win or the run ends.</p>}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- THE ASCENT: reward picker ---------- */
+function RewardPick({rewards,onPick}){
+  return (
+    <div className="modal-bg">
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <h3 style={{textAlign:'center'}}><Icon name="sparkle" size={18} style={{marginRight:6}}/>The field is yours</h3>
+        <p style={{textAlign:'center',color:'var(--ink-dim)',fontSize:12,marginBottom:14}}>Take one. The others are gone.</p>
+        <div className="reward-row">
+          {rewards.map((r,i)=>(
+            <button key={i} className="reward-card" onClick={()=>onPick(r)}>
+              <Icon name={r.icon} size={22}/>
+              <b>{r.title}</b>
+              <span>{r.desc}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- THE ASCENT: versus screen (Street Fighter style) ---------- */
+function ThroneIntro({legendId,onGo}){
+  const c=BY_ID[legendId];
+  const sets=LEGEND_DIALOGUE[legendId]||[[{who:'legend',text:'...'}]];
+  const scriptRef=useRef(sets[Math.floor(Math.random()*sets.length)]);
+  const script=scriptRef.current;
+  const [phase,setPhase]=useState('slam');   // slam -> talk -> ready
+  const [beat,setBeat]=useState(0);
+  const [typed,setTyped]=useState('');
+  const [full,setFull]=useState(false);
+  const cardRef=useRef(null), vsRef=useRef(null), lineRef=useRef(null);
+
+  // opening slam
+  useEffect(()=>{
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+    if(reduce){ setPhase('talk'); return; }
+    const t=setTimeout(()=>setPhase('talk'),1150);
+    if(vsRef.current) gsap.fromTo(vsRef.current,{scale:3.2,opacity:0,rotation:-14},
+      {scale:1,opacity:1,rotation:-6,duration:.5,ease:'back.out(2)'});
+    if(cardRef.current) gsap.fromTo(cardRef.current,{x:90,opacity:0},
+      {x:0,opacity:1,duration:.55,ease:'power3.out',delay:.15});
+    setTimeout(()=>{ try{ screenShake(); impactFlash(); }catch(e){} },420);
+    return ()=>clearTimeout(t);
+  },[]);
+
+  // typewriter for the current beat
+  useEffect(()=>{
+    if(phase!=='talk')return;
+    const line=script[beat];
+    if(!line)return;
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+    if(reduce){ setTyped(line.text); setFull(true); return; }
+    setTyped(''); setFull(false);
+    let i=0;
+    const speed=line.who==='legend'?26:18;
+    const iv=setInterval(()=>{
+      i++; setTyped(line.text.slice(0,i));
+      if(i>=line.text.length){ clearInterval(iv); setFull(true); }
+    },speed);
+    if(lineRef.current) gsap.fromTo(lineRef.current,{y:10,opacity:0},{y:0,opacity:1,duration:.28,ease:'power2.out'});
+    return ()=>clearInterval(iv);
+  },[beat,phase]);
+
+  function advance(){
+    if(phase!=='talk')return;
+    const line=script[beat];
+    if(!full){ setTyped(line.text); setFull(true); return; }   // tap to skip typing
+    if(beat+1<script.length){ setBeat(b=>b+1); }
+    else { setPhase('ready'); }
+  }
+
+  const line=script[beat];
+  return (
+    <div className="vs-screen" onClick={advance}>
+      <div className="vs-rays"/>
+      <div className="vs-top">
+        <div ref={vsRef} className="vs-mark">VS</div>
+      </div>
+
+      <div ref={cardRef} className="vs-card">
+        <Card card={c}/>
+      </div>
+
+      <div className="vs-name">
+        <b>{c.name}</b>
+        <i>{c.title}</i>
+      </div>
+
+      {phase==='talk' && line && (
+        <div ref={lineRef} className={`vs-line ${line.who}`}>
+          <span className="vs-who">{line.who==='legend'?c.name:'You'}</span>
+          <p>{typed}{!full && <em className="caret">|</em>}</p>
+          {full && <span className="vs-next">tap to continue</span>}
+        </div>
+      )}
+
+      {phase==='ready' && (
+        <div className="vs-go">
+          <button className="btn gold big-throne" onClick={(e)=>{e.stopPropagation();onGo();}}>Fight</button>
+          <span className="vs-hint">Nine lives got you here. One fight decides it.</span>
+        </div>
+      )}
+
+      <div className="vs-dots">
+        {script.map((_,i)=>(
+          <i key={i} className={i<=beat&&phase!=='slam'?'on':''}/>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- THE ASCENT: run summary ---------- */
+function RunEnd({run,won,onDone}){
+  const legend=run.legendId?BY_ID[run.legendId]:null;
+  return (
+    <div className="modal-bg">
+      <div className="modal" onClick={e=>e.stopPropagation()}>
+        <h3 style={{textAlign:'center'}}>
+          {won? <><Icon name="trophy" size={20} style={{marginRight:6}}/>The Ascent Complete</>
+              : <><Icon name="skull" size={18} style={{marginRight:6}}/>The Run Ends</>}
+        </h3>
+        {won && legend && <p className="throne-line" style={{marginTop:10}}>{LEGEND_DEFEAT[run.legendId]}</p>}
+        {!won && legend && run.rung===6 && <p className="throne-line" style={{marginTop:10,color:'#e98a7a'}}>{LEGEND_WIN[run.legendId]}</p>}
+        {!won && <p style={{textAlign:'center',color:'var(--ink-dim)',fontSize:13,marginTop:10}}>
+          Nine lives spent on the way to {RUNGS[run.rung]?RUNGS[run.rung].name:'the top'}. The house keeps what it takes.
+        </p>}
+        <div className="run-stats">
+          <span className="statchip"><Icon name="paw" size={12}/> reached rung {Math.min(run.rung+1,7)}/7</span>
+          <span className="statchip"><Icon name="heart" size={12}/> {run.lives} lives left</span>
+          <span className="statchip"><Icon name="fish" size={12}/> {run.fish} fish banked</span>
+        </div>
+        <div style={{textAlign:'center',marginTop:16}}>
+          <button className="btn gold" onClick={onDone}>Back to the Guildhall</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App(){
   const saved = loadSave();
   const [screen,setScreen]=useState('title');
@@ -1590,42 +2043,115 @@ function App(){
   const [deck,setDeck]=useState(saved&&saved.deck?saved.deck:[]);
   const [seenCoach,setSeenCoach]=useState(saved?!!saved.seenCoach:false);
   const [saveOn,setSaveOn]=useState(false);
+  // ---- THE ASCENT run state ----
+  const [run,setRun]=useState(null);
+  const [rewards,setRewards]=useState(null);
+  const [throne,setThrone]=useState(false);
+  const [runEnd,setRunEnd]=useState(null);
+  const [bestRung,setBestRung]=useState(saved&&saved.bestRung?saved.bestRung:0);
+  const [legendsBeaten,setLegendsBeaten]=useState(saved&&saved.legendsBeaten?saved.legendsBeaten:[]);
 
   // persist whenever core progression changes
   useEffect(()=>{
-    const ok=writeSave({owned,coins,tier,wins,deck,seenCoach});
+    const ok=writeSave({owned,coins,tier,wins,deck,seenCoach,bestRung,legendsBeaten});
     setSaveOn(ok);
-  },[owned,coins,tier,wins,deck,seenCoach]);
+  },[owned,coins,tier,wins,deck,seenCoach,bestRung,legendsBeaten]);
 
   function showToast(t){setToast(t);setTimeout(()=>setToast(null),2600);}
 
-  function onWin(){
-    const reward=30+tier*10;
-    setCoins(c=>c+reward);
-    const nw=wins+1;
-    setWins(nw);
-    // 1) boss unlock at milestones (every 3 wins), else 2) unlock next breed card
-    const unlockedBosses=owned.filter(id=>BOSS_ORDER.includes(id)).length;
-    let didReveal=false;
-    if(nw % 3===0 && unlockedBosses<BOSS_ORDER.length){
-      const nextBoss=BY_ID[BOSS_ORDER[unlockedBosses]];
-      setOwned(o=>o.includes(nextBoss.id)?o:[...o,nextBoss.id]);
-      setReveal({card:nextBoss,kind:'boss'});
-      didReveal=true;
-    } else {
-      const nextBreed=UNLOCK_ORDER.find(id=>!owned.includes(id));
-      if(nextBreed){
-        setOwned(o=>[...o,nextBreed]);
-        setReveal({card:BY_ID[nextBreed],kind:'card'});
-        didReveal=true;
-      }
-    }
-    if(tier<3 && nw%2===0)setTier(t=>Math.min(3,t+1));
-    setScreen('collection');
-    if(!didReveal)showToast('Victory! +'+reward+' fish  (roster complete!)');
-    else showToast('Victory! +'+reward+' fish');
+  /* ---------- THE ASCENT lifecycle ---------- */
+  // guards against a transition firing twice (double-invoked effects, rapid HP drops)
+  const transitionRef=useRef(false);
+
+  function startRun(runDeck){
+    // the legend at the top: first unbeaten in BOSS_ORDER, else random
+    const nextLegend=BOSS_ORDER.find(id=>!legendsBeaten.includes(id))
+                  || BOSS_ORDER[Math.floor(Math.random()*BOSS_ORDER.length)];
+    transitionRef.current=false;
+    setRun({lives:RUN_LIVES,rung:0,deck:runDeck,buffs:{},fish:0,legendId:nextLegend});
+    setScreen('runmap');
   }
-  function onLose(){setScreen('collection');showToast('Defeated. Regroup and try again.');}
+
+  function fightRung(){
+    if(!run)return;
+    transitionRef.current=false;
+    if(RUNGS[run.rung].boss){ setThrone(true); return; }
+    setScreen('battle');
+  }
+
+  function onRungWin(){
+    if(!run||transitionRef.current)return;
+    transitionRef.current=true;
+    const r=run;
+    const isBoss=RUNGS[r.rung].boss;
+    if(isBoss){
+      const reward=200;
+      setCoins(c=>c+reward+r.fish);
+      setWins(w=>w+1);
+      setLegendsBeaten(l=>l.includes(r.legendId)?l:[...l,r.legendId]);
+      setOwned(o=>o.includes(r.legendId)?o:[...o,r.legendId]);
+      setBestRung(b=>Math.max(b,7));
+      setScreen('runmap');
+      setTimeout(()=>setRunEnd({run:r,won:true}),400);
+      return;
+    }
+    const nr={...r,rung:r.rung+1,fish:r.fish+30};
+    setRun(nr);
+    setBestRung(b=>Math.max(b,nr.rung));
+    setWins(w=>w+1);
+    setScreen('runmap');
+    setTimeout(()=>setRewards(rollRewards(nr.deck,owned,nr.lives)),350);
+  }
+
+  function onRungLose(){
+    if(!run||transitionRef.current)return;
+    transitionRef.current=true;
+    const r=run;
+    const lives=r.lives-1;
+    if(lives<=0){
+      setCoins(c=>c+r.fish);
+      setRun({...r,lives:0});
+      setScreen('runmap');
+      setTimeout(()=>setRunEnd({run:{...r,lives:0},won:false}),400);
+      return;
+    }
+    setRun({...r,lives});
+    setScreen('runmap');
+    showToast('A life spent. '+lives+' left.');
+  }
+
+  function takeReward(r){
+    setRewards(null);
+    setRun(prev=>{
+      if(!prev)return prev;
+      if(r.kind==='recruit') return {...prev,deck:[...prev.deck,r.card.id]};
+      if(r.kind==='upgrade'){
+        const b={...prev.buffs};
+        const cur=b[r.cardId]||{atk:0,hp:0};
+        b[r.cardId]= r.mode==='atk'?{...cur,atk:cur.atk+1}:{...cur,hp:cur.hp+2};
+        return {...prev,buffs:b};
+      }
+      if(r.kind==='life') return {...prev,lives:Math.min(RUN_LIVES,prev.lives+1)};
+      if(r.kind==='fish') return {...prev,fish:prev.fish+r.amount};
+      return prev;
+    });
+  }
+
+  function abandonRun(){
+    if(run) setCoins(c=>c+run.fish);
+    setRun(null);setRewards(null);setThrone(false);
+    setScreen('collection');
+    showToast('Run abandoned. Fish banked.');
+  }
+
+  function finishRun(){
+    const won=runEnd&&runEnd.won;
+    const lid=runEnd&&runEnd.run&&runEnd.run.legendId;
+    setRunEnd(null);setRun(null);setThrone(false);
+    setScreen('collection');
+    if(won&&lid) setReveal({card:BY_ID[lid],kind:'boss'});
+  }
+
 
   function unlock(card,cost){
     setCoins(c=>c-cost);
@@ -1665,8 +2191,12 @@ function App(){
             <p style={{marginBottom:10}}>Tap one of your cats to select it (it glows gold), then tap an enemy cat to attack. Enemies glowing red are valid targets. If no enemy cats block, a "Strike Enemy Hero" button appears — reduce the enemy hero to 0 to win.</p>
             <h3>Keywords</h3>
             <p style={{marginBottom:10}}><Icon name="shield" size={13}/> <b>Taunt</b> (Maine Coon, Oscar) must be attacked first. <Icon name="moon" size={13}/> <b>Stealth</b> (Russian Blue, Smokey) can't be targeted until it strikes. <Icon name="sparkle" size={13}/> <b>Shield</b> absorbs damage. Clerics like Ragdoll and Goku heal your team.</p>
-            <h3>Collection</h3>
-            <p>Win battles to earn fish, recruit new breeds, and hit win milestones to unlock the five legendary cat bosses.</p>
+            <h3>The Ascent</h3>
+            <p style={{marginBottom:10}}>A run is seven rungs, from <b>The Alley</b> up to <b>The Throne</b>. You carry <b>nine lives</b>: lose a fight and you spend one, then retry the same rung. Spend all nine and the run ends.</p>
+            <h3>Rewards</h3>
+            <p style={{marginBottom:10}}>Clear a rung and you pick <b>one of three</b> spoils: <b>Recruit</b> a new cat into the run, <b>Train</b> a cat you already have (+1 ATK or +2 HP), <b>Rest</b> to recover a life, or <b>Forage</b> for fish. The others are gone, so choose well. Training and recruits last for that run only.</p>
+            <h3>The Throne</h3>
+            <p style={{marginBottom:10}}>One of the five legends waits at the top. Beat them and they join your roster <b>permanently</b>. Lose and the whole climb ends. Fish you banked along the way are yours either way.</p>
             <p style={{marginTop:12,fontSize:11,opacity:.7}}>Breed photos sourced from Wikimedia Commons (freely licensed). The five legendary bosses are Hammy and Naddy's own cats: Oscar, Rocket, Smokey, Goku and Selina.</p>
             <div style={{textAlign:'center',marginTop:16}}><button className="btn gold" onClick={()=>setScreen('collection')}>Got it — let's go</button></div>
           </div>
@@ -1674,16 +2204,35 @@ function App(){
       )}
 
       {screen==='collection' && (
-        <Collection owned={owned} coins={coins} wins={wins} saveOn={saveOn} onBattle={()=>setScreen('deckbuilder')} onBack={()=>setScreen('title')} onUnlock={unlock} onReset={()=>{if(confirm('Reset all progress and unlocked cards? This cannot be undone.'))resetProgress();}}/>
+        <Collection owned={owned} coins={coins} wins={wins} saveOn={saveOn} bestRung={bestRung} legendsBeaten={legendsBeaten} onBattle={()=>setScreen('deckbuilder')} onBack={()=>setScreen('title')} onUnlock={unlock} onReset={()=>{if(confirm('Reset all progress and unlocked cards? This cannot be undone.'))resetProgress();}}/>
       )}
 
       {screen==='deckbuilder' && (
-        <Deckbuilder owned={owned} initialDeck={deck} onBack={()=>setScreen('collection')} onStart={(d)=>{setDeck(d);setScreen('battle');}}/>
+        <Deckbuilder owned={owned} initialDeck={deck} onBack={()=>setScreen('collection')} onStart={(d)=>{setDeck(d);startRun(d);}}/>
       )}
 
-      {screen==='battle' && (
-        <Battle owned={owned} tier={tier} deck={deck} showCoach={!seenCoach} onCoachDone={()=>setSeenCoach(true)} onWin={onWin} onLose={onLose} onQuit={()=>setScreen('collection')}/>
+      {screen==='runmap' && run && (
+        <RunMap run={run} onFight={fightRung} onAbandon={()=>{if(confirm('Abandon the run? You keep the fish you have earned.'))abandonRun();}}/>
       )}
+
+      {screen==='battle' && run && (
+        <Battle
+          key={'r'+run.rung+'-'+run.lives}
+          owned={owned}
+          tier={RUNGS[run.rung].tier}
+          deck={run.deck}
+          buffs={run.buffs}
+          eHeroStart={RUNGS[run.rung].eHero}
+          bossId={RUNGS[run.rung].boss?run.legendId:null}
+          rung={RUNGS[run.rung]}
+          lives={run.lives}
+          showCoach={!seenCoach} onCoachDone={()=>setSeenCoach(true)}
+          onWin={onRungWin} onLose={onRungLose} onQuit={onRungLose}/>
+      )}
+
+      {rewards && <RewardPick rewards={rewards} onPick={takeReward}/>}
+      {throne && run && <ThroneIntro legendId={run.legendId} onGo={()=>{setThrone(false);setScreen('battle');}}/>}
+      {runEnd && <RunEnd run={runEnd.run} won={runEnd.won} onDone={finishRun}/>}
 
       {toast && <div className="toast">{toast}</div>}
 
