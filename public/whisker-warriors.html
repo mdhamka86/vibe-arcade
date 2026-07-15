@@ -277,6 +277,30 @@
   .rung-banner span.rb-boss{color:#e98a7a;font-size:16px;text-shadow:0 0 16px rgba(184,72,58,.5)}
   .rung-banner i{font-size:10px;letter-spacing:.1em;color:var(--ink-dim);font-style:normal;text-transform:uppercase}
   .hero-hp.wide{width:100%;margin-bottom:6px}
+  /* ===== THE ASCENT: legend watching panel ===== */
+  .watch{--heat:0;display:flex;gap:11px;align-items:flex-start;margin:18px 0 6px;padding:12px 13px;
+    border-radius:12px;position:relative;overflow:hidden;
+    border:1px solid rgba(184,72,58,calc(.22 + var(--heat)*.55));
+    background:
+      radial-gradient(120% 90% at 50% 0%, rgba(184,72,58,calc(.05 + var(--heat)*.16)), transparent 70%),
+      rgba(10,7,4,.42);
+    box-shadow:0 0 calc(var(--heat)*26px) rgba(184,72,58,calc(var(--heat)*.30))}
+  .watch::before{content:'';position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(90deg,transparent 0 3px,rgba(0,0,0,.16) 3px 4px);
+    opacity:calc(.25 + var(--heat)*.3)}
+  .watch-eyes{flex:none;display:flex;gap:6px;padding-top:3px;position:relative;z-index:1}
+  .watch-eyes i{width:9px;height:9px;border-radius:50%;display:block;
+    background:radial-gradient(circle at 50% 45%, #ffd76a, #e98a7a 45%, #6b2318 100%);
+    box-shadow:0 0 calc(5px + var(--heat)*9px) rgba(233,138,122,calc(.55 + var(--heat)*.45));
+    animation:watchBlink 4.4s infinite}
+  .watch-eyes i:last-child{animation-delay:.09s}
+  @keyframes watchBlink{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.08)}}
+  .watch-body{flex:1;min-width:0;position:relative;z-index:1}
+  .watch-who{font-family:var(--font-d);font-weight:700;font-size:10px;letter-spacing:.09em;
+    text-transform:uppercase;color:#e98a7a;display:block}
+  .watch-who em{font-style:normal;color:var(--ink-dim);letter-spacing:.05em;opacity:.75;font-weight:400}
+  .watch-body p{font-size:13.5px;line-height:1.5;color:#e9c8a0;font-style:italic;
+    margin-top:4px;min-height:20px}
   /* ===== Deckbuilder ===== */
   .deck-bar.cap-hit{animation:capShake .4s ease-out;border-color:#b8483a}
   @keyframes capShake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
@@ -1655,6 +1679,55 @@ const LEGEND_DIALOGUE={
     ],
   ],
 };
+// ---- THE ASCENT: the legend watches your climb, rung by rung ----
+// index = run.rung (0-6). The voice on the map before each fight.
+const LEGEND_WATCH={
+  selina:[
+    'Someone new is climbing. I should tell Oscar. Oscar? ...Oscar?',
+    'Two rungs. Cute. I have been on this one my whole life.',
+    'You fight alone. That is the saddest thing I have ever seen.',
+    'Still climbing? Nobody is coming to help you. I checked.',
+    'You are closer than the others got. That is not a compliment.',
+    'One more floor. Then you will see what devotion actually does.',
+    'You made it. Oscar is not here. So it is just us.',
+  ],
+  rocket:[
+    'SOMEONE IS ON THE STAIRS. I AM AWAKE. I AM ALWAYS AWAKE.',
+    'STILL COMING? IT IS BARELY DAWN. THIS IS MY HOUR.',
+    'I HAVE YELLED ABOUT YOU THREE TIMES NOW. NOBODY CARES.',
+    'YOU ARE MAKING TOO MUCH NOISE. THAT IS MY JOB.',
+    'THE BEDROOM IS AHEAD. THAT IS WHERE I DO MY BEST WORK.',
+    'ONE FLOOR. I HAVE BEEN SCREAMING SINCE FOUR. I HAVE MORE.',
+    'YOU ARE HERE. GOOD. NOW EVERYONE IS UP.',
+  ],
+  smokey:[
+    'Something moved in the alley. I am already aware.',
+    '...',
+    'You have not looked up once. I have been up here the whole time.',
+    'Halfway. I have watched every mistake you made getting here.',
+    'You are being followed. You have been for a while.',
+    'One more. I am not on the throne. I am behind you.',
+    'You found the room. You still have not found me.',
+  ],
+  goku:[
+    'Oh! Someone is climbing. That is exciting. Be careful though.',
+    'You are doing really well. I mean that. Do you want a break?',
+    'It gets harder from here. I am sorry about that in advance.',
+    'Are you hurt? You look hurt. There is sun on the landing.',
+    'I keep hoping you turn back. I do not think you will.',
+    'One floor left. I wish you would stop. I really do.',
+    'You came all the way. Alright. I will try not to enjoy this.',
+  ],
+  oscar:[
+    'Something is in my alley. It will not be there long.',
+    'The yard is mine. The bins are mine. You are trespassing twice.',
+    'Selina says you are still coming. Selina worries. I do not.',
+    'You are in my kitchen now. Everything you touch is mine.',
+    'Halfway up MY house. Rocket is screaming. Let him.',
+    'You are outside my bedroom. Think very carefully.',
+    'You are in my house. Kneel, or be knelt.',
+  ],
+};
 const LEGEND_DEFEAT={
   selina:'Selina blinks slowly, then pads away to find Oscar.',
   rocket:'Rocket yells once more, quieter, and finally goes back to sleep.',
@@ -1885,6 +1958,46 @@ function RunMap({run,onFight,onAbandon}){
           {isBoss? <>Face {legend?legend.name:'the Legend'}</> : <><Icon name="swords" size={15}/> Climb to {rung.name}</>}
         </button>
         {isBoss && <p className="throne-warn">Nothing beyond this. Win or the run ends.</p>}
+      </div>
+
+      {legend && <LegendWatch legendId={run.legendId} rung={run.rung}/>}
+    </div>
+  );
+}
+
+/* ---------- THE ASCENT: the legend heckles you from the throne ---------- */
+function LegendWatch({legendId,rung}){
+  const c=BY_ID[legendId];
+  const lines=LEGEND_WATCH[legendId]||[];
+  const text=lines[Math.min(rung,lines.length-1)]||'';
+  const [typed,setTyped]=useState('');
+  const boxRef=useRef(null);
+  // heat 0..1 — the closer you get, the more the panel glows
+  const heat=Math.min(1,rung/6);
+
+  useEffect(()=>{
+    const reduce=window.matchMedia&&window.matchMedia('(prefers-reduced-motion:reduce)').matches;
+    if(reduce){ setTyped(text); return; }
+    setTyped('');
+    let i=0;
+    const iv=setInterval(()=>{
+      i++; setTyped(text.slice(0,i));
+      if(i>=text.length) clearInterval(iv);
+    },22);
+    if(boxRef.current) gsap.fromTo(boxRef.current,{y:8,opacity:0},{y:0,opacity:1,duration:.4,ease:'power2.out'});
+    return ()=>clearInterval(iv);
+  },[text]);
+
+  return (
+    <div ref={boxRef} className="watch" style={{'--heat':heat}}>
+      <div className="watch-eyes">
+        <i/><i/>
+      </div>
+      <div className="watch-body">
+        <span className="watch-who">
+          {c?c.name:'The Throne'} <em>watches from the throne</em>
+        </span>
+        <p>{text?<>"{typed}"</>:null}</p>
       </div>
     </div>
   );
