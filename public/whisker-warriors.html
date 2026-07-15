@@ -8,6 +8,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/Flip.min.js"></script>
 <style>
   :root{
     --bg:#211812; --panel:#2f2418; --panel2:#3a2d1e; --ink:#f3e9d8;
@@ -277,6 +278,19 @@
   .rung-banner span.rb-boss{color:#e98a7a;font-size:16px;text-shadow:0 0 16px rgba(184,72,58,.5)}
   .rung-banner i{font-size:10px;letter-spacing:.1em;color:var(--ink-dim);font-style:normal;text-transform:uppercase}
   .hero-hp.wide{width:100%;margin-bottom:6px}
+  /* ===== card flight (Flip) ===== */
+  .fly-ghost{position:fixed;z-index:60;pointer-events:none;border-radius:10px;
+    background:linear-gradient(180deg,#f6eeda,#e2d3b4);
+    border:2px solid var(--gold);
+    box-shadow:0 12px 30px rgba(0,0,0,.6),0 0 22px rgba(216,182,74,.5);
+    transform-origin:center center}
+  /* ===== sound toggle ===== */
+  .snd-btn{flex:0 0 auto;width:30px;height:30px;border-radius:50%;
+    border:1px solid rgba(216,182,74,.4);background:rgba(216,182,74,.10);
+    color:var(--gold);display:inline-flex;align-items:center;justify-content:center;
+    cursor:pointer;transition:all .18s;padding:0}
+  .snd-btn:hover{border-color:var(--gold);background:rgba(216,182,74,.2)}
+  .snd-btn:active{transform:scale(.92)}
   /* ===== THE ASCENT: legend watching panel ===== */
   .watch{--heat:0;display:flex;gap:11px;align-items:flex-start;margin:18px 0 6px;padding:12px 13px;
     border-radius:12px;position:relative;overflow:hidden;
@@ -577,7 +591,7 @@ const BOSS_FRAME={
 };
 </script>
 <script type="text/babel" data-type="module">
-const {useState,useEffect,useRef,useCallback} = React;
+const {useState,useEffect,useLayoutEffect,useRef,useCallback} = React;
 
 
 /* ============================================================
@@ -849,6 +863,172 @@ function confetti(){
 }
 function screenShake(){ const r=document.getElementById('root'); if(r) pulse(r,'shake-screen',360); }
 
+/* ============================================================
+   SOUND — synthesised via Web Audio. No files, no CDN, no loading.
+   Every sound is built from oscillators + noise at call time.
+   ============================================================ */
+const SFX=(()=>{
+  let ctx=null, master=null, muted=false;
+  try{ muted = localStorage.getItem('ww_muted')==='1'; }catch(e){}
+
+  function boot(){
+    if(ctx)return ctx;
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC)return null;
+    ctx=new AC();
+    master=ctx.createGain();
+    master.gain.value=muted?0:0.32;
+    master.connect(ctx.destination);
+    return ctx;
+  }
+  // browsers block audio until a user gesture; resume on first interaction
+  function unlock(){
+    const c=boot(); if(!c)return;
+    if(c.state==='suspended') c.resume();
+  }
+  function setMuted(m){
+    muted=m;
+    try{ localStorage.setItem('ww_muted', m?'1':'0'); }catch(e){}
+    if(master) master.gain.setTargetAtTime(m?0:0.32, ctx.currentTime, 0.01);
+  }
+  function isMuted(){ return muted; }
+
+  // ---- primitives ----
+  function tone({freq=440,dur=0.15,type='sine',vol=0.3,slideTo=null,delay=0,attack=0.005,decay=null}){
+    const c=boot(); if(!c||muted)return;
+    const t0=c.currentTime+delay;
+    const o=c.createOscillator(), g=c.createGain();
+    o.type=type; o.frequency.setValueAtTime(freq,t0);
+    if(slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(1,slideTo), t0+dur);
+    g.gain.setValueAtTime(0.0001,t0);
+    g.gain.exponentialRampToValueAtTime(vol, t0+attack);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0+(decay||dur));
+    o.connect(g); g.connect(master);
+    o.start(t0); o.stop(t0+dur+0.05);
+  }
+  function noise({dur=0.12,vol=0.3,delay=0,lp=2200,hp=200,slideLp=null}){
+    const c=boot(); if(!c||muted)return;
+    const t0=c.currentTime+delay;
+    const n=Math.floor(c.sampleRate*dur);
+    const buf=c.createBuffer(1,n,c.sampleRate);
+    const d=buf.getChannelData(0);
+    for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n);
+    const src=c.createBufferSource(); src.buffer=buf;
+    const lpf=c.createBiquadFilter(); lpf.type='lowpass'; lpf.frequency.setValueAtTime(lp,t0);
+    if(slideLp) lpf.frequency.exponentialRampToValueAtTime(Math.max(60,slideLp), t0+dur);
+    const hpf=c.createBiquadFilter(); hpf.type='highpass'; hpf.frequency.value=hp;
+    const g=c.createGain();
+    g.gain.setValueAtTime(vol,t0);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+    src.connect(hpf); hpf.connect(lpf); lpf.connect(g); g.connect(master);
+    src.start(t0); src.stop(t0+dur+0.02);
+  }
+
+  // ---- the palette ----
+  const S={
+    unlock,setMuted,isMuted,
+    tap(){ tone({freq:520,dur:0.05,type:'triangle',vol:0.16}); },
+    // wet, soft: a paw landing
+    play(){ tone({freq:300,slideTo:520,dur:0.13,type:'sine',vol:0.26});
+            noise({dur:0.07,vol:0.10,lp:1400}); },
+    // claw: sharp noise sweep
+    hit(){ noise({dur:0.10,vol:0.34,lp:5200,slideLp:700,hp:600});
+           tone({freq:180,slideTo:70,dur:0.10,type:'square',vol:0.14}); },
+    // crit: hit + a nasty overtone
+    crit(){ noise({dur:0.15,vol:0.42,lp:7000,slideLp:500,hp:800});
+            tone({freq:240,slideTo:60,dur:0.18,type:'sawtooth',vol:0.20});
+            tone({freq:900,slideTo:300,dur:0.12,type:'square',vol:0.10,delay:0.02}); },
+    // a cat losing: descending mrow
+    death(){ tone({freq:420,slideTo:110,dur:0.34,type:'sawtooth',vol:0.16});
+             noise({dur:0.18,vol:0.10,lp:900,delay:0.04}); },
+    // hero struck: low thud
+    heroHit(){ tone({freq:110,slideTo:44,dur:0.24,type:'sine',vol:0.34});
+               noise({dur:0.12,vol:0.20,lp:500}); },
+    heal(){ tone({freq:520,slideTo:780,dur:0.22,type:'sine',vol:0.20});
+            tone({freq:780,slideTo:1040,dur:0.18,type:'sine',vol:0.12,delay:0.07}); },
+    draw(){ noise({dur:0.06,vol:0.13,lp:3800,hp:1400}); },
+    select(){ tone({freq:680,dur:0.06,type:'triangle',vol:0.16}); },
+    deny(){ tone({freq:160,dur:0.10,type:'square',vol:0.18});
+            tone({freq:120,dur:0.10,type:'square',vol:0.14,delay:0.07}); },
+    turn(){ tone({freq:440,slideTo:660,dur:0.16,type:'triangle',vol:0.16});
+            tone({freq:660,dur:0.14,type:'sine',vol:0.10,delay:0.10}); },
+    // rung cleared: little rising arpeggio
+    win(){ [523,659,784,1047].forEach((f,i)=>
+             tone({freq:f,dur:0.30,type:'triangle',vol:0.22,delay:i*0.09})); },
+    lose(){ [392,330,262,196].forEach((f,i)=>
+              tone({freq:f,dur:0.34,type:'sine',vol:0.20,delay:i*0.11})); },
+    reward(){ tone({freq:880,dur:0.10,type:'sine',vol:0.18});
+              tone({freq:1320,dur:0.16,type:'sine',vol:0.14,delay:0.07}); },
+    // THE THRONE: low menacing swell
+    throne(){ tone({freq:70,slideTo:52,dur:1.5,type:'sawtooth',vol:0.22});
+              tone({freq:105,slideTo:78,dur:1.5,type:'sine',vol:0.14,delay:0.05});
+              noise({dur:1.0,vol:0.07,lp:340,delay:0.1}); },
+    // VS slam
+    slam(){ noise({dur:0.30,vol:0.44,lp:2400,slideLp:180});
+            tone({freq:150,slideTo:40,dur:0.34,type:'square',vol:0.30}); },
+    // dialogue blip
+    blip(){ tone({freq:600,dur:0.028,type:'square',vol:0.045}); },
+    // full run victory
+    fanfare(){ [523,659,784,1047,1319].forEach((f,i)=>
+                 tone({freq:f,dur:0.5,type:'triangle',vol:0.24,delay:i*0.12}));
+               tone({freq:1047,dur:0.9,type:'sine',vol:0.18,delay:0.62}); },
+  };
+  return S;
+})();
+
+/* ============================================================
+   FLIP — cards physically fly from hand to board.
+   Guarded: if the CDN fails, everything falls back to the old pop-in.
+   ============================================================ */
+const HAS_FLIP = (typeof Flip!=='undefined' && typeof gsap!=='undefined');
+if(HAS_FLIP){ try{ gsap.registerPlugin(Flip); }catch(e){} }
+
+function reduceMotion(){
+  return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion:reduce)').matches);
+}
+
+// Fly a ghost of the played card from its hand slot to the unit that spawned on board.
+// We use a clone so React is free to unmount the real card immediately.
+function flyCardToBoard(fromRect,uid){
+  if(!fromRect||reduceMotion())return;
+  const target=document.querySelector(`[data-uid="${uid}"]`);
+  if(!target)return;
+  const to=target.getBoundingClientRect();
+  const ghost=document.createElement('div');
+  ghost.className='fly-ghost';
+  ghost.style.left=fromRect.left+'px';
+  ghost.style.top=fromRect.top+'px';
+  ghost.style.width=fromRect.width+'px';
+  ghost.style.height=fromRect.height+'px';
+  document.body.appendChild(ghost);
+  const dx=(to.left+to.width/2)-(fromRect.left+fromRect.width/2);
+  const dy=(to.top+to.height/2)-(fromRect.top+fromRect.height/2);
+  gsap.timeline({onComplete:()=>ghost.remove()})
+    .to(ghost,{x:dx,y:dy,scale:to.width/Math.max(1,fromRect.width),
+               rotation:(Math.random()*16-8),duration:.34,ease:'power3.inOut'})
+    .to(ghost,{opacity:0,duration:.10},'-=0.08');
+}
+
+// When a cat dies the survivors reflow. Flip animates them sliding to their
+// new slots instead of teleporting. Call captureBoard() before the state
+// change, then playBoard() after React has painted.
+let _flipState=null;
+function captureBoard(){
+  if(!HAS_FLIP||reduceMotion())return;
+  const els=document.querySelectorAll('.board-row .mini');
+  if(!els.length){_flipState=null;return;}
+  try{ _flipState=Flip.getState(els); }catch(e){ _flipState=null; }
+}
+function playBoard(){
+  if(!HAS_FLIP||!_flipState)return;
+  try{
+    Flip.from(_flipState,{duration:.4,ease:'power2.out',absolute:true,
+      onEnter:el=>gsap.fromTo(el,{opacity:0,scale:.6},{opacity:1,scale:1,duration:.3}),
+      onLeave:el=>gsap.to(el,{opacity:0,scale:.5,duration:.25})});
+  }catch(e){}
+  _flipState=null;
+}
+
 /* ---- FX layer 2 ---- */
 // diagonal slash across a point
 function slashFx(x,y,size){
@@ -893,6 +1073,7 @@ function impactFlash(){
 }
 // big sweeping turn announcement
 function turnSweep(text,color){
+  SFX.turn();
   const el=document.createElement('div'); el.className='turn-sweep';
   el.textContent=text; el.style.color=color||'#d8b64a';
   document.body.appendChild(el); setTimeout(()=>el.remove(),1200);
@@ -900,6 +1081,7 @@ function turnSweep(text,color){
 // hero bar hit reaction
 function heroHitFx(which,dmg){
   const n=document.getElementById(which); if(!n)return;
+  SFX.heroHit();
   pulse(n,'hurt',420);
   const bar=n.querySelector('.bar'); if(bar) pulse(bar,'flash',460);
   const r=n.getBoundingClientRect();
@@ -983,7 +1165,7 @@ function Card({card,onClick,className='',playable}){
   const flavor = (typeof CAPTIONS!=='undefined' && CAPTIONS[card.id]) || card.flavor || '';
   const typeText = card.role;
   return (
-    <div className={`card ${card.rarity} ${className}`} onClick={onClick}>
+    <div className={`card ${card.rarity} ${className}`} data-iid={card._iid} onClick={onClick}>
       <div className="titlebar">
         <span className="cname">{card.name}</span>
         <span className="costwrap"><i className="minilbl">COST</i><span className="cost" title="Energy cost to play">{card.cost}</span></span>
@@ -1066,6 +1248,17 @@ function Battle({owned,tier,deck,buffs,eHeroStart,bossId,rung,lives,showCoach,on
   // live mirrors of state to avoid stale closures inside timed enemy-turn sequences
   const pBoardRef=useRef([]); const eBoardRef=useRef([]); const endedRef=useRef(null);
   const pHeroRef=useRef(20); const eHeroRef=useRef(20);
+  // Flip: capture board geometry before React paints a board change, then
+  // animate survivors into their new slots after. useLayoutEffect runs after
+  // DOM mutation but before the browser paints, which is exactly the window
+  // Flip needs to avoid a visible jump.
+  const boardSigRef=useRef('');
+  useLayoutEffect(()=>{
+    const sig=pBoard.map(u=>u.uid).join(',')+'|'+eBoard.map(u=>u.uid).join(',');
+    if(boardSigRef.current && boardSigRef.current!==sig) playBoard();
+    boardSigRef.current=sig;
+  },[pBoard,eBoard]);
+
   useEffect(()=>{pBoardRef.current=pBoard;},[pBoard]);
   useEffect(()=>{eBoardRef.current=eBoard;},[eBoard]);
   useEffect(()=>{endedRef.current=ended;},[ended]);
@@ -1100,6 +1293,7 @@ function Battle({owned,tier,deck,buffs,eHeroStart,bossId,rung,lives,showCoach,on
     if(eHero<=0){
       settledRef.current=true;
       setEnded('win');
+      SFX.win();
       impactFlash(); screenShake();
       turnSweep('Victory!','#ffd76a');
       confetti();
@@ -1112,6 +1306,7 @@ function Battle({owned,tier,deck,buffs,eHeroStart,bossId,rung,lives,showCoach,on
     else if(pHero<=0){
       settledRef.current=true;
       setEnded('lose');
+      SFX.lose();
       screenShake(); impactFlash();
       turnSweep('Defeat','#b8483a');
       setTimeout(()=>onLose(),2400);
@@ -1123,17 +1318,22 @@ function Battle({owned,tier,deck,buffs,eHeroStart,bossId,rung,lives,showCoach,on
   function playCard(idx){
     if(turn!=='player'||ended)return;
     const card=pHand[idx];
-    if(card.cost>pEnergy){pushLog('Not enough energy for '+card.name+'.');return;}
-    if(pBoard.length>=5){pushLog('Your board is full.');return;}
+    if(card.cost>pEnergy){SFX.deny();pushLog('Not enough energy for '+card.name+'.');return;}
+    if(pBoard.length>=5){SFX.deny();pushLog('Your board is full.');return;}
+    SFX.play();
     setPEnergy(e=>e-card.cost);
     const unit=makeUnit(card,'player');
     setPBoard(b=>[...b,unit]);
+    // capture where the card sits in hand BEFORE React unmounts it
+    const handEl=document.querySelector(`.hand .card[data-iid="${card._iid}"]`);
+    const fromRect=handEl?handEl.getBoundingClientRect():null;
     setPHand(h=>h.filter((_,i)=>i!==idx));
     pushLog(card.name+' takes the field. '+card.ability.name+'!');
     setTimeout(()=>applyOnPlay(unit),60);
     setTimeout(()=>{
       const n=nodeRef(unit.uid);
       if(n){
+        flyCardToBoard(fromRect,unit.uid);
         pulse(n,'spawn',500);
         const r=n.getBoundingClientRect();
         const cx=r.left+r.width/2, cy=r.top+r.height/2;
@@ -1154,6 +1354,7 @@ function Battle({owned,tier,deck,buffs,eHeroStart,bossId,rung,lives,showCoach,on
 
   // green heal numbers + sparkle over a unit
   function healFx(uid,amount){
+    SFX.heal();
     const n=nodeRef(uid); if(!n)return;
     const r=n.getBoundingClientRect();
     const cx=r.left+r.width/2, cy=r.top+r.height*0.4;
@@ -1195,6 +1396,7 @@ function Battle({owned,tier,deck,buffs,eHeroStart,bossId,rung,lives,showCoach,on
   }
 
   function selectAttacker(u){
+    SFX.select();
     if(turn!=='player'||ended)return;
     if(u.side!=='player'){return;}
     if(u.hasAttacked){pushLog(u.card.name+' already attacked this turn.');return;}
@@ -1220,6 +1422,7 @@ function Battle({owned,tier,deck,buffs,eHeroStart,bossId,rung,lives,showCoach,on
   function dealDamage(unit,dmg,setBoard,boardSide){
     let d=dmg;
     if(unit.dodge&&Math.random()<unit.dodge){
+      SFX.draw();
       const n=nodeRef(unit.uid); if(n){const r=n.getBoundingClientRect();floatNum(r.left+r.width/2,r.top,'DODGE!','#7ab0e0');pulse(n,'lunge-'+(unit.side==='player'?'up':'down'),420);}
       pushLog(unit.card.name+' dodged!');
       return unit;
@@ -1228,6 +1431,8 @@ function Battle({owned,tier,deck,buffs,eHeroStart,bossId,rung,lives,showCoach,on
     if(unit.shield>0){const absorbed=Math.min(unit.shield,d);d-=absorbed;unit.shield-=absorbed;}
     unit.hp-=d;
     if(unit.card&&unit.card.id==='lykoi'&&d>0)unit._wounded=true;
+    if(d>=6) SFX.crit(); else if(d>0) SFX.hit();
+    if(unit.hp<=0) setTimeout(()=>SFX.death(),90);
     const n=nodeRef(unit.uid);
     if(n){
       const r=n.getBoundingClientRect();
@@ -1282,7 +1487,7 @@ function Battle({owned,tier,deck,buffs,eHeroStart,bossId,rung,lives,showCoach,on
       if(u.hp<=0){ const dn=nodeRef(uid); if(dn){ dn.classList.add('dying'); const r=dn.getBoundingClientRect(); burst(r.left+r.width/2,r.top+r.height/2,['#888','#bbb','#e98a7a'],16);} }
     });
     pb=pb.filter(u=>u.hp>0); eb=eb.filter(u=>u.hp>0);
-    setTimeout(()=>{ setPBoard(pb); setEBoard(eb); recomputeSelina(); },520);
+    setTimeout(()=>{ captureBoard(); setPBoard(pb); setEBoard(eb); recomputeSelina(); },520);
     let msg=atk.card.name+' strikes '+tgt.card.name+' for '+dmg+'!'+note;
     if(targetDied)msg+=' '+tgt.card.name+' falls.';
     pushLog(msg);
@@ -1322,6 +1527,7 @@ function Battle({owned,tier,deck,buffs,eHeroStart,bossId,rung,lives,showCoach,on
 
   // helper: flash a damage number over a unit node by uid (after render)
   function popDamage(uid,amount,color){
+    if(amount>=6) SFX.crit(); else if(amount>0) SFX.hit();
     setTimeout(()=>{
       const n=nodeRef(uid);
       if(n){const r=n.getBoundingClientRect();floatNum(r.left+r.width/2,r.top+10,(amount>0?'-'+amount:'0'),color||'#e98a7a');shakeEl(n);flashEl(n,'#b8483a');}
@@ -1382,6 +1588,7 @@ function Battle({owned,tier,deck,buffs,eHeroStart,bossId,rung,lives,showCoach,on
         if(deckRef.current.length){
           const c=deckRef.current.shift();
           setPHand(h=>h.length<7?[...h,c]:h);
+          SFX.draw();
           setJustDrawn(c._iid);
           setTimeout(()=>setJustDrawn(null),500);
         }
@@ -1412,6 +1619,7 @@ function Battle({owned,tier,deck,buffs,eHeroStart,bossId,rung,lives,showCoach,on
     const nextAttack=()=>{
       if(endedRef.current){done&&done();return;}
       if(ai>=attackers.length){
+        captureBoard();
         setPBoard(b=>b.filter(x=>x.hp>0));
         setEBoard(b=>b.filter(x=>x.hp>0));
         setTimeout(()=>done&&done(),240);
@@ -1471,6 +1679,7 @@ function Battle({owned,tier,deck,buffs,eHeroStart,bossId,rung,lives,showCoach,on
         } else {
           pushLog('Your '+target.card.name+' was defeated.');
         }
+        captureBoard();
         newPb=newPb.filter(x=>x.hp>0); newEb=newEb.filter(x=>x.hp>0);
         pBoardRef.current=newPb; eBoardRef.current=newEb;
         setPBoard(newPb); setEBoard(newEb);
@@ -1810,7 +2019,10 @@ function Collection({owned,coins,wins,onBattle,onBack,onUnlock,onReset,saveOn,be
       <div className="topbar">
         <button className="btn ghost" onClick={onBack}><Icon name="arrowL" size={14}/> Menu</button>
         <h2>The Roster</h2>
-        <span className="coin"><Icon name="fish" size={15}/> {coins}</span>
+        <span style={{display:'flex',alignItems:'center',gap:7}}>
+          <SoundBtn/>
+          <span className="coin"><Icon name="fish" size={15}/> {coins}</span>
+        </span>
       </div>
       <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap',marginBottom:6}}>
         <span className="statchip"><Icon name="trophy" size={13}/> {wins} wins</span>
@@ -1857,14 +2069,15 @@ function Deckbuilder({owned,initialDeck,onStart,onBack}){
   const [picked,setPicked]=useState(initialDeck&&initialDeck.length?initialDeck:ownedCards.slice(0,Math.min(DECK_MAX,ownedCards.length)).map(c=>c.id));
   const [capHit,setCapHit]=useState(false);
   function toggle(id){
-    setPicked(p=>{
-      if(p.includes(id))return p.filter(x=>x!==id);
-      if(p.length>=DECK_MAX){
-        setCapHit(true); setTimeout(()=>setCapHit(false),450);
-        return p;
-      }
-      return [...p,id];
-    });
+    const has=picked.includes(id);
+    if(has){ SFX.tap(); setPicked(p=>p.filter(x=>x!==id)); return; }
+    if(picked.length>=DECK_MAX){
+      SFX.deny();
+      setCapHit(true); setTimeout(()=>setCapHit(false),450);
+      return;
+    }
+    SFX.tap();
+    setPicked(p=>p.includes(id)?p:[...p,id]);
   }
   const count=picked.length;
   const ok=count>=DECK_MIN&&count<=DECK_MAX;
@@ -1914,6 +2127,23 @@ function Deckbuilder({owned,initialDeck,onStart,onBack}){
         })}
       </div>
     </div>
+  );
+}
+
+/* ---------- sound toggle ---------- */
+function SoundBtn({className=''}){
+  const [m,setM]=useState(()=>SFX.isMuted());
+  return (
+    <button className={`snd-btn ${className}`} title={m?'Sound off':'Sound on'}
+      aria-label={m?'Unmute':'Mute'}
+      onClick={()=>{ const n=!m; SFX.setMuted(n); setM(n); if(!n){SFX.unlock();SFX.select();} }}>
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/>
+        {m
+          ? <path d="M16 9l5 6M21 9l-5 6" stroke="currentColor" strokeWidth="1.8" fill="none" strokeLinecap="round"/>
+          : <path d="M16.5 8.5a4.5 4.5 0 0 1 0 7M19 6a8 8 0 0 1 0 12" stroke="currentColor" strokeWidth="1.6" fill="none" strokeLinecap="round"/>}
+      </svg>
+    </button>
   );
 }
 
@@ -2045,7 +2275,8 @@ function ThroneIntro({legendId,onGo}){
       {scale:1,opacity:1,rotation:-6,duration:.5,ease:'back.out(2)'});
     if(cardRef.current) gsap.fromTo(cardRef.current,{x:90,opacity:0},
       {x:0,opacity:1,duration:.55,ease:'power3.out',delay:.15});
-    setTimeout(()=>{ try{ screenShake(); impactFlash(); }catch(e){} },420);
+    SFX.throne();
+    setTimeout(()=>{ try{ SFX.slam(); screenShake(); impactFlash(); }catch(e){} },420);
     return ()=>clearTimeout(t);
   },[]);
 
@@ -2061,6 +2292,7 @@ function ThroneIntro({legendId,onGo}){
     const speed=line.who==='legend'?26:18;
     const iv=setInterval(()=>{
       i++; setTyped(line.text.slice(0,i));
+      if(i%2===0) SFX.blip();
       if(i>=line.text.length){ clearInterval(iv); setFull(true); }
     },speed);
     if(lineRef.current) gsap.fromTo(lineRef.current,{y:10,opacity:0},{y:0,opacity:1,duration:.28,ease:'power2.out'});
@@ -2205,6 +2437,7 @@ function App(){
       setOwned(o=>o.includes(r.legendId)?o:[...o,r.legendId]);
       setBestRung(b=>Math.max(b,7));
       setScreen('runmap');
+      SFX.fanfare();
       setTimeout(()=>setRunEnd({run:r,won:true}),400);
       return;
     }
@@ -2234,6 +2467,7 @@ function App(){
   }
 
   function takeReward(r){
+    SFX.reward();
     setRewards(null);
     setRun(prev=>{
       if(!prev)return prev;
@@ -2288,7 +2522,10 @@ function App(){
             <button className="btn gold" onClick={()=>setScreen('collection')}>Enter the Guildhall</button>
             <button className="btn" onClick={()=>setScreen('howto')}>How to Play</button>
           </div>
-          <p style={{color:'var(--ink-dim)',fontSize:11,marginTop:10}}>a hammyLabs joint</p>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:10,marginTop:10}}>
+            <p style={{color:'var(--ink-dim)',fontSize:11}}>a hammyLabs joint</p>
+            <SoundBtn/>
+          </div>
         </div>
       )}
 
@@ -2379,6 +2616,10 @@ class ErrorBoundary extends React.Component{
     return this.props.children;
   }
 }
+// Browsers block audio until the user interacts. Unlock on the first gesture.
+['pointerdown','keydown','touchstart'].forEach(ev=>
+  window.addEventListener(ev, ()=>SFX.unlock(), {once:false, passive:true}));
+
 ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><App/></ErrorBoundary>);
 </script>
 </body>
