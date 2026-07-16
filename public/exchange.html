@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>THE EXCHANGE — hammyLabs</title>
+<script>
+/* ---- DIAGNOSTIC CONSOLE — stays hidden unless a genuine error occurs ---- */
+(function(){
+  var logs=[];
+  function paint(){
+    var el=document.getElementById('diag');
+    if(!el){
+      el=document.createElement('div'); el.id='diag';
+      el.style.cssText='position:fixed;top:0;left:0;right:0;z-index:9999;background:#2A0F0C;color:#FFB3AD;font:11px/1.5 monospace;padding:8px 10px;white-space:pre-wrap;border-bottom:1px solid #FF4B3E;max-height:45vh;overflow:auto';
+      document.body.appendChild(el);
+    }
+    el.textContent=logs.join('\n');
+  }
+  // isError=false logs quietly (to the browser console only); isError=true paints the bar.
+  window.__diag=function(m,isError){
+    logs.push(m);
+    try{ console.log('[diag] '+m); }catch(e){}
+    if(isError){ if(document.body) paint(); else document.addEventListener('DOMContentLoaded',paint); }
+  };
+  window.addEventListener('error',function(e){
+    if(e.target && e.target.tagName==='SCRIPT'){ __diag('SCRIPT FAILED TO LOAD: '+(e.target.src||'inline'),true); }
+    else { __diag('ERROR: '+(e.message||e.type)+(e.filename?' @ '+e.filename.split('/').pop()+':'+e.lineno:''),true); }
+  },true);
+  window.addEventListener('unhandledrejection',function(e){
+    __diag('PROMISE ERROR: '+((e.reason&&e.reason.message)||e.reason),true);
+  });
+  __diag('THE EXCHANGE v1.0 · boot '+new Date().toTimeString().slice(0,8));
+  setTimeout(function(){
+    if(window.__exchangeMounted) return;
+    __diag('MOUNT FAILED after 6s. Library check — React: '+(!!window.React)+' · ReactDOM: '+(!!window.ReactDOM)+' · Babel: '+(!!window.Babel),true);
+    __diag(!window.React||!window.Babel
+      ? 'VERDICT: the CDN scripts did not load. Connection or unpkg issue, not a code issue.'
+      : 'VERDICT: libraries loaded but the app did not mount. Screenshot this box and send it to the mechanic.',true);
+  },6000);
+})();
+</script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    /* the same rain-streaked window at night as The Terminal, so the two feel as siblings:
+       deep cool-charcoal glass, warm amber bokeh, steel-blue rainwash, softened status tones */
+    --bg:#0B0D10; --bg2:#0E1116; --panel:#141821; --panel2:#1A1F2A; --panel3:#20263280;
+    --line:#252C38; --line2:#2E3644;
+    --amber:#F5A623; --amber-soft:#E0983A; --amber-dim:#7C6234;
+    --steel:#6B9BC4; --steel-dim:#3E5773; --steel-soft:#8FB4D6;
+    --green:#5AC98A; --green-dim:#2E5C43; --red:#E56B6B; --red-dim:#5C2E2E;
+    --ink:#E8EAED; --ink2:#B8BFC9; --dim:#7B8494; --faint:#565E6C;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{background:var(--bg);color:var(--ink);font-family:'Space Grotesk',system-ui,sans-serif;font-size:14px;-webkit-font-smoothing:antialiased}
+  body::before{content:'';position:fixed;inset:0;z-index:-2;background:
+    radial-gradient(circle at 22% 78%, rgba(245,166,35,.10), transparent 32%),
+    radial-gradient(circle at 68% 42%, rgba(107,155,196,.10), transparent 36%),
+    radial-gradient(circle at 84% 82%, rgba(245,166,35,.07), transparent 30%),
+    radial-gradient(circle at 44% 20%, rgba(107,155,196,.06), transparent 34%);
+    background-color:var(--bg);pointer-events:none}
+  body::after{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.5;
+    background:linear-gradient(180deg, transparent, rgba(11,13,16,.7));
+    animation:drift 26s ease-in-out infinite alternate}
+  @keyframes drift{from{transform:translateY(-2%)}to{transform:translateY(2%)}}
+  @media (prefers-reduced-motion:reduce){body::after{animation:none}}
+  #root{padding-bottom:82px}
+  .mono{font-family:'IBM Plex Mono',ui-monospace,monospace;font-variant-numeric:tabular-nums}
+  .disp{font-family:'Space Grotesk',sans-serif;letter-spacing:-.01em}
+  a{color:var(--steel-soft);text-decoration:none}
+  button{font-family:inherit;cursor:pointer;border:1px solid var(--line2);background:var(--panel2);color:var(--ink);border-radius:8px;padding:10px 15px;font-size:13px;font-weight:500;transition:border-color .15s,background .15s}
+  button:focus-visible{outline:2px solid var(--amber);outline-offset:1px}
+  button.pri{background:linear-gradient(180deg,var(--amber),var(--amber-soft));color:#1A1206;border-color:var(--amber);font-weight:600}
+  button.ghost{background:transparent;border-color:var(--line2)}
+  .inp{background:var(--bg2);border:1px solid var(--line2);border-radius:8px;color:var(--ink);padding:8px 10px;font-size:14px;font-family:'IBM Plex Mono',monospace}
+  .inp:focus{outline:none;border-color:var(--amber)}
+  button.ghost:active{background:var(--panel2)}
+  button:disabled{opacity:.4;cursor:default}
+  svg.ic{width:1em;height:1em;stroke:currentColor;stroke-width:1.6;fill:none;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.13em}
+  .spin{display:inline-block;animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:rgba(11,13,16,.82);backdrop-filter:blur(12px);z-index:10}
+  .brand{font-size:20px;font-weight:700;color:var(--ink);letter-spacing:-.01em;display:flex;align-items:center;gap:9px}
+  .brand .dot{width:8px;height:8px;border-radius:50%;background:var(--amber);box-shadow:0 0 10px var(--amber)}
+  .brand small{color:var(--dim);font-size:10px;font-weight:500;letter-spacing:.14em;display:block;margin-top:1px;text-transform:uppercase}
+  .pill{font-size:10px;padding:5px 10px;border-radius:20px;border:1px solid var(--line2);color:var(--dim);letter-spacing:.06em;font-weight:600;display:inline-flex;align-items:center;gap:5px}
+  .pill.open{color:var(--green);border-color:var(--green-dim)}
+  .pill.open .dot,.pill.shut .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+  .pill.shut{color:var(--red);border-color:var(--red-dim)}
+  .tabs{position:fixed;bottom:0;left:0;right:0;display:flex;background:rgba(14,17,22,.92);backdrop-filter:blur(12px);border-top:1px solid var(--line);z-index:20;padding-bottom:env(safe-area-inset-bottom)}
+  .tabs button{flex:1;border:none;border-radius:0;background:transparent;color:var(--faint);padding:11px 0 9px;font-size:10px;letter-spacing:.06em;font-weight:600;border-top:2px solid transparent;display:flex;flex-direction:column;align-items:center;gap:4px;transition:color .15s}
+  .tabs button svg{width:20px;height:20px}
+  .tabs button.on{color:var(--amber);border-top-color:var(--amber)}
+  .wrap{padding:18px 16px;max-width:720px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:12px}
+  .card.accent{border-color:var(--amber-dim)}
+  .eyebrow{font-size:10px;letter-spacing:.14em;color:var(--steel);margin-bottom:9px;text-transform:uppercase;font-weight:600;display:flex;align-items:center;gap:6px}
+  .hl{font-family:'Space Grotesk',sans-serif;font-size:17px;font-weight:600;line-height:1.3;color:var(--ink);letter-spacing:-.01em}
+  .meta{font-size:11px;color:var(--dim);margin-top:8px;display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  .row{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+  .between{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0}
+  .kv{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:11px 12px}
+  .kv .k{font-size:9px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase;font-weight:600}
+  .kv .v{font-family:'IBM Plex Mono',monospace;font-variant-numeric:tabular-nums;font-size:17px;font-weight:600;margin-top:4px;color:var(--ink)}
+  .green{color:var(--green)} .red{color:var(--red)} .ambr{color:var(--amber)} .dim{color:var(--dim)} .steel{color:var(--steel-soft)}
+  .badge{font-size:9px;letter-spacing:.08em;padding:4px 9px;border-radius:20px;font-weight:700;text-transform:uppercase}
+  .b-ok{background:var(--green-dim);color:var(--green)} .b-note{background:#2E2A14;color:#D8B23A}
+  .b-amber{background:#3A2C10;color:var(--amber)} .b-red{background:var(--red-dim);color:var(--red)}
+  .b-buy{background:var(--green-dim);color:var(--green)} .b-sell{background:var(--red-dim);color:var(--red)}
+  .b-cfd{background:#2A2440;color:#B9A8E8} .b-eq{background:var(--panel2);color:var(--dim)} .b-etf{background:#123033;color:var(--steel-soft)}
+  .conv-HIGH{color:var(--green)} .conv-MED{color:var(--amber)} .conv-LOW{color:var(--dim)}
+  .conv-MEDHIGH,.conv-MED-HIGH{color:#8AD6A0}
+  .note{font-size:12px;color:var(--ink2);line-height:1.6}
+  .thesis{font-size:12.5px;line-height:1.65;color:var(--ink2);margin-top:10px;border-left:2px solid var(--amber-dim);padding-left:12px}
+  .lesson{font-size:12.5px;line-height:1.55;padding:11px 13px;border-left:2px solid var(--steel);background:var(--panel2);border-radius:0 10px 10px 0;margin-bottom:9px;color:var(--ink2)}
+  .guide-note{font-size:12.5px;line-height:1.55;padding:11px 13px;border-left:2px solid var(--green);background:var(--panel2);border-radius:0 10px 10px 0;margin-bottom:9px;color:var(--ink2)}
+  .guide-basis{font-size:10.5px;color:var(--dim);margin-top:5px;font-style:italic}
+  .alertbox{border-radius:10px;padding:11px 13px;margin-bottom:12px;font-size:12.5px;line-height:1.55}
+  .a-green{background:var(--green-dim);color:#CFF3DE;border:1px solid var(--green-dim)}
+  .a-amber{background:#3A2C10;color:#F3DEB0;border:1px solid var(--amber-dim)}
+  .a-red{background:var(--red-dim);color:#F3C9C9;border:1px solid var(--red-dim)}
+  .sig{font-size:9px;letter-spacing:.06em;padding:3px 8px;border-radius:20px;background:var(--panel2);border:1px solid var(--line2);color:var(--steel-soft);font-weight:600;text-transform:uppercase}
+  .signal-row{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
+  h3.sec{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;letter-spacing:.1em;color:var(--steel);margin:22px 0 11px;text-transform:uppercase;display:flex;align-items:center;gap:7px}
+  .levels{display:flex;gap:10px;margin-top:10px}
+  .lvl{flex:1;background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:8px 10px;text-align:center}
+  .lvl .lk{font-size:8.5px;letter-spacing:.1em;color:var(--dim);text-transform:uppercase;font-weight:600}
+  .lvl .lv{font-family:'IBM Plex Mono',monospace;font-size:14px;font-weight:600;margin-top:3px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const {useState,useEffect,useRef,useCallback} = React;
+const API_ENG='/api/exchange-engine';
+
+// ---------- line-art icon set (consistent monoline family, drawn inline) ----------
+const ICONS={
+  gem:'M6 3h12l3 6-9 12L3 9z M3 9h18 M9 3l-3 6 6 12 6-12-3-6',      // gem / hunt
+  book:'M4 4h13a2 2 0 0 1 2 2v14H6a2 2 0 0 1-2-2z M8 4v14 M11 9h5 M11 12h5',
+  review:'M12 3a9 9 0 1 0 9 9 M12 3v9l6-3 M3.5 8.5l3 1',            // review dial
+  brain:'M9 3a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 3 3V3z M15 3a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-3 3V3z',
+  spark:'M13 2L4 14h7l-1 8 9-12h-7z',
+  pulse:'M3 12h4l2-6 3 12 2-6h5',
+  target:'M12 3a9 9 0 1 0 9 9 M12 7a5 5 0 1 0 5 5 M12 11a1 1 0 1 0 1 1',
+  check:'M20 6L9 17l-5-5',
+  x:'M18 6L6 18 M6 6l12 12',
+  camera:'M3 7h4l2-3h6l2 3h4v12H3z M12 16a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z',
+};
+function Ic({n}){
+  const d=ICONS[n]||'';
+  return <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">{d.split(' M').map((seg,i)=><path key={i} d={(i?'M':'')+seg}/>)}</svg>;
+}
+
+// ---------- helpers ----------
+async function eng(action,payload={}){
+  const r=await fetch(API_ENG,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...payload})});
+  const j=await r.json();
+  if(j.error) throw new Error(j.error);
+  return j;
+}
+function ago(ts){
+  if(!ts) return '';
+  const s=Math.floor((Date.now()-ts)/1000);
+  if(s<60) return 'just now';
+  if(s<3600) return Math.floor(s/60)+'m ago';
+  if(s<86400) return Math.floor(s/3600)+'h ago';
+  return Math.floor(s/86400)+'d ago';
+}
+function usMarketOpen(){
+  // NYSE/NASDAQ regular hours 09:30-16:00 ET, Mon-Fri. Rough guard from BKK (UTC+7).
+  const now=new Date();
+  const et=new Date(now.toLocaleString('en-US',{timeZone:'America/New_York'}));
+  const day=et.getDay(), h=et.getHours(), m=et.getMinutes();
+  if(day===0||day===6) return false;
+  const mins=h*60+m;
+  return mins>=570 && mins<960;
+}
+const fmt=(n)=> (n==null||n==='')?'—':(typeof n==='number'?n.toLocaleString(undefined,{maximumFractionDigits:2}):n);
+
+// ---------- Gem idea card ----------
+function GemCard({idea,ledgerId,onPass,onFlag,onTake}){
+  const [busy,setBusy]=useState(false);
+  const [taken,setTaken]=useState(false);
+  const [outcome,setOutcome]=useState(null); // 'passed' | 'flagged'
+  const conv=(idea.conviction||'').toUpperCase();
+  const convCls='conv-'+conv.replace(/[^A-Z]/gi,'');
+  const dirCls=idea.direction==='BUY'?'b-buy':'b-sell';
+  return (
+    <div className="card accent">
+      <div className="between">
+        <span className="hl">{idea.name} {idea.ticker&&<span className="dim mono" style={{fontSize:13}}>{idea.ticker}</span>}</span>
+        <div className="row" style={{gap:6}}>
+          {idea.instrument&&<span className={'badge '+(idea.instrument==='CFD'?'b-cfd':'b-eq')}>{idea.instrument}</span>}
+          <span className={'badge '+dirCls}>{idea.direction}</span>
+        </div>
+      </div>
+      <div className="meta">
+        {idea.exchange&&<span>{idea.exchange}</span>}
+        {idea.industry&&<span className="steel">{idea.industry}</span>}
+        {idea.horizon&&<span className="dim">{idea.horizon}</span>}
+        {idea.daytime_tradeable && <span className="badge b-etf">DAYTIME</span>}
+        <span className={convCls} style={{fontWeight:600}}>{conv}</span>
+        {idea.rr!=null&&<span className={idea.rr>=1.5?'green':'ambr'}>R:R {idea.rr}</span>}
+      </div>
+      <div className="levels">
+        <div className="lvl"><div className="lk">Current</div><div className="lv">{fmt(idea.current_price)}</div></div>
+        <div className="lvl"><div className="lk">Entry</div><div className={"lv "+(idea.levels_broken?'red':'ambr')}>{fmt(idea.entry)}</div></div>
+        <div className="lvl"><div className="lk">Target</div><div className="lv green">{fmt(idea.tp)}{idea.tpPct!=null&&<span className="dim" style={{fontSize:9}}> +{idea.tpPct}%</span>}</div></div>
+        <div className="lvl"><div className="lk">Stop</div><div className="lv red">{fmt(idea.sl)}{idea.slPct!=null&&<span className="dim" style={{fontSize:9}}> -{idea.slPct}%</span>}</div></div>
+      </div>
+      {idea.levels_recomputed && !idea.levels_broken && <div className="note" style={{marginTop:6}}><span className="steel">◆ LEVELS ADJUSTED</span> The desk's original levels were anchored to a stale price; these entry/target/stop have been recomputed around the real live price of {fmt(idea.current_price)}. Confirm on your chart.</div>}
+      {Array.isArray(idea.signals)&&idea.signals.length>0&&
+        <div className="signal-row">{idea.signals.map((s,i)=><span key={i} className="sig">{s}</span>)}</div>}
+      <div className="thesis">{idea.reason}</div>
+      {idea.diversifies && <div className="note" style={{marginTop:8}}><span className="steel">REBALANCES</span> {idea.diversifies}</div>}
+      {idea.level_warning && <div className="alertbox a-amber" style={{marginTop:10,marginBottom:0}}>{idea.level_warning}</div>}
+      <div className="note" style={{marginTop:10}}><Ic n="target"/> {idea.availability||'Confirm availability on your NOVA platform'}</div>
+      {taken
+        ? <div className="alertbox a-green" style={{marginTop:12,marginBottom:0}}><Ic n="check"/> Taken up. The desk will watch for {idea.ticker||idea.name} when you next sync your NOVA book, and carry its thesis and levels into the holding.</div>
+        : outcome==='passed'
+        ? <div className="alertbox a-amber" style={{marginTop:12,marginBottom:0}}>Passed. {idea.ticker||idea.name} moves to the shadow book, where the desk tracks how it would have done to learn from it.</div>
+        : outcome==='flagged'
+        ? <div className="alertbox a-amber" style={{marginTop:12,marginBottom:0}}>Noted as not on NOVA. The desk won't propose {idea.ticker||idea.name} again.</div>
+        : <div className="row" style={{marginTop:12}}>
+            <button className="pri" disabled={busy} onClick={async()=>{setBusy(true); try{ await onTake(ledgerId,idea); setTaken(true);}catch(e){alert(e.message);} setBusy(false);}}><Ic n="check"/> Take position</button>
+            <button className="ghost" disabled={busy} onClick={async()=>{setBusy(true); try{ await onPass(ledgerId,idea); setOutcome('passed');}catch(e){alert(e.message);} setBusy(false);}}><Ic n="x"/> Pass &amp; track</button>
+            <button className="ghost" disabled={busy} onClick={async()=>{setBusy(true); try{ await onFlag(idea.ticker||idea.name); setOutcome('flagged');}catch(e){alert(e.message);} setBusy(false);}}>Not on NOVA</button>
+          </div>}
+    </div>
+  );
+}
+
+// ---------- Hunt tab: the gem-hunting desk ----------
+function Desk({state,refresh}){
+  const [busy,setBusy]=useState(false);
+  const [seeding,setSeeding]=useState(false);
+  const [showAll,setShowAll]=useState(false);
+  const ideas=state?.ideasToday;
+  const ledger=state?.ledger||[];
+  const bookEmpty=!state?.book?.holdings || state.book.holdings.length===0;
+
+  const gen=async(force)=>{
+    setBusy(true);
+    try{ await eng('ideas',{force}); await refresh(); }
+    catch(e){ alert(e.message); }
+    setBusy(false);
+  };
+  const doSeed=async()=>{
+    setSeeding(true);
+    try{
+      const mod=await import('./exchange-seed.js').catch(()=>null);
+      if(mod&&mod.SEED_BOOK){ await eng('seed',{seedBook:mod.SEED_BOOK,seedWatchlist:mod.SEED_WATCHLIST}); await refresh(); }
+      else alert('Seed file not reachable. Deploy exchange-seed.js alongside, or sync a screenshot instead.');
+    }catch(e){ alert(e.message); }
+    setSeeding(false);
+  };
+  const onPass=async(id,idea)=>{ await eng('pass',{ideaLedgerId:id||null,idea:id?null:idea}); await refresh(); };
+  const onTake=async(id,idea)=>{ await eng('takeup',{ideaLedgerId:id||null,idea:id?null:idea}); await refresh(); };
+  const onFlag=async(name)=>{ if(name){ await eng('flag',{name,available:false}); await refresh(); } };
+  const ledgerIdFor=(idea)=> (ledger.slice().reverse().find(r=>r.idea && (r.idea.ticker===idea.ticker||r.idea.name===idea.name) && r.status==='offered')||{}).id;
+
+  const all=ideas?.ideas||[];
+  const qualifies=(i)=> i.qualifies!==undefined ? i.qualifies : ['MED-HIGH','HIGH'].includes((i.conviction||'').toUpperCase());
+  const strong=all.filter(qualifies), weak=all.filter(i=>!qualifies(i));
+
+  return (
+    <div className="wrap">
+      <div className="card">
+        <div className="eyebrow"><Ic n="gem"/>The gem hunt · week-long swings</div>
+        <div className="note">The desk hunts short-term swing ideas to hold 5-6 days, roaming every industry away from your semiconductor book, weighing insider buying, value, catalysts and technicals, and only surfacing names likely tradeable on NOVA.</div>
+        <div className="row" style={{marginTop:12}}>
+          <button className="pri" disabled={busy} onClick={()=>gen(!!ideas)}>{busy?<span className="spin">◐</span>:(ideas?'Fresh gem hunt':'Hunt for gems')}</button>
+        </div>
+      </div>
+
+      {bookEmpty && <div className="card">
+        <div className="eyebrow"><Ic n="book"/>Seed your book</div>
+        <div className="note">Your NOVA book is not loaded yet. Plant your real holdings in one tap, or upload a positions screenshot from the Book tab.</div>
+        <div className="row" style={{marginTop:12}}><button className="ghost" disabled={seeding} onClick={doSeed}>{seeding?<span className="spin">◐</span>:'Seed my NOVA book'}</button></div>
+      </div>}
+
+      {ideas && ideas.desk_note && <div className="card">
+        <div className="eyebrow"><Ic n="brain"/>Desk note</div>
+        <div className="note" style={{color:'var(--ink2)'}}>{ideas.desk_note}</div>
+        <div className="meta"><span>hunted {ideas.generatedAt?ago(Date.parse(ideas.generatedAt)):''}</span></div>
+      </div>}
+
+      {ideas && (() => {
+        if(strong.length===0){
+          return <>
+            <div className="card" style={{borderColor:'var(--amber-dim)'}}>
+              <div className="hl" style={{fontSize:16}}>No high-conviction gems this hunt</div>
+              <div className="note" style={{marginTop:6}}>Nothing cleared the bar today. An honest empty hunt beats a forced one; the market does not owe you a gem every day. The desk looked hard and found nothing worth a week of your capital right now.</div>
+            </div>
+            {weak.length>0 && <div className="row"><button className="ghost" onClick={()=>setShowAll(v=>!v)}>{showAll?'Hide':'Show'} {weak.length} lower-conviction candidate{weak.length>1?'s':''}</button></div>}
+            {showAll && weak.map((idea,i)=><GemCard key={i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag} onTake={onTake}/>)}
+          </>;
+        }
+        return <>
+          {strong.map((idea,i)=><GemCard key={i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag} onTake={onTake}/>)}
+          {weak.length>0 && <div className="row"><button className="ghost" onClick={()=>setShowAll(v=>!v)}>{showAll?'Hide':'Show'} {weak.length} lower-conviction candidate{weak.length>1?'s':''}</button></div>}
+          {showAll && weak.map((idea,i)=><GemCard key={'w'+i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag} onTake={onTake}/>)}
+        </>;
+      })()}
+
+      {!ideas && !bookEmpty && <div className="note" style={{marginTop:6}}>No hunt run yet today. Tap to send the desk foraging.</div>}
+    </div>
+  );
+}
+
+// ---------- shot picker button ----------
+function ShotButton({label,onImage,onImages,primary,disabled,multiple}){
+  const ref=useRef();
+  const readOne=(f)=>new Promise((res)=>{ const rd=new FileReader(); rd.onload=()=>res(String(rd.result).split(',')[1]); rd.readAsDataURL(f); });
+  return (<>
+    <input ref={ref} type="file" accept="image/*" multiple={!!multiple} style={{display:'none'}} onChange={async e=>{
+      const files=[...e.target.files]; if(!files.length) return;
+      if(onImages){ const all=await Promise.all(files.map(readOne)); onImages(all); }
+      else { const b64=await readOne(files[0]); onImage(b64); }
+      e.target.value='';
+    }}/>
+    <button className={primary?'pri':'ghost'} disabled={disabled} onClick={()=>ref.current&&ref.current.click()}>{label}</button>
+  </>);
+}
+
+// ---------- Book tab: the seeded NOVA portfolio ----------
+// ---------- Vitals: the full interpretive read of the whole account ----------
+function Vitals({state}){
+  const vitals=state?.vitals;
+  const coaching=state?.coaching;
+  if(!vitals) return <div className="wrap"><div className="note">Sync your book on the Book tab to see your vitals.</div></div>;
+  const f=vitals.figures||{};
+  const reads=vitals.reads||[];
+  const trend=vitals.trend;
+  const a=vitals.analytics||{};
+  const sCls=(s)=> s==='RED'?'a-red':s==='AMBER'?'a-amber':'a-green';
+  const sText=(s)=> s==='RED'?'red':s==='AMBER'?'ambr':'green';
+  const barCol=(pct,warn)=> pct>warn?'var(--red)':pct>warn*0.7?'var(--amber)':'var(--steel)';
+
+  return (
+    <div className="wrap">
+      {/* coaching progression */}
+      {coaching && coaching.total>0 && <div className="card accent">
+        <div className="eyebrow"><Ic n="target"/>Book health · {coaching.metCount} of {coaching.total} on track</div>
+        {coaching.justAchieved?.length>0 && <div className="alertbox a-green" style={{marginTop:8}}>
+          <span style={{fontWeight:700}}>Nice work.</span> You've just hit: {coaching.justAchieved.join('; ')}. That's real progress toward a healthier book.
+        </div>}
+        <div style={{marginTop:10}}>
+          {coaching.goals.map((g,i)=>(
+            <div key={i} className="meta" style={{justifyContent:'space-between',padding:'5px 0',borderBottom:i<coaching.goals.length-1?'1px solid var(--line)':'none'}}>
+              <span><span className={g.met?'green':'dim'} style={{fontWeight:700,marginRight:6}}>{g.met?'✓':'○'}</span>{g.label}</span>
+              <span className={'mono dim'} style={{fontSize:12}}>{g.detail}</span>
+            </div>
+          ))}
+        </div>
+        {coaching.allMet
+          ? <div className="note" style={{marginTop:10}}><span className="green" style={{fontWeight:600}}>Your book is well balanced across every health check.</span> Keep it here, and let the Hunt bring only genuine steals.</div>
+          : coaching.nextFocus && <div className="note" style={{marginTop:10}}><span className="steel">NEXT FOCUS</span> {coaching.nextFocus.label} — currently {coaching.nextFocus.detail}, aim for {coaching.nextFocus.target}. The Balance tab is built to help you get there.</div>}
+      </div>}
+
+      {/* headline figures */}
+      <div className="card">
+        <div className="eyebrow"><Ic n="pulse"/>Vitals · the state of your book</div>
+        <div className="grid2" style={{marginTop:4}}>
+          {f.netLiq!=null&&<div className="kv"><div className="k">Net Liquidity</div><div className="v">{fmt(f.netLiq)}</div></div>}
+          {f.equityBalance!=null&&<div className="kv"><div className="k">Equity Balance</div><div className="v">{fmt(f.equityBalance)}</div></div>}
+          {f.unrealizedPL!=null&&<div className="kv"><div className="k">Open P/L</div><div className={'v '+(f.unrealizedPL>=0?'green':'red')}>{f.unrealizedPL>=0?'+':''}{fmt(f.unrealizedPL)}</div></div>}
+          {f.buyingPower!=null&&<div className="kv"><div className="k">Buying Power</div><div className="v">{fmt(f.buyingPower)}</div></div>}
+          {f.initialMargin!=null&&<div className="kv"><div className="k">Initial Margin</div><div className="v">{fmt(f.initialMargin)}</div></div>}
+          {f.ledgerBalance!=null&&<div className="kv"><div className="k">Ledger Balance</div><div className="v">{fmt(f.ledgerBalance)}</div></div>}
+        </div>
+        {trend && trend.points>=2 && <div className="note" style={{marginTop:10}}>
+          <span className="steel">NET LIQUIDITY TREND</span>{' '}
+          <span className={trend.pct>=0?'green':'red'} style={{fontWeight:600}}>{trend.pct>=0?'▲':'▼'} {Math.abs(trend.pct)}%</span>
+          {' '}across {trend.points} check{trend.points>1?'s':''}, from {fmt(trend.from)} to {fmt(trend.to)}.
+        </div>}
+        {vitals.lastSync && <div className="meta" style={{marginTop:8}}><span>last synced {ago(Date.parse(vitals.lastSync))}</span></div>}
+      </div>
+
+      {/* sector concentration bars */}
+      {Array.isArray(a.sectors)&&a.sectors.length>0 && <div className="card">
+        <div className="eyebrow">Sector concentration</div>
+        {a.chipPct>0 && <div className="note" style={{marginBottom:10}}>Chip-exposed (through ETFs and separate names): <span className={a.chipPct>45?'red':a.chipPct>30?'ambr':'green'} style={{fontWeight:700}}>{a.chipPct}%</span></div>}
+        {a.sectors.map((s,i)=>(
+          <div key={i} style={{marginTop:8}}>
+            <div className="meta" style={{justifyContent:'space-between',marginBottom:3}}><span className="steel">{s.name}</span><span className="mono dim" style={{fontSize:12}}>{s.pct}%</span></div>
+            <div style={{height:6,background:'var(--line)',borderRadius:3,overflow:'hidden'}}><div style={{width:Math.min(100,s.pct)+'%',height:'100%',background:barCol(s.pct,30)}}/></div>
+          </div>
+        ))}
+      </div>}
+
+      {/* geographic spread */}
+      {Array.isArray(a.geography)&&a.geography.length>0 && <div className="card">
+        <div className="eyebrow">Geographic spread</div>
+        {a.geography.map((g,i)=>(
+          <div key={i} style={{marginTop:8}}>
+            <div className="meta" style={{justifyContent:'space-between',marginBottom:3}}><span className="steel">{g.name}{g.name!=='US'?' · daytime':' · night only'}</span><span className="mono dim" style={{fontSize:12}}>{g.pct}%</span></div>
+            <div style={{height:6,background:'var(--line)',borderRadius:3,overflow:'hidden'}}><div style={{width:Math.min(100,g.pct)+'%',height:'100%',background:g.name==='US'?'var(--amber)':'var(--steel)'}}/></div>
+          </div>
+        ))}
+      </div>}
+
+      {/* winner / laggard attribution */}
+      {(a.topWinners?.length>0||a.topLaggards?.length>0) && <div className="card">
+        <div className="eyebrow">What's driving your book</div>
+        {a.topWinners?.length>0 && <div style={{marginTop:6}}>
+          <div className="dim" style={{fontSize:11,textTransform:'uppercase',letterSpacing:'.05em',marginBottom:4}}>Top winners</div>
+          {a.topWinners.map((w,i)=><div key={i} className="meta" style={{justifyContent:'space-between'}}><span>{w.name}</span><span className="green mono" style={{fontSize:12,fontWeight:600}}>+{fmt(w.pl)}</span></div>)}
+        </div>}
+        {a.topLaggards?.length>0 && <div style={{marginTop:10}}>
+          <div className="dim" style={{fontSize:11,textTransform:'uppercase',letterSpacing:'.05em',marginBottom:4}}>Biggest laggards</div>
+          {a.topLaggards.map((w,i)=><div key={i} className="meta" style={{justifyContent:'space-between'}}><span>{w.name}</span><span className="red mono" style={{fontSize:12,fontWeight:600}}>{fmt(w.pl)}</span></div>)}
+        </div>}
+      </div>}
+
+      {/* interpretive reads */}
+      {reads.length>0 && <div className="card">
+        <div className="eyebrow">Reads</div>
+        {reads.map((r,i)=>(
+          <div key={i} className={'alertbox '+sCls(r.status)} style={{marginTop:i===0?4:8,marginBottom:0}}>
+            <div className="between" style={{marginBottom:4}}>
+              <span style={{fontWeight:700,letterSpacing:'.04em',fontSize:11,textTransform:'uppercase'}}>{r.label}</span>
+              <span className={sText(r.status)} style={{fontWeight:700,fontFamily:"'IBM Plex Mono',monospace"}}>{r.value}</span>
+            </div>
+            <div style={{lineHeight:1.55}}>{r.note}</div>
+          </div>
+        ))}
+      </div>}
+
+      <Learn state={state}/>
+    </div>
+  );
+}
+
+function Portfolio({state,refresh}){
+  const [posImgs,setPosImgs]=useState([]);
+  const [syncing,setSyncing]=useState(false);
+  const [report,setReport]=useState(null);
+  const book=state?.book;
+  const holdings=book?.holdings||[];
+
+  const addImgs=(arr)=>setPosImgs(prev=>[...prev,...arr]);
+  const addImg=(b)=>setPosImgs(prev=>[...prev,b]);
+
+  const runSync=async(histImg)=>{
+    if(!posImgs.length) return;
+    setSyncing(true);
+    try{ const r=await eng('sync',{positionsImages:posImgs,historyImage:histImg||null}); setReport(r.report); await refresh(); }
+    catch(e){ alert(e.message); }
+    setSyncing(false); setPosImgs([]);
+  };
+
+  const cls=(a)=> a==='CFD'?'b-cfd':a==='ETF'?'b-etf':'b-eq';
+  const winners=holdings.filter(h=>(h.unrealised||0)>0).sort((a,b)=>(b.unrealised||0)-(a.unrealised||0));
+  const laggards=holdings.filter(h=>(h.unrealised||0)<0).sort((a,b)=>(a.unrealised||0)-(b.unrealised||0));
+
+  // ---- Level watch: NOVA closes nothing for you, so this is the only tripwire ----
+  // Split deliberately: `fresh` are NEW, unacknowledged crossings and get the loud banner.
+  // Everything else sits in a quiet standing-decisions list. Acknowledging clears the
+  // banner but keeps the item in the list, so it stays visible without shouting — which
+  // is the difference between a warning you act on and wallpaper you stop seeing.
+  const lw = state?.levelWatch;
+  const fresh = (lw?.fresh)||[];
+  const standing = ((lw?.queue)||[]).filter(q=>q.acknowledged);
+  const [ackBusy,setAckBusy]=useState(null);
+  const ack=async(id)=>{ setAckBusy(id); try{ await eng('acklevel',{holdingId:id}); await refresh(); }catch(e){ alert(e.message); } setAckBusy(null); };
+  const resolve=async(id)=>{ setAckBusy(id); try{ await eng('resolvelevel',{holdingId:id}); await refresh(); }catch(e){ alert(e.message); } setAckBusy(null); };
+  const evWord=(t)=> t==='TP'?'Take-profit reached':t==='SL'?'Stop-loss breached':t==='RECOVERY'?'Recovery reclaimed':'Give-up breached';
+
+  return (
+    <div className="wrap">
+      {/* LOUD: new, unacknowledged level crossings only */}
+      {fresh.map(q=>(
+        <div key={q.holdingId} className={'alertbox '+((q.type==='TP'||q.type==='RECOVERY')?'a-green':'a-red')} style={{marginBottom:10}}>
+          <div style={{fontWeight:700,marginBottom:4}}>{evWord(q.type)} · {q.ticker||q.name}</div>
+          <div style={{fontSize:12}}>Your locked {q.type==='TP'?'take-profit':q.type==='SL'?'stop-loss':q.type==='RECOVERY'?'recovery level':'give-up level'} of {fmt(q.level)} was crossed — live {fmt(q.price)}. NOVA has no automatic exit, so nothing has acted on this but you.</div>
+          <div className="row" style={{marginTop:8,gap:8}}>
+            <button className="pri" disabled={ackBusy===q.holdingId} onClick={()=>ack(q.holdingId)}>{ackBusy===q.holdingId?<span className="spin">◐</span>:'Acknowledge'}</button>
+          </div>
+        </div>
+      ))}
+
+      {/* QUIET: acknowledged but still standing, so it stays visible without shouting */}
+      {standing.length>0 && <div className="card">
+        <div className="eyebrow">Standing decisions · {standing.length}</div>
+        <div className="note" style={{marginBottom:8}}>Levels that are still crossed. Acknowledged, so they no longer interrupt, but they stay here until you act or clear them.</div>
+        {standing.map(q=>(
+          <div key={q.holdingId} className="between" style={{padding:'7px 0',borderTop:'1px solid var(--line)'}}>
+            <span style={{fontSize:13}}>
+              <span className="mono">{q.ticker||q.name}</span>
+              <span className={(q.type==='TP'||q.type==='RECOVERY')?'green':'red'} style={{marginLeft:8,fontSize:11}}>{evWord(q.type)}</span>
+              <span className="dim" style={{marginLeft:6,fontSize:11}}>{fmt(q.level)} · live {fmt(q.price)}</span>
+              {q.bornBreached && <span className="dim" style={{marginLeft:6,fontSize:10}}>(already through when locked)</span>}
+            </span>
+            <button className="ghost" disabled={ackBusy===q.holdingId} onClick={()=>resolve(q.holdingId)} style={{fontSize:11,padding:'3px 8px'}}>Clear</button>
+          </div>
+        ))}
+      </div>}
+
+      {lw && lw.checked>0 && lw.priced<lw.checked && <div className="note" style={{marginBottom:8}}>
+        <span className="ambr">Note</span> {lw.checked-lw.priced} of {lw.checked} holdings with locked levels could not be priced this load, so their levels were not checked.
+      </div>}
+      <div className="card">
+        <div className="eyebrow"><Ic n="camera"/>Sync your NOVA book</div>
+        <div className="note">Upload your NOVA open-positions screenshot to read your book by sight. On mobile the NOVA app shows only part of your book per screen, so add as many screenshots as you need — they'll be merged into one book. The desk reconciles holdings, spots closures, adopts new names, and tracks your net liquidity.</div>
+        <div className="row" style={{marginTop:12,flexWrap:'wrap',gap:8}}>
+          <ShotButton primary={!posImgs.length} multiple label={posImgs.length?`+ Add another (${posImgs.length} loaded)`:'1 · Positions screenshot(s)'} onImages={addImgs}/>
+          <ShotButton label="2 · History (optional)" disabled={!posImgs.length||syncing} onImage={h=>runSync(h)}/>
+          <button className="pri" disabled={!posImgs.length||syncing} onClick={()=>runSync(null)}>{syncing?<span className="spin">◐</span>:`Run sync${posImgs.length>1?` (${posImgs.length} shots)`:''}`}</button>
+          {posImgs.length>0 && !syncing && <button className="ghost" onClick={()=>setPosImgs([])}>Clear</button>}
+        </div>
+        {posImgs.length>1 && <div className="note" style={{marginTop:8}}><span className="green">{posImgs.length} screenshots loaded</span> — they'll be read together and merged into one book on sync.</div>}
+      </div>
+
+      {report && <div className="alertbox a-green">Synced{report.shotsRead>1?` from ${report.shotsRead} screenshots`:''}. {report.updated} updated, {report.newAdded?.length||0} newly adopted, {report.closedDetected?.length||0} closure(s) detected.</div>}
+      {report?.dedupedHoldings?.length>0 && <div className="alertbox a-amber">
+        <div style={{fontWeight:700,marginBottom:4}}>Folded {report.dedupedHoldings.length} duplicate holding{report.dedupedHoldings.length>1?'s':''} back together:</div>
+        {report.dedupedHoldings.map((d,i)=><div key={i} style={{marginTop:2}}>· “{d.dropped}” was the same position as {d.kept} — a clipped screenshot name had been logged as a separate holding. Locked levels and thesis kept on the surviving row.</div>)}
+      </div>}
+      {report?.signFlags?.length>0 && <div className="alertbox a-amber">
+        <div style={{fontWeight:700,marginBottom:4}}>Corrected {report.signFlags.length} P/L sign{report.signFlags.length>1?'s':''} that disagreed with the price move:</div>
+        {report.signFlags.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}
+        <div style={{marginTop:5}} className="dim">If any of these looks wrong, re-sync a clearer screenshot.</div>
+      </div>}
+
+      {book?.netLiq!=null && <div className="grid2">
+        <div className="kv"><div className="k">Net Liquidity</div><div className="v">{fmt(book.netLiq)}</div></div>
+        <div className="kv"><div className="k">Holdings</div><div className="v">{holdings.length}</div></div>
+      </div>}
+
+      {holdings.length===0 && <div className="note" style={{marginTop:8}}>No holdings yet. Seed your book from the Hunt tab, or upload a positions screenshot above.</div>}
+
+      {winners.length>0 && <><h3 className="sec"><Ic n="pulse"/>Winners</h3>
+        {winners.map(h=><HoldingRow key={h.id} h={h} cls={cls}/>)}</>}
+      {laggards.length>0 && <><h3 className="sec"><Ic n="pulse"/>Laggards</h3>
+        {laggards.map(h=><HoldingRow key={h.id} h={h} cls={cls}/>)}</>}
+      {holdings.filter(h=>!h.unrealised).length>0 && <><h3 className="sec">Flat / unclear</h3>
+        {holdings.filter(h=>!h.unrealised).map(h=><HoldingRow key={h.id} h={h} cls={cls}/>)}</>}
+    </div>
+  );
+}
+function HoldingRow({h,cls}){
+  // `(h.unrealised||0)>=0` rendered a MISSING P/L as green with a "+" — absent data
+  // displayed as a small win. Distinguish unknown from flat from positive.
+  const pl = (h.unrealised==null||h.unrealised==='')?null:Number(h.unrealised);
+  const up = pl!=null && pl>=0;
+  const impaired = h.levelRegime==='IMPAIRED';
+  const ev = h.levelEvent && !h.levelEvent.resolved ? h.levelEvent : null;
+  const has = (v)=> v!=null && v!=='' && +v!==0;
+  // The TP/SL row used to be gated on `(h.mentalTP||h.mentalSL)`, so a holding with
+  // NEITHER set rendered nothing at all — and every seeded holding has both null.
+  // A position with no exit plan showed identically to one carefully bracketed: silence
+  // read as "nothing to report" when it meant "this is completely unmanaged". Same shape
+  // as the terminal's `SL 0.000`. An unset level is now stated, not hidden.
+  const lo = impaired ? h.lockedGiveUp : h.lockedSL;
+  const hi = impaired ? h.lockedRecovery : h.lockedTP;
+  const loLabel = impaired ? 'GIVE-UP' : 'SL';
+  const hiLabel = impaired ? 'RECOVERY' : 'TP';
+  const evCls = ev ? (ev.type==='TP'||ev.type==='RECOVERY' ? 'a-green' : 'a-red') : '';
+  return (
+    <div className="card" style={{padding:13, borderColor: ev && !ev.acknowledged ? 'var(--red)' : undefined}}>
+      <div className="between">
+        <span className="hl" style={{fontSize:15}}>{h.name} {h.ticker&&<span className="dim mono" style={{fontSize:12}}>{h.ticker}</span>}</span>
+        <span className={'badge '+cls(h.assetClass)}>{h.leveraged?'CFD':h.assetClass||'EQ'}</span>
+      </div>
+      <div className="meta">
+        <span>{fmt(h.qty)} @ {fmt(h.avgCost)}</span>
+        <span>now {fmt(h.livePrice ?? h.lastPrice)}{h.livePrice!=null&&<span className="dim" style={{fontSize:10}}> live</span>}</span>
+        {pl==null
+          ? <span className="dim" style={{fontWeight:600}}>P/L —</span>
+          : <span className={up?'green':'red'} style={{fontWeight:600}}>{up?'+':''}{fmt(pl)}</span>}
+      </div>
+      {/* levels, in the regime this holding actually lives in */}
+      {h.levelsLockedAt
+        ? <div className="meta">
+            {impaired && <span className="badge b-note" style={{fontSize:9}}>IMPAIRED</span>}
+            <span className={has(hi)?'green':'dim'}>{hiLabel} {has(hi)?fmt(hi):'—'}</span>
+            <span className={has(lo)?'red':'dim'}>{loLabel} {has(lo)?fmt(lo):'—'}</span>
+            <span className="dim" style={{fontSize:10}}>locked</span>
+          </div>
+        : <div className="meta"><span className="ambr" style={{fontWeight:600}}>⚠ no levels set — run a review to lock them</span></div>}
+      {ev && <div className={'alertbox '+evCls} style={{marginTop:8,fontSize:12}}>
+        {ev.type==='TP'?'Take-profit reached':ev.type==='SL'?'Stop-loss breached':ev.type==='RECOVERY'?'Recovery level reclaimed':'Give-up level breached'} at {fmt(ev.level)} · live {fmt(ev.price)}
+        {ev.bornBreached && <span className="dim"> · already through when locked</span>}
+        {ev.acknowledged && <span className="dim"> · acknowledged</span>}
+      </div>}
+    </div>
+  );
+}
+
+// ---------- Reviews tab: hold-or-close verdicts ----------
+function Reviews({state,refresh}){
+  const [busy,setBusy]=useState(null);
+  const [editing,setEditing]=useState(null);
+  const [slIn,setSlIn]=useState('');
+  const [tpIn,setTpIn]=useState('');
+  const holdings=state?.book?.holdings||[];
+
+  const runReview=async(id)=>{
+    setBusy(id);
+    try{ await eng('review',{holdingId:id}); await refresh(); }
+    catch(e){ alert(e.message); }
+    setBusy(null);
+  };
+  const saveLevels=async(id)=>{
+    setBusy(id);
+    try{ await eng('setlevels',{holdingId:id,sl:slIn||null,tp:tpIn||null}); await refresh(); setEditing(null); }
+    catch(e){ alert(e.message); }
+    setBusy(null);
+  };
+  const startEdit=(h)=>{ setEditing(h.id); setSlIn(h.lockedSL!=null?String(h.lockedSL):''); setTpIn(h.lockedTP!=null?String(h.lockedTP):''); };
+  const vCls=(v)=> v==='HOLD'?'b-ok':v==='CLOSE'?'b-red':'b-note';
+  const vTextCls=(v)=> v==='HOLD'?'green':v==='CLOSE'?'red':'ambr';
+  // live-recompute whether a locked level is currently hit, from the freshest price
+  const liveHit=(h)=>{
+    const px=parseFloat(h.lastPrice); if(isNaN(px)) return null;
+    const tp=parseFloat(h.lockedTP), sl=parseFloat(h.lockedSL);
+    if(!isNaN(tp) && px>=tp) return {type:'TP',level:h.lockedTP};
+    if(!isNaN(sl) && px<=sl) return {type:'SL',level:h.lockedSL};
+    return null;
+  };
+
+  return (
+    <div className="wrap">
+      <div className="card">
+        <div className="eyebrow"><Ic n="review"/>Position health reviews</div>
+        <div className="note">Send any holding for a patient analyst's review. The FIRST review locks in a stop and target; later reviews never move them, they only judge hold or close against them. Since NOVA has no automatic stop/target, the desk flags when a locked level is hit so you know to act. You can deliberately override the levels yourself any time.</div>
+      </div>
+      {holdings.length===0 && <div className="note">No holdings to review yet. Seed or sync your book first.</div>}
+      {holdings.map(h=>{
+        const rv=h.lastReview;
+        const hist=h.reviewHistory||[];
+        const priorCount=Math.max(0,hist.length-1);
+        const hasLocked=h.lockedSL!=null||h.lockedTP!=null;
+        const hit=liveHit(h);
+        return (
+          <div key={h.id} className="card">
+            <div className="between">
+              <span className="hl" style={{fontSize:15}}>{h.name} {h.ticker&&<span className="dim mono" style={{fontSize:12}}>{h.ticker}</span>}</span>
+              {rv?<span className={'badge '+vCls(rv.verdict)}>{rv.verdict}</span>:<span className="badge b-note">Not reviewed</span>}
+            </div>
+            <div className="meta">
+              <span>{fmt(h.qty)} @ {fmt(h.avgCost)}</span>
+              <span>now {fmt(h.lastPrice)}</span>
+              <span className={(h.unrealised||0)>=0?'green':'red'}>{(h.unrealised||0)>=0?'+':''}{fmt(h.unrealised)}</span>
+            </div>
+
+            {/* LOCKED level HIT alert — the manual trigger NOVA can't give you */}
+            {hit && <div className="alertbox a-red" style={{marginTop:10}}>
+              <div style={{fontWeight:700}}><Ic n="target"/> {hit.type==='TP'?'TAKE-PROFIT HIT':'STOP-LOSS HIT'} at {fmt(hit.level)} — now {fmt(h.lastPrice)}</div>
+              <div style={{marginTop:3}}>NOVA won't have closed this automatically. This is your cue to decide: act on the level, or consciously hold on.</div>
+            </div>}
+
+            {/* the locked levels, shown persistently */}
+            {hasLocked && <div className="levels" style={{marginTop:10}}>
+              <div className="lvl"><div className="lk">Locked Stop {h.levelsManuallySet?'(manual)':''}</div><div className={'lv '+(hit&&hit.type==='SL'?'red':'red')} style={hit&&hit.type==='SL'?{textDecoration:'underline'}:{}}>{fmt(h.lockedSL)}</div></div>
+              <div className="lvl"><div className="lk">Locked Target</div><div className={'lv green'} style={hit&&hit.type==='TP'?{textDecoration:'underline'}:{}}>{fmt(h.lockedTP)}</div></div>
+            </div>}
+
+            {rv && <>
+              {rv.level_note && <div className="alertbox a-amber" style={{marginTop:10,marginBottom:0}}><Ic n="target"/> {rv.level_note}</div>}
+              <div className="thesis">{rv.reason}</div>
+              {(rv.sources||[]).length>0 && <div className="note" style={{marginTop:8}}><span className="steel">SOURCES{rv.source_convergence?` (${rv.source_convergence})`:''}</span> {(rv.sources||[]).join('  ·  ')}</div>}
+              {rv.change_note && <div className="note" style={{marginTop:8}}><span className="steel">SINCE LAST REVIEW</span> {rv.change_note}</div>}
+              {rv.hold_guidance&&<div className="note" style={{marginTop:8}}><span className="steel">HOLD GUIDANCE</span> {rv.hold_guidance}</div>}
+              <div className="meta">
+                <span>reviewed {rv.at?ago(Date.parse(rv.at)):''}</span>
+                {priorCount>0 && <span className="dim">· {priorCount} earlier review{priorCount>1?'s':''} remembered</span>}
+              </div>
+              {priorCount>0 && <details style={{marginTop:8}}>
+                <summary style={{fontSize:11,color:'var(--steel-soft)',cursor:'pointer',fontWeight:600,letterSpacing:'.04em'}}>Review history</summary>
+                <div style={{marginTop:8}}>
+                  {hist.slice(0,-1).slice().reverse().map((r,i)=>(
+                    <div key={i} className="lesson" style={{borderLeftColor:'var(--line2)'}}>
+                      <div className="between"><span className={vTextCls(r.verdict)} style={{fontWeight:600,fontSize:12}}>{r.verdict}</span><span className="dim" style={{fontSize:10}}>{r.at?r.at.slice(0,10):''}</span></div>
+                      <div style={{marginTop:4}}>{r.reason}</div>
+                    </div>
+                  ))}
+                </div>
+              </details>}
+            </>}
+
+            {/* manual override editor */}
+            {editing===h.id ? <div className="card" style={{marginTop:10,background:'var(--panel2)'}}>
+              <div className="eyebrow">Override locked levels</div>
+              <div className="row" style={{gap:8,marginTop:6,flexWrap:'wrap'}}>
+                <input className="inp" placeholder="Stop loss" value={slIn} onChange={e=>setSlIn(e.target.value)} inputMode="decimal" style={{maxWidth:120}}/>
+                <input className="inp" placeholder="Take profit" value={tpIn} onChange={e=>setTpIn(e.target.value)} inputMode="decimal" style={{maxWidth:120}}/>
+                <button className="pri" disabled={busy===h.id} onClick={()=>saveLevels(h.id)}>{busy===h.id?<span className="spin">◐</span>:'Lock these'}</button>
+                <button className="ghost" onClick={()=>setEditing(null)}>Cancel</button>
+              </div>
+              <div className="note" style={{marginTop:6}}>Leave a field blank to clear that level. This is the only way to change locked levels.</div>
+            </div> : <div className="row" style={{marginTop:12,gap:8,flexWrap:'wrap'}}>
+              <button className="ghost" disabled={busy===h.id} onClick={()=>runReview(h.id)}>{busy===h.id?<span className="spin">◐</span>:(rv?'Review again':(hasLocked?'Review this holding':'Review & lock levels'))}</button>
+              {hasLocked && <button className="ghost" onClick={()=>startEdit(h)}>Override levels</button>}
+            </div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------- Learn tab: the shadow scorecard and self-distilled guidance ----------
+function Learn({state}){
+  const guidance=state?.guidance||[];
+  const meta=state?.guidanceMeta;
+  const ledger=state?.ledger||[];
+  const passed=ledger.filter(r=>r.status==='passed').reverse();
+
+  return (
+    <div className="wrap">
+      <h3 className="sec"><Ic n="brain"/>What the desk has learned</h3>
+      {guidance.length===0
+        ? <div className="note">Not yet. Once at least 6 passed gems have resolved over their week-long windows, the desk studies its own hits and misses, notices which industries and signals genuinely work, and distils guidance here that shapes every future hunt.</div>
+        : <>
+          {meta && <div className="note" style={{marginBottom:10}}>From {meta.sample} resolved gems: <span className="green">{meta.wins} wins</span>, <span className="red">{meta.losses} losses</span>{meta.soft?', '+meta.soft+' soft calls':''}.{meta.hitrate_note?' '+meta.hitrate_note:''}{meta.at?<span className="dim"> · refreshed {ago(Date.parse(meta.at))}</span>:''}</div>}
+          {guidance.map((g,i)=><div key={i} className="guide-note">{g.text}{g.basis&&<div className="guide-basis">basis: {g.basis}</div>}</div>)}
+        </>}
+
+      <h3 className="sec"><Ic n="target"/>Passed gems — shadow book</h3>
+      {passed.length===0
+        ? <div className="note">Nothing passed yet. Every gem you decline is tracked to its outcome over a week, so the desk learns whether your judgement beats its hunt, or its hunt beats your judgement.</div>
+        : passed.map((r,i)=>{
+            const sv=r.shadowVerdict; const g=sv?.grade;
+            const badge=!sv?['b-note','TRACKING…']
+              :g==='WIN'?['b-ok','WOULD WIN']:g==='SOFT_WIN'?['b-ok','SOFT WIN']
+              :g==='LOSS'?['b-red','WOULD LOSE']:g==='SOFT_LOSS'?['b-red','SOFT LOSS']
+              :g==='AMBIGUOUS'?['b-note','AMBIGUOUS']:g==='UNOBSERVED'?['b-note','UNOBSERVED']:['b-note',(g||'').replace(/_/g,' ')];
+            return (
+              <div key={i} className="card" style={{padding:13}}>
+                <div className="between">
+                  <span className="hl" style={{fontSize:15}}>{r.idea.name} {r.idea.ticker&&<span className="dim mono" style={{fontSize:12}}>{r.idea.ticker}</span>}</span>
+                  <span className={'badge '+badge[0]}>{badge[1]}</span>
+                </div>
+                <div className="meta"><span>{r.idea.direction}</span>{r.idea.industry&&<span className="steel">{r.idea.industry}</span>}<span>passed {r.date}</span></div>
+                {sv&&<div className="note" style={{marginTop:4}}>{sv.note}</div>}
+              </div>
+            );
+          })}
+    </div>
+  );
+}
+
+// ---------- Rebalance: the guided rebalancing cockpit ----------
+function Rebalance({state,refresh}){
+  const [busy,setBusy]=useState(false);
+  const [freshPlan,setFreshPlan]=useState(null);
+  const [err,setErr]=useState(null);
+  const [proofBusy,setProofBusy]=useState(false);
+  const [proofOut,setProofOut]=useState(null);
+
+  const run=async()=>{
+    setBusy(true); setErr(null);
+    try{ const r=await eng('rebalance'); setFreshPlan(r); await refresh(); }
+    catch(e){ setErr(e.message); }
+    setBusy(false);
+  };
+  const submitProof=async(b64)=>{
+    setProofBusy(true); setErr(null);
+    try{ const r=await eng('proofofclose',{positionsImage:b64}); setProofOut(r); await refresh(); }
+    catch(e){ setErr(e.message); }
+    setProofBusy(false);
+  };
+
+  // Persist across navigation: prefer a plan generated this session, otherwise fall back
+  // to the last saved plan on the book. This stays put until the user pulls prices again.
+  const saved=state?.book?.rebalance||null;
+  const plan = freshPlan || (saved ? { plan: saved.plan, concentration: saved.concentration, generatedAt: saved.at } : null);
+
+  const vCls=(v)=> v==='CLOSE'?'b-red':v==='TRIM'?'b-amber':'b-ok';
+  const p=plan?.plan;
+
+  return (
+    <div className="wrap">
+      <div className="card">
+        <div className="eyebrow"><Ic n="pulse"/>Rebalance · the guided cockpit</div>
+        <div className="note">One tap pulls live prices for every holding, measures your real concentration, and judges each position hold, trim or close toward a more balanced, less chip-heavy, more geographically spread book. Grounded in fresh market news.</div>
+        <div className="row" style={{marginTop:12}}>
+          <button className="pri" disabled={busy} onClick={run}>{busy?<span className="spin">◐</span>:(plan?'Pull fresh prices & re-run':'Pull prices & rebalance')}</button>
+        </div>
+        {plan?.generatedAt && !busy && <div className="meta" style={{marginTop:8}}><span>plan generated {ago(Date.parse(plan.generatedAt))} · stays here until you re-run</span></div>}
+        {err && <div className="alertbox a-red" style={{marginTop:10,marginBottom:0}}>{err} <span className="dim">Tap the button to try again.</span></div>}
+      </div>
+
+      {plan?.empty && <div className="note">{plan.note}</div>}
+
+      {p && <>
+        {p.headline && <div className="alertbox a-amber"><Ic n="target"/> {p.headline}</div>}
+
+        {plan.concentration && <div className="card">
+          <div className="eyebrow">Concentration now</div>
+          <div className="note"><span className="red" style={{fontWeight:600}}>{plan.concentration.chipPct}%</span> of your book is chip-exposed. By sector: {Object.entries(plan.concentration.bySector||{}).map(([k,v])=>`${k} ${v}%`).join(', ')}. By geography: {Object.entries(plan.concentration.byGeo||{}).map(([k,v])=>`${k} ${v}%`).join(', ')}.</div>
+        </div>}
+
+        {p.target && <div className="card accent">
+          <div className="eyebrow"><Ic n="brain"/>Target balance</div>
+          <div className="note" style={{color:'var(--ink2)'}}>{p.target.summary}</div>
+          {Array.isArray(p.target.sectors)&&p.target.sectors.length>0 && <div style={{marginTop:10}}>
+            {p.target.sectors.map((s,i)=><div key={i} className="meta" style={{justifyContent:'space-between'}}><span className="steel">{s.name}</span><span className="dim mono">{s.current} → <span className="ambr">{s.target}</span></span></div>)}
+          </div>}
+          {Array.isArray(p.target.geography)&&p.target.geography.length>0 && <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid var(--line)'}}>
+            {p.target.geography.map((g,i)=><div key={i} className="meta" style={{justifyContent:'space-between'}}><span className="steel">{g.name}</span><span className="dim mono">{g.current} → <span className="ambr">{g.target}</span></span></div>)}
+          </div>}
+        </div>}
+
+        <h3 className="sec"><Ic n="review"/>Per-holding verdicts</h3>
+        {(p.verdicts||[]).map((v,i)=>(
+          <div key={i} className="card" style={{padding:13}}>
+            <div className="between">
+              <span className="hl" style={{fontSize:15}}>{v.name} {v.ticker&&<span className="dim mono" style={{fontSize:12}}>{v.ticker}</span>}</span>
+              <span className={'badge '+vCls(v.verdict)}>{v.verdict}</span>
+            </div>
+            <div className="meta">{v.sector&&<span className="steel">{v.sector}</span>}{v.weight&&<span className="dim">{v.weight} of book</span>}{v.exit_price&&v.exit_price!=='null'&&<span className="ambr" style={{fontWeight:600}}>exit ~{v.exit_price}</span>}</div>
+            {v.reason && <div className="note" style={{marginTop:6}}>{v.reason}</div>}
+            {(v.sources||[]).length>0 && <div className="note" style={{marginTop:4}}><span className="steel">◆ SOURCES</span> {(v.sources||[]).join('  ·  ')}</div>}
+          </div>
+        ))}
+        {p.next_step && <div className="alertbox a-green" style={{marginTop:8}}><span style={{fontWeight:600}}>Next step:</span> {p.next_step}</div>}
+      </>}
+
+      <h3 className="sec"><Ic n="camera"/>After you close a position</h3>
+      <div className="card">
+        <div className="note">Closed a name on NOVA? Upload your fresh positions screenshot. The desk confirms the close, reconciles your margin and balance, and if enough cash is freed, proposes the next fully-framed buy to rebalance into.</div>
+        <div className="row" style={{marginTop:12}}>
+          <ShotButton primary label={proofBusy?'reconciling…':'Upload proof of close'} disabled={proofBusy} onImage={submitProof}/>
+        </div>
+      </div>
+
+      {proofOut && <>
+        {proofOut.balancePicture && <div className="card">
+          <div className="eyebrow">Reconciled</div>
+          <div className="grid2">
+            <div className="kv"><div className="k">Holdings</div><div className="v">{proofOut.balancePicture.holdingsBefore} → {proofOut.balancePicture.holdingsNow}</div></div>
+            <div className="kv"><div className="k">Buying Power</div><div className="v">{fmt(proofOut.balancePicture.buyingPowerNow)}</div></div>
+            {proofOut.balancePicture.freedThisClose!=null && <div className="kv"><div className="k">Freed this close</div><div className={'v '+(proofOut.balancePicture.freedThisClose>=0?'green':'red')}>{proofOut.balancePicture.freedThisClose>=0?'+':''}{fmt(proofOut.balancePicture.freedThisClose)}</div></div>}
+            {proofOut.balancePicture.netLiqNow!=null && <div className="kv"><div className="k">Net Liquidity</div><div className="v">{fmt(proofOut.balancePicture.netLiqNow)}</div></div>}
+          </div>
+          {proofOut.closesDetected?.length>0 && <div className="note" style={{marginTop:8}}><span className="green">Closed:</span> {proofOut.closesDetected.join(', ')}</div>}
+        </div>}
+
+        {proofOut.waiting && <div className="alertbox a-amber">{proofOut.waiting}</div>}
+
+        {proofOut.nextBuy && <>
+          <h3 className="sec"><Ic n="gem"/>Next rebalancing buy</h3>
+          <GemCard idea={proofOut.nextBuy} ledgerId={null} onPass={()=>{}} onFlag={()=>{}} onTake={()=>{}}/>
+        </>}
+      </>}
+    </div>
+  );
+}
+
+// ---------- App shell ----------
+function App(){
+  const [tab,setTab]=useState('desk');
+  const [state,setState]=useState(null);
+  const [engineErr,setEngineErr]=useState(null);
+  const refresh=useCallback(async()=>{
+    try{ const s=await eng('get'); setState(s); setEngineErr(null); }
+    catch(e){ setEngineErr(e.message); }
+  },[]);
+  useEffect(()=>{ window.__exchangeMounted=true; refresh(); },[refresh]);
+  const open=usMarketOpen();
+  return (<>
+    <div className="topbar">
+      <div className="brand disp"><span className="dot"></span>THE EXCHANGE<small>hammyLabs · equities desk</small></div>
+      <span className={'pill '+(open?'open':'shut')}><span className="dot"></span>{open?'US OPEN':'US SHUT'}</span>
+    </div>
+    {engineErr && <div className="wrap" style={{paddingBottom:0}}><div className="alertbox a-red">Engine offline: {engineErr}. Check the API key and Upstash variables in Vercel, then reload.</div></div>}
+    {tab==='desk' && <Desk state={state} refresh={refresh}/>}
+    {tab==='portfolio' && <Portfolio state={state} refresh={refresh}/>}
+    {tab==='rebalance' && <Rebalance state={state} refresh={refresh}/>}
+    {tab==='vitals' && <Vitals state={state}/>}
+    {tab==='reviews' && <Reviews state={state} refresh={refresh}/>}
+    <nav className="tabs">
+      {[['desk','Hunt','gem'],['portfolio','Book','book'],['rebalance','Balance','pulse'],['vitals','Vitals','target'],['reviews','Reviews','review']].map(([k,l,ic])=>
+        <button key={k} className={tab===k?'on':''} onClick={()=>setTab(k)}><Ic n={ic}/>{l}</button>)}
+    </nav>
+  </>);
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
