@@ -181,6 +181,69 @@ function computeAudit(betLog) {
   };
 }
 
+// ---- vision reply parsing ----
+// THE INTAKE BUG: both vision endpoints did JSON.parse(text.replace(/```json|```/g,"")),
+// which assumes the model returns nothing but JSON. It usually does. When it doesn't —
+// "I'll carefully extract all horse wagering rows from both pages (6 and 7), skipping
+// non-horse rows..." followed by perfectly valid JSON — the parse throws and the whole
+// upload is rejected with "Vision reply was not clean JSON". The payload was right there.
+// A receipt upload should not fail because the model cleared its throat first.
+//
+// Brace-counting rather than regex, and string-aware: a "}" inside a horse name, an
+// apostrophe in "O'Reilly", or an escaped quote in 'The \"Kid\"' must not end the object
+// early. Returns the first balanced top-level object, or null if there genuinely isn't one.
+function extractJson(text) {
+  if (!text) return null;
+  let s = String(text);
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) s = fence[1];
+  const start = s.indexOf("{");
+  if (start === -1) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") depth++;
+    else if (c === "}") { depth--; if (depth === 0) return s.slice(start, i + 1); }
+  }
+  return null; // unbalanced: likely truncated by max_tokens
+}
+
+// Parse a vision reply into an object, salvaging JSON embedded in prose. Throws an Error
+// with a message that tells the user something ACTIONABLE rather than dumping 180 chars
+// of the model thinking out loud.
+function parseVisionReply(text) {
+  const raw = extractJson(text);
+  if (!raw) {
+    const t = String(text || "").trim();
+    if (!t) throw new Error("The vision model returned an empty reply. Try again, or upload fewer pages at once.");
+    // Distinguish "the model chatted instead of answering" from "the model started a JSON
+    // object and got cut off". Both land here with raw===null, but they need different
+    // advice: retry vs upload fewer pages. Saying "replied in prose" about a truncated
+    // JSON payload sends the user hunting for the wrong problem.
+    if (t.indexOf("{") !== -1) {
+      throw new Error(
+        "The vision reply was cut off before the JSON finished — it is almost certainly too long for one pass. Upload fewer pages at once."
+      );
+    }
+    throw new Error("The vision model replied in prose with no JSON in it. It said: \"" + t.slice(0, 200) + "\"");
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    throw new Error(
+      "The vision reply contained JSON that would not parse (" + e.message.slice(0, 80) +
+      "). This usually means the reply was truncated. Try uploading fewer pages at once."
+    );
+  }
+}
+
 // ---- rule decay audit ----
 // THE GAP THE CHARTER HAS: it is superb at forming rules from evidence and terrible at
 // noticing when a rule has stopped being true. The Medium-High selection rule is the
@@ -1103,7 +1166,7 @@ module.exports = async (req, res) => {
         "the SELECTION text (e.g. U1 UK9 PLA 1), the AMOUNT staked in dollars, the STATUS word (Settled, Pending, Refunded etc.), " +
         "the PAYOUT / WINNINGS in dollars, and the DRAW/EVENT date. " +
         "If an image is an account overview, also read the large account balance figure and the Open Bets amounts for Horse Racing, Sports and Lottery. " +
-        "Respond with ONLY minified JSON, no markdown fences, exactly this shape: " +
+        "CRITICAL OUTPUT RULE: your entire reply must be ONE minified JSON object and NOTHING else. Do not explain your reasoning, do not count rows out loud, do not write a preamble or a closing remark, do not use markdown fences. The first character you emit must be { and the last must be }. Any prose outside the JSON breaks the tool. Exactly this shape: " +
         '{"wallet":{"balance":0,"horseOpen":0,"sportsOpen":0,"lotteryOpen":0} or null,' +
         '"skippedNonHorse":0,' +
         '"rows":[{"receipt":"","selection":"","amount":0,"status":"","payout":0,"eventDate":""}]} ' +
@@ -1129,7 +1192,14 @@ module.exports = async (req, res) => {
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 4000,
-          messages: [{ role: "user", content }],
+          // ASSISTANT PREFILL: seeding the reply with "{" makes a prose preamble
+          // structurally impossible — the model is already inside the JSON object and can
+          // only continue it. The prompt asks for JSON-only; this enforces it. Note the
+          // prefill is NOT echoed back in the response, so it is re-attached below.
+          messages: [
+            { role: "user", content },
+            { role: "assistant", content: "{" },
+          ],
         }),
       });
       if (!cr.ok) {
@@ -1139,16 +1209,16 @@ module.exports = async (req, res) => {
         });
       }
       const cj = await cr.json();
-      const text = (cj.content || [])
+      // The assistant prefill "{" is NOT included in the response, so the reply begins
+      // mid-object. Re-attach it before parsing, or every reply looks like broken JSON.
+      const text = "{" + (cj.content || [])
         .map((c) => (c.type === "text" ? c.text : ""))
         .join("");
       let parsed;
       try {
-        parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+        parsed = parseVisionReply(text);
       } catch (e) {
-        return res.status(502).json({
-          error: "Vision reply was not clean JSON: " + text.slice(0, 180),
-        });
+        return res.status(502).json({ error: String(e.message || e) });
       }
       const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
       const byReceipt = {};
@@ -1428,7 +1498,7 @@ module.exports = async (req, res) => {
         "For the HORSE field: a WIN or PLA bet has a single horse number, put it in horseNo. " +
         "An EXOTIC (TRIO, Forecast, Quartet) is a COMBINATION, not one horse: leave horseNo null and put the full combination string (e.g. '4-5-9/4-5-9/4-5-9' or '1-3-7') in the combo field. Never force a single horse number onto an exotic. " +
         "Read the numbers exactly as printed. If a genuinely single-horse field is unreadable use null; do not guess. " +
-        "Respond with ONLY minified JSON, no markdown fences, exactly this shape: " +
+        "CRITICAL OUTPUT RULE: your entire reply must be ONE minified JSON object and NOTHING else. Do not explain your reasoning, do not count rows out loud, do not write a preamble or a closing remark, do not use markdown fences. The first character you emit must be { and the last must be }. Any prose outside the JSON breaks the tool. Exactly this shape: " +
         '{"skippedNonHorse":0,' +
         '"bets":[{"receipt":"","selection":"","meet":"","couponCode":"","raceNo":0,"horseNo":null,"combo":"","betType":"WIN|PLA|TRIO|FORECAST|QUARTET","units":1,"amount":0}]} ' +
         "For WIN/PLA set combo to empty string; for exotics set horseNo to null and fill combo. Numbers must be plain numbers without $ signs.";
@@ -1453,7 +1523,14 @@ module.exports = async (req, res) => {
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 4000,
-          messages: [{ role: "user", content }],
+          // ASSISTANT PREFILL: seeding the reply with "{" makes a prose preamble
+          // structurally impossible — the model is already inside the JSON object and can
+          // only continue it. The prompt asks for JSON-only; this enforces it. Note the
+          // prefill is NOT echoed back in the response, so it is re-attached below.
+          messages: [
+            { role: "user", content },
+            { role: "assistant", content: "{" },
+          ],
         }),
       });
       if (!cr.ok) {
@@ -1463,16 +1540,16 @@ module.exports = async (req, res) => {
         });
       }
       const cj = await cr.json();
-      const text = (cj.content || [])
+      // The assistant prefill "{" is NOT included in the response, so the reply begins
+      // mid-object. Re-attach it before parsing, or every reply looks like broken JSON.
+      const text = "{" + (cj.content || [])
         .map((c) => (c.type === "text" ? c.text : ""))
         .join("");
       let parsed;
       try {
-        parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+        parsed = parseVisionReply(text);
       } catch (e) {
-        return res.status(502).json({
-          error: "Vision reply was not clean JSON: " + text.slice(0, 180),
-        });
+        return res.status(502).json({ error: String(e.message || e) });
       }
       const rawBets = Array.isArray(parsed.bets) ? parsed.bets : [];
 
