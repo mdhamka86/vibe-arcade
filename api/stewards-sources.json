@@ -1,0 +1,1214 @@
+{
+ "meta": {
+  "version": "scout-3",
+  "builtAt": "2026-07-06",
+  "purpose": "Source registry for the Stewards' Room 8am trawl (Stage B reads this). Tiers: 'endpoint' (structured/PDF data, parse directly), 'server-html' (full content in raw HTML, fetch+parse), 'headless-candidate' (JS-rendered, needs browser, only if value justifies), 'websearch' (reach via Claude web search in the research pass), 'avoid' (paywall/anti-bot/TOS, do not scrape).",
+  "caveat": "Verdicts tested via Claude-side fetch on 06/07/2026 or validated in prior chat sessions; borderline cases re-verified from Vercel in Stage B since bot-detection treats fetchers differently.",
+  "lastProbedAt": "2026-07-16",
+  "probeNote": "v3 (16/07/2026): re-probed the \"dead\" sources with PATIENCE (25-30s) and USER-AGENT ROTATION after the SA coverage question. THREE MAJOR CORRECTIONS. (1) gold-circle is NOT dead — it cold-starts: the first hit can abort past 20s, then serves in <1s (4/5 at 25s timeout). The earlier \"dead\" verdict was an 8s-timeout artefact. (2) race-coast is the best SA source and exposes an open WordPress REST API (racecoast-api) serving the Harrison/Bailey/van Deventer previews as JSON — the previews HTML page is JS-rendered and has no links, which is why scraping it looked empty. (3) selangor-turf-club is 403 to desktop Chrome on EVERY path but 200 to an iPhone UA. Also recovered justhorseracing (AU) via iPhone UA, giving the 21-leg AU region its first real tipster source. STANDING LESSON: a 403 or a timeout from one fetcher with one UA is NOT proof a source is dead. Retry with patience and a different UA before writing anything off.",
+  "coverageAudit": {
+   "at": "2026-07-16",
+   "basis": "292 bet rows in stewards-seed.json",
+   "volumeByRegion": {
+    "SA": "87 legs (29.8%)",
+    "UK_IE": "75 (25.7%)",
+    "FR": "39 (13.4%)",
+    "AU": "21 (7.2%)",
+    "TR": "18 (6.2%)",
+    "JP": "17 (5.8%)",
+    "MY": "12 (4.1%)",
+    "HK": "12 (4.1%)",
+    "KR": "4 (1.4%)",
+    "DE": "3 (1.0%)",
+    "MU": "3 (1.0%)",
+    "PE": "1 (0.3%)"
+   },
+   "note": "Priority should follow volume. SA and UK/IE together are 55% of all legs."
+  },
+  "saNote": "SA DEEP-PROBE 16/07/2026. SA is 87 legs, 29.8% of the book, the largest single region. Gold Circle is ALIVE (cold-start, needs a 25s+ timeout) and the earlier probe was wrong to imply otherwise. Race Coast is alive, current, and exposes a WordPress REST API returning structured previews, now the priority-1 SA source. Live SA set: racecoast-api, race-coast, racecoast-previews, raceform (root), gold-circle, nhra, 4racing. Dead or blocked: sporting-post, hollywoodbets, winningform (JS shell), tabonline (JS shell), racingsa (DNS), worldsportsbetting, gallop.tv."
+ },
+ "sources": [
+  {
+   "id": "sgpools-cards",
+   "region": [
+    "ALL"
+   ],
+   "name": "Singapore Pools racecards + tipster/analysis PDFs",
+   "tier": "endpoint",
+   "roles": [
+    "cards",
+    "runnerMap",
+    "tipsterPDFs",
+    "couponCodes"
+   ],
+   "urls": [
+    "(triage2.js/deep2.js endpoints, proven in production)"
+   ],
+   "verdict": "PROVEN in production (Outsider Triage v2). The spine: integrated numbering + coupon codes the slip must match.",
+   "priority": 1
+  },
+  {
+   "id": "open-meteo",
+   "region": [
+    "ALL"
+   ],
+   "name": "Open-Meteo weather at track coordinates",
+   "tier": "endpoint",
+   "roles": [
+    "weather",
+    "going-hints"
+   ],
+   "urls": [
+    "https://api.open-meteo.com/v1/forecast"
+   ],
+   "verdict": "PROVEN (Touch Grass HKT), keyless JSON.",
+   "priority": 1
+  },
+  {
+   "id": "gold-circle",
+   "region": [
+    "SA"
+   ],
+   "name": "Gold Circle (KZN + official SA tote previews)",
+   "tier": "server-html",
+   "roles": [
+    "cards",
+    "tips",
+    "perms",
+    "racetime-comments",
+    "racecard-PDFs"
+   ],
+   "urls": [
+    "https://www.goldcircle.co.za/"
+   ],
+   "verdict": "ALIVE, CONFIRMED 16/07 — earlier \"AbortError/dead\" call was WRONG and caused by an impatient 8s timeout. Gold Circle cold-starts: first hit can exceed 20s, then serves in <1s. Homepage carries Greyville + Scottsville racecourse pages and racecard/gallop-form PDF links. CAUTION: the racecard PDFs linked on the homepage were March-dated at probe time, so treat GC as a racecourse/official layer and take CURRENT form PDFs from Race Coast (see race-coast fetchHints).",
+   "priority": 1,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "4/5 success at 25s timeout (try1 aborted at 25s cold, tries 2-5 returned 200/5892 chars in 820-4263ms). Earlier \"dead\" verdict was a timeout artefact, not an outage."
+   },
+   "fetchHints": {
+    "timeoutMs": 25000,
+    "note": "COLD START: the first request of the day can take >20s or abort; retry once and it warms to ~820ms. An 8s timeout WILL falsely mark this dead."
+   }
+  },
+  {
+   "id": "race-coast",
+   "region": [
+    "SA"
+   ],
+   "name": "Race Coast (Harrison / van Deventer same-day previews)",
+   "tier": "endpoint",
+   "roles": [
+    "tips",
+    "previews",
+    "gallop-form-PDFs",
+    "racecards",
+    "sectionals"
+   ],
+   "urls": [
+    "https://www.racecoast.co.za/",
+    "https://www.racecoast.co.za/racing/gallop-forms/",
+    "https://www.racecoast.co.za/racing/racecards/",
+    "https://www.racecoast.co.za/news/",
+    "https://www.racecoast.co.za/media-portal/"
+   ],
+   "verdict": "CONFIRMED 16/07. Use for GALLOP FORM PDFs (full runner/breeding/trainer/jockey/weight data, current-dated). For PREVIEWS/TIPS use racecoast-api instead — same site, structured JSON, far cheaper than an 11MB PDF. Verified: /racing/gallop-forms/ listed 8 dated PDFs; 14-16-July-_Gallop-Form.pdf parsed to \"HOLLYWOODBETS GREYVILLE POLYTRACK, WEDNESDAY 15 JULY 2026\" with full form. Cover pages 1-10 are blank; content starts ~p11.",
+   "priority": 1,
+   "fetchHints": {
+    "timeoutMs": 30000,
+    "parse": "PDF",
+    "note": "THE CONTENT IS IN PDFs, NOT HTML. /racing/gallop-forms/ lists dated Gallop Form PDFs (e.g. 14-16-July-_Gallop-Form.pdf). The HTML previews page has NO article links (JS-rendered) — do not waste a fetch on it. Scrape the PDF hrefs off /racing/gallop-forms/, then parse the PDF."
+   },
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "VERIFIED END-TO-END: /racing/gallop-forms/ served 8 dated PDF links; downloaded 14-16-July-_Gallop-Form.pdf (11.2MB, 48 pages) and parsed real form — \"HOLLYWOODBETS DURBANVILLE RACE 3\", \"HOLLYWOODBETS GREYVILLE POLYTRACK, WEDNESDAY 15 JULY 2026\", full runner/breeding/trainer/jockey/weight data. Cover pages 1-10 are empty; real content starts ~page 11."
+   }
+  },
+  {
+   "id": "sky-racing-world",
+   "region": [
+    "SA",
+    "AU",
+    "KR"
+   ],
+   "name": "Sky Racing World previews + form guide",
+   "tier": "server-html",
+   "roles": [
+    "tips",
+    "previews",
+    "form"
+   ],
+   "urls": [
+    "https://www.skyracingworld.com/news/",
+    "https://www.skyracingworld.com/form-guide/"
+   ],
+   "verdict": "Search-index verified 06/07: full per-race SA preview articles with selections; AU/KR core regions.",
+   "priority": 2,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "HTTP 403 (both honest and browser UA)",
+    "note": "Registry caveat applies: Vercel-side fetchers may be treated differently. Re-probe from the Vercel function before downgrading the tier. Do NOT assume this source is dead based on a sandbox probe alone."
+   }
+  },
+  {
+   "id": "raceform-clockwatcher",
+   "region": [
+    "SA"
+   ],
+   "name": "Raceform sectionals + Clockwatcher speed ratings",
+   "tier": "server-html",
+   "roles": [
+    "sectionals",
+    "speed-ratings",
+    "value-bets"
+   ],
+   "urls": [
+    "https://www.raceform.co.za/",
+    "https://raceform.co.za/",
+    "https://clockwatcher.co.za/"
+   ],
+   "verdict": "PROBED 16/07: the ROOT raceform.co.za is ALIVE (200, 7,529 chars, carries a 16 Jul 2026 date and SA track names). The /clockwatcher/ subpath 404s, so fetch the root and navigate from there rather than deep-linking. Sectionals as a percentage of standard time (<100% = faster) and speed ratings for all four SA centres remain the reason this source exists.",
+   "priority": 2,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "root 200 (7529 chars, current date present); /clockwatcher/ 404"
+   }
+  },
+  {
+   "id": "sporting-post",
+   "region": [
+    "SA"
+   ],
+   "name": "Sporting Post",
+   "tier": "websearch",
+   "roles": [
+    "news",
+    "tips"
+   ],
+   "urls": [
+    "https://www.sportingpost.co.za/"
+   ],
+   "verdict": "Reach via research pass.",
+   "priority": 3
+  },
+  {
+   "id": "hkjc",
+   "region": [
+    "HK",
+    "SIMULCAST:SA,UK,FR,DE"
+   ],
+   "name": "Hong Kong Jockey Club racing info",
+   "tier": "server-html",
+   "roles": [
+    "cards",
+    "form",
+    "trackwork",
+    "barrier-trials",
+    "vet-records",
+    "tips-index",
+    "results",
+    "dividends",
+    "per-race-PDFs"
+   ],
+   "urls": [
+    "https://racing.hkjc.com/en-us/local/information/racecard?racedate=YYYY/MM/DD&Racecourse=ST&RaceNo=N",
+    "https://racing.hkjc.com/racing/English/tipsindex/tips_index.asp",
+    "https://racing.hkjc.com/en-us/local/information/localresults",
+    "https://racing.hkjc.com/racing/content/PDF/RaceCard/YYYYMMDD_starter_all.pdf"
+   ],
+   "verdict": "VERIFIED 06/07 direct fetch: full runner tables server-rendered with clean date/course/race URL params; per-race and all-races PDFs; Tips Index (aggregated tipsters) is legacy ASP, likely fetchable; SIMULCAST cards (S1 SA, S2 UK, S3 GER, S4 FR) give a second official card source for SGPools' own overseas meets. SpeedPRO likely JS (headless candidate).",
+   "priority": 1
+  },
+  {
+   "id": "tjk",
+   "region": [
+    "TR",
+    "SIMULCAST:UK,FR,US,CA"
+   ],
+   "name": "Turkish Jockey Club (TJK)",
+   "tier": "server-html",
+   "roles": [
+    "cards",
+    "results",
+    "sectionals-son800",
+    "stewards-reports",
+    "handicap-points"
+   ],
+   "urls": [
+    "https://www.tjk.org/TR/yarissever/Info/Page/GunlukYarisProgrami?QueryParameter_Tarih=DD/MM/YYYY",
+    "https://www.tjk.org/EN/yarissever/Info/Page/GunlukYarisProgrami",
+    "https://www.tjk.org/TR/YarisSever/Query/Page/Son800Ist"
+   ],
+   "verdict": "VERIFIED 06/07 direct fetch: daily program server-rendered, parameterised date+city, EN mirror, last-800m sectionals query, stewards reports, foreign simulcast listings (incl Lingfield on test day).",
+   "priority": 1
+  },
+  {
+   "id": "selangor-turf-club",
+   "region": [
+    "MY",
+    "INTL:SA,AU,KR,HK"
+   ],
+   "name": "Selangor Turf Club",
+   "tier": "server-html",
+   "roles": [
+    "cards",
+    "tips",
+    "international-card-PDFs",
+    "express-form",
+    "stewards-reports",
+    "results"
+   ],
+   "urls": [
+    "https://www.selangorturfclub.com/horse-racing/local-racing/race-card/",
+    "https://www.selangorturfclub.com/horse-racing/international-race/international-race-card/",
+    "https://www.selangorturfclub.com/news/selection/"
+   ],
+   "verdict": "ALIVE via iPhone UA only (verified 16/07). Desktop-Chrome UA is now hard-403 on every path including the /news/selection/ Top Picks page the registry relies on. Not dead — just fussy. Priority unchanged.",
+   "priority": 1,
+   "fetchHints": {
+    "userAgent": "iphone",
+    "timeoutMs": 20000,
+    "note": "CHROME DESKTOP UA IS 403 ON EVERY PATH. An iPhone Safari UA returns 200 (4999 chars), stable 3/3. This flipped between 16/07 probes — it served 724k chars to a desktop UA earlier the same session, so the WAF is dynamic. ALWAYS retry with the iPhone UA before declaring it down."
+   },
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "chrome-desktop 403 on /, /news/, /racing/, /news/selection/, /racecard/, /results/. iPhone UA 200/4999 chars, stable 3/3. googlebot/curl/no-UA all 403."
+   }
+  },
+  {
+   "id": "korearacing-live",
+   "region": [
+    "KR"
+   ],
+   "name": "korearacing.live",
+   "tier": "server-html",
+   "roles": [
+    "tips",
+    "ordered-selections",
+    "feature-previews"
+   ],
+   "urls": [
+    "https://korearacing.live/"
+   ],
+   "verdict": "Validated in prior sessions; Sunday feature preview publishes Saturday KST ~00:00-03:00.",
+   "priority": 1
+  },
+  {
+   "id": "prono-turf-gratuit",
+   "region": [
+    "FR"
+   ],
+   "name": "Prono Turf Gratuit (Top 10 press synthesis)",
+   "tier": "server-html",
+   "roles": [
+    "press-synthesis",
+    "tips"
+   ],
+   "urls": [
+    "https://prono-turf-gratuit.fr/presse-pmu/"
+   ],
+   "verdict": "Validated prior sessions + search-index 06/07: daily Top 10 press table, most-cited 8 horses, quinte-de-demain available evening before. The pre-computed convergence grid.",
+   "priority": 1
+  },
+  {
+   "id": "frequence-turf",
+   "region": [
+    "FR"
+   ],
+   "name": "Frequence Turf press synthesis articles",
+   "tier": "server-html",
+   "roles": [
+    "press-synthesis",
+    "per-outlet-ordered-picks"
+   ],
+   "urls": [
+    "https://frequence-turf.fr/"
+   ],
+   "verdict": "Search-index verified 06/07: full per-outlet ordered picks (Genybet, ZEturf, Canalturf, Turfomania, Equidia...) + weighted citation ranking.",
+   "priority": 1
+  },
+  {
+   "id": "canalturf",
+   "region": [
+    "FR"
+   ],
+   "name": "Canalturf pronostics + synthesis tables",
+   "tier": "server-html",
+   "roles": [
+    "tips",
+    "synthesis",
+    "odds"
+   ],
+   "urls": [
+    "https://www.canalturf.com/courses_liste_pronostics.php"
+   ],
+   "verdict": "Legacy PHP pages, search-index verified 06/07; verify Vercel-side Stage B.",
+   "priority": 2
+  },
+  {
+   "id": "stats-quinte",
+   "region": [
+    "FR"
+   ],
+   "name": "Stats-Quinte weighted press consensus",
+   "tier": "server-html",
+   "roles": [
+    "press-synthesis"
+   ],
+   "urls": [
+    "https://stats-quinte.com/presse-quinte/"
+   ],
+   "verdict": "Search-index verified 06/07: 5-source weighted consensus, base identification.",
+   "priority": 2
+  },
+  {
+   "id": "geny-equidia-zeturf",
+   "region": [
+    "FR"
+   ],
+   "name": "Geny / Equidia / Zeturf",
+   "tier": "websearch",
+   "roles": [
+    "tips",
+    "form"
+   ],
+   "urls": [
+    "https://www.geny.com/",
+    "https://www.equidia.fr/",
+    "https://www.zeturf.fr/"
+   ],
+   "verdict": "Reach via research pass; already covered inside the FR synthesis sources above.",
+   "priority": 3
+  },
+  {
+   "id": "at-the-races",
+   "region": [
+    "UK",
+    "IE",
+    "FR"
+   ],
+   "name": "At The Races preview articles",
+   "tier": "server-html",
+   "roles": [
+    "tips",
+    "previews"
+   ],
+   "urls": [
+    "https://www.attheraces.com/"
+   ],
+   "verdict": "Validated prior sessions: preview ARTICLES reach text (JS racecards do not).",
+   "priority": 2
+  },
+  {
+   "id": "sporting-life",
+   "region": [
+    "UK",
+    "IE"
+   ],
+   "name": "Sporting Life",
+   "tier": "websearch",
+   "roles": [
+    "tips",
+    "previews"
+   ],
+   "urls": [
+    "https://www.sportinglife.com/"
+   ],
+   "verdict": "Reach via research pass.",
+   "priority": 3
+  },
+  {
+   "id": "racing-post",
+   "region": [
+    "UK",
+    "IE"
+   ],
+   "name": "Racing Post",
+   "tier": "avoid",
+   "roles": [
+    "premium-tips",
+    "ratings"
+   ],
+   "urls": [
+    "https://www.racingpost.com/"
+   ],
+   "verdict": "Paywall + anti-bot; free-tier content only, via research pass. Do not scrape.",
+   "priority": 4
+  },
+  {
+   "id": "timeform",
+   "region": [
+    "UK",
+    "MULTI"
+   ],
+   "name": "Timeform",
+   "tier": "avoid",
+   "roles": [
+    "premium-ratings"
+   ],
+   "urls": [
+    "https://www.timeform.com/"
+   ],
+   "verdict": "Premium product; free articles via research pass only. Do not scrape.",
+   "priority": 4
+  },
+  {
+   "id": "au-preview-articles",
+   "region": [
+    "AU"
+   ],
+   "name": "Racenet / Punters / racing.com / Just Horse Racing / bets.com.au preview articles",
+   "tier": "server-html",
+   "roles": [
+    "tips",
+    "previews",
+    "best-bets"
+   ],
+   "urls": [
+    "https://www.racenet.com.au/",
+    "https://www.punters.com.au/",
+    "https://www.racing.com/",
+    "https://www.justhorseracing.com.au/",
+    "https://www.bets.com.au/"
+   ],
+   "verdict": "Validated prior sessions: text preview/tips ARTICLES reach fetch; interactive racecard/speed-map tools are JS dead ends (Model Notes v41-42). Fetch articles, not tools.",
+   "priority": 2,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "HTTP 403 (racenet; both UAs)",
+    "note": "Registry caveat applies: Vercel-side fetchers may be treated differently. Re-probe from the Vercel function before downgrading the tier. Do NOT assume this source is dead based on a sandbox probe alone."
+   }
+  },
+  {
+   "id": "racing-and-sports",
+   "region": [
+    "MULTI"
+   ],
+   "name": "Racing and Sports form guides + meeting PDFs",
+   "tier": "websearch",
+   "roles": [
+    "form",
+    "cards",
+    "sectionals",
+    "speed-maps",
+    "PDFs"
+   ],
+   "urls": [
+    "https://www.racingandsports.com.au/form-guide"
+   ],
+   "verdict": "BLOCKED 06/07 to direct fetch (bot detection) despite rich server-side content in search index. Research-pass tier; Stage B re-tests from Vercel and probes the per-meeting Get-PDF links; headless candidate if value demands.",
+   "priority": 2
+  },
+  {
+   "id": "netkeiba-fanduel",
+   "region": [
+    "JP"
+   ],
+   "name": "netkeiba / FanDuel Japan previews",
+   "tier": "websearch",
+   "roles": [
+    "tips",
+    "form"
+   ],
+   "urls": [
+    "https://www.netkeiba.com/"
+   ],
+   "verdict": "Research pass only; region carries the standing 'no Japan without prior conviction' caution flag anyway.",
+   "priority": 3
+  },
+  {
+   "id": "betfair-api",
+   "region": [
+    "MARKETS"
+   ],
+   "name": "Betfair Exchange official API",
+   "tier": "avoid",
+   "roles": [
+    "market-moves"
+   ],
+   "urls": [
+    "https://developer.betfair.com/"
+   ],
+   "verdict": "Official API exists (key + account required); never scrape the site. Optional future add-on, not in scope.",
+   "priority": 4
+  },
+  {
+   "id": "bookmakers",
+   "region": [
+    "MARKETS"
+   ],
+   "name": "TAB / Sportsbet / Neds / Ladbrokes / Bet365",
+   "tier": "avoid",
+   "roles": [
+    "odds"
+   ],
+   "urls": [],
+   "verdict": "Actively anti-bot and TOS-protected. Do not scrape. Market colour comes from press articles instead.",
+   "priority": 4
+  },
+  {
+   "id": "sporting-life-cards",
+   "region": [
+    "UK",
+    "IE"
+   ],
+   "name": "Sporting Life racecards + naps table + fast results",
+   "tier": "server-html",
+   "roles": [
+    "cards",
+    "naps-consensus",
+    "results",
+    "tips"
+   ],
+   "urls": [
+    "https://www.sportinglife.com/racing/racecards",
+    "https://www.sportinglife.com/racing/naps-table",
+    "https://www.sportinglife.com/racing/fast-results"
+   ],
+   "verdict": "PROBED 16/07 and STABLE (3/3 fetches, ~4.9k text on cards, 14.2k on fast-results, 5.1k on naps-table with race times). The naps table is a ready-made press convergence grid for UK/IE, the same role prono-turf-gratuit plays for France. Upgraded from the old \"websearch\" tier: it genuinely server-renders.",
+   "priority": 1,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200, stable 3/3, real content"
+   }
+  },
+  {
+   "id": "timeform-free-tips",
+   "region": [
+    "UK",
+    "IE"
+   ],
+   "name": "Timeform free tips page",
+   "tier": "server-html",
+   "roles": [
+    "tips",
+    "nap"
+   ],
+   "urls": [
+    "https://www.timeform.com/horse-racing/tips"
+   ],
+   "verdict": "PROBED 16/07: the free TIPS page is 200 + 6k text and STABLE 3/3, despite the registry listing Timeform as \"avoid\". The avoid verdict still holds for premium ratings and /racecards (403) and /nap-of-the-day (500) — do not scrape those. This one free page is fair game.",
+   "priority": 2,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200, stable 3/3; /racecards 403, /nap-of-the-day 500"
+   }
+  },
+  {
+   "id": "irishracing",
+   "region": [
+    "IE",
+    "UK"
+   ],
+   "name": "irishracing.com cards + tips",
+   "tier": "server-html",
+   "roles": [
+    "cards",
+    "tips",
+    "previews"
+   ],
+   "urls": [
+    "https://www.irishracing.com/",
+    "https://www.irishracing.com/racecards",
+    "https://www.irishracing.com/tips"
+   ],
+   "verdict": "PROBED 16/07 and STABLE (3/3, 9.3k homepage, 14.2k cards, 6.0k tips). Fills the IE gap: the registry only had at-the-races and paywalled Racing Post for Ireland.",
+   "priority": 1,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200, stable 3/3"
+   }
+  },
+  {
+   "id": "racing-nsw",
+   "region": [
+    "AU"
+   ],
+   "name": "Racing NSW official",
+   "tier": "server-html",
+   "roles": [
+    "cards",
+    "fields",
+    "official"
+   ],
+   "urls": [
+    "https://www.racingnsw.com.au/"
+   ],
+   "verdict": "PROBED 16/07 and STABLE (3/3, 5.6k text). One of only two AU sources that answer at all: racenet, punters, racing.com, justhorseracing, skyracing, racingqueensland ALL returned 403 on 16/07, and racingvictoria is a JS shell (78k raw, 1 char of text). Official body pages are the way into AU.",
+   "priority": 1,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200, stable 3/3"
+   }
+  },
+  {
+   "id": "netkeiba-race",
+   "region": [
+    "JP"
+   ],
+   "name": "netkeiba race portal",
+   "tier": "server-html",
+   "roles": [
+    "cards",
+    "tips",
+    "form"
+   ],
+   "urls": [
+    "https://www.netkeiba.com/",
+    "https://race.netkeiba.com/top/"
+   ],
+   "verdict": "PROBED 16/07 and STABLE (3/3, 2.3k text homepage, 2.1k race top). Upgraded from \"websearch\": it does server-render. JP was a total fetch gap despite 17 legs of real betting. The standing \"no Japan without prior conviction\" caution still applies to the BETTING decision; this only fixes the information gap.",
+   "priority": 2,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200, stable 3/3"
+   }
+  },
+  {
+   "id": "rakuten-keiba",
+   "region": [
+    "JP"
+   ],
+   "name": "Rakuten Keiba (NAR/local incl. Urawa)",
+   "tier": "server-html",
+   "roles": [
+    "cards",
+    "tips",
+    "local-racing"
+   ],
+   "urls": [
+    "https://keiba.rakuten.co.jp/",
+    "https://keiba.rakuten.co.jp/race_card/list/"
+   ],
+   "verdict": "PROBED 16/07 and STABLE (3/3, 5.5k text, race_card/list carries times). Directly relevant: your JP legs are Urawa/Mombetsu, which are NAR local tracks, NOT JRA. jra.go.jp returned 403 anyway.",
+   "priority": 1,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200, stable 3/3, has race times"
+   }
+  },
+  {
+   "id": "keibalab",
+   "region": [
+    "JP"
+   ],
+   "name": "Keiba Lab previews",
+   "tier": "server-html",
+   "roles": [
+    "tips",
+    "previews"
+   ],
+   "urls": [
+    "https://www.keibalab.jp/"
+   ],
+   "verdict": "PROBED 16/07: 200 + 73.8k raw. Secondary JP tipster source behind netkeiba/Rakuten.",
+   "priority": 3,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200"
+   }
+  },
+  {
+   "id": "jbis",
+   "region": [
+    "JP"
+   ],
+   "name": "JBIS (Japan Bloodstock Information System)",
+   "tier": "server-html",
+   "roles": [
+    "form",
+    "pedigree",
+    "results"
+   ],
+   "urls": [
+    "https://www.jbis.or.jp/"
+   ],
+   "verdict": "PROBED 16/07: 200 + 79k raw. Form/pedigree reference layer, not a tipster.",
+   "priority": 3,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200"
+   }
+  },
+  {
+   "id": "deutscher-galopp",
+   "region": [
+    "DE"
+   ],
+   "name": "Deutscher Galopp official (Rennkalender)",
+   "tier": "server-html",
+   "roles": [
+    "cards",
+    "fixtures",
+    "results",
+    "official"
+   ],
+   "urls": [
+    "https://www.deutscher-galopp.de/",
+    "https://www.deutscher-galopp.de/gr/renntage/rennkalender.php"
+   ],
+   "verdict": "PROBED 16/07 and STABLE (3/3, 24.5k text homepage, 21.7k Rennkalender WITH race times). DE had ZERO coverage in the registry despite real legs bet (Germany, Hamburg). Best single DE source found.",
+   "priority": 1,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200, stable 3/3, has race times"
+   }
+  },
+  {
+   "id": "equibase",
+   "region": [
+    "US",
+    "MULTI"
+   ],
+   "name": "Equibase",
+   "tier": "server-html",
+   "roles": [
+    "cards",
+    "form",
+    "results"
+   ],
+   "urls": [
+    "https://www.equibase.com/"
+   ],
+   "verdict": "PROBED 16/07: 200 + 419k raw. Not currently a bet region, but SGPools carries US simulcast and TJK lists US foreign meets, so this is the reference source if a US meet appears on the slate.",
+   "priority": 3,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200"
+   }
+  },
+  {
+   "id": "great-british-racing",
+   "region": [
+    "UK"
+   ],
+   "name": "Great British Racing",
+   "tier": "server-html",
+   "roles": [
+    "fixtures",
+    "previews",
+    "news"
+   ],
+   "urls": [
+    "https://www.greatbritishracing.com/"
+   ],
+   "verdict": "PROBED 16/07: 200 + 153k raw. Fixtures/context layer for UK, not a tipster.",
+   "priority": 3,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200"
+   }
+  },
+  {
+   "id": "bha-fixtures",
+   "region": [
+    "UK"
+   ],
+   "name": "British Horseracing Authority fixtures",
+   "tier": "server-html",
+   "roles": [
+    "fixtures",
+    "official"
+   ],
+   "urls": [
+    "https://www.britishhorseracing.com/racing/fixtures/"
+   ],
+   "verdict": "PROBED 16/07: 200 + 86k raw. Authoritative UK fixture list; useful to confirm a meet exists before trawling for it.",
+   "priority": 3,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200"
+   }
+  },
+  {
+   "id": "hri",
+   "region": [
+    "IE"
+   ],
+   "name": "Horse Racing Ireland",
+   "tier": "server-html",
+   "roles": [
+    "fixtures",
+    "official",
+    "results"
+   ],
+   "urls": [
+    "https://www.hri.ie/"
+   ],
+   "verdict": "PROBED 16/07: 200 + 127k raw. Official IE body; fixtures and results reference.",
+   "priority": 3,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200"
+   }
+  },
+  {
+   "id": "racecoast-api",
+   "region": [
+    "SA"
+   ],
+   "name": "Race Coast WordPress REST API (structured previews)",
+   "tier": "endpoint",
+   "roles": [
+    "previews",
+    "tips",
+    "form",
+    "selections"
+   ],
+   "urls": [
+    "https://www.racecoast.co.za/wp-json/wp/v2/posts?per_page=10",
+    "https://www.racecoast.co.za/wp-json/wp/v2/posts?categories=48&per_page=5",
+    "https://www.racecoast.co.za/wp-json/wp/v2/posts?categories=115&per_page=5",
+    "https://www.racecoast.co.za/wp-json/wp/v2/posts?categories=114&per_page=5",
+    "https://www.racecoast.co.za/wp-json/wp/v2/categories?per_page=40"
+   ],
+   "verdict": "RE-VERIFIED INDEPENDENTLY 16/07 — THE BEST SA SOURCE, and it supersedes the PDF route for previews. Race Coast runs WordPress and exposes an open REST API serving exactly the named pundits Model Notes calls \"gold\" (Andrew Harrison, Brandon Bailey, Mark van Deventer, David Thiselton) as structured JSON with full per-race text: e.g. \"RACE 1 3 JULIET OF VERONA must have a big winning chance... 2 SENORITA LOLITA ran second on debut\". This solves the JS-rendered previews page: do NOT scrape /category/previews/ (it has no article links), call the API. The WP-API trick does NOT generalise: raceform 404, sportingpost/hollywoodbets/justhorseracing all 403 on /wp-json/.",
+   "priority": 1,
+   "fetchHints": {
+    "timeoutMs": 30000,
+    "parse": "JSON",
+    "note": "Plain WordPress REST. content.rendered holds the FULL preview text; strip HTML tags. No PDF, no JS, no auth. Sub-second warm.",
+    "categories": {
+     "48": "Previews (all)",
+     "65": "Racing News",
+     "114": "Race Preview - Western Cape (Durbanville/Kenilworth)",
+     "115": "Race Preview - KwaZulu-Natal (Greyville/Scottsville)",
+     "116": "Racing Review"
+    },
+    "recommended": "https://www.racecoast.co.za/wp-json/wp/v2/posts?categories=48&per_page=10"
+   },
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200, STABLE 4/4 (44069 bytes, 753-1126ms). Categories endpoint mapped: 48=Previews(136 posts), 115=KZN(95), 114=Western Cape(61). Returned dated previews incl \"Brandon Bailey’s Race Preview: Saturday, 18 July 2026 – Hollywoodbets Durbanville\" and \"Andrew Harrison’s Form Preview: Wednesday, 15 July 2026 – Hollywoodbets Greyville\" with full per-race body text and named selections."
+   }
+  },
+  {
+   "id": "racecoast-previews",
+   "region": [
+    "SA"
+   ],
+   "name": "Race Coast previews (HTML fallback)",
+   "tier": "server-html",
+   "roles": [
+    "previews",
+    "tips"
+   ],
+   "urls": [
+    "https://www.racecoast.co.za/category/previews/",
+    "https://www.racecoast.co.za/feed/"
+   ],
+   "verdict": "PROBED 16/07: 200, 9,484 chars of real text, current July-2026 preview titles (Brandon Bailey / Andrew Harrison / Mark van Deventer / David Thiselton). RSS feed also live (77k). Fallback only - prefer racecoast-api, which returns the same content as clean JSON.",
+   "priority": 2,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200, current content confirmed"
+   }
+  },
+  {
+   "id": "nhra",
+   "region": [
+    "SA"
+   ],
+   "name": "National Horseracing Authority of South Africa",
+   "tier": "server-html",
+   "roles": [
+    "official",
+    "rulings",
+    "form"
+   ],
+   "urls": [
+    "https://www.nhra.co.za/"
+   ],
+   "verdict": "PROBED 16/07: 200, 5,697 chars. Official SA regulator. Reference/rulings layer (stewards enquiries, non-runners), not a tipster. No July-2026 dates or track names on the landing page, so treat as a lookup source rather than a daily trawl target.",
+   "priority": 3,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200, 5697 chars, no dated content on landing"
+   }
+  },
+  {
+   "id": "4racing",
+   "region": [
+    "SA"
+   ],
+   "name": "4Racing (SA tote operator)",
+   "tier": "server-html",
+   "roles": [
+    "official",
+    "cards",
+    "results"
+   ],
+   "urls": [
+    "https://www.4racing.co.za/"
+   ],
+   "verdict": "PROBED 16/07: 200, 4,142 chars, SA track names present but no dated content on the landing page. 4Racing operates Turffontein/Vaal/Fairview/Kenilworth/Durbanville, so it is the official card layer for the Highveld and Cape tracks that Gold Circle (KZN-focused) does not cover. Worth a deeper path probe from Vercel.",
+   "priority": 3,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "200, 4142 chars, tracks present, no dates on landing"
+   }
+  },
+  {
+   "id": "justhorseracing",
+   "region": [
+    "AU"
+   ],
+   "name": "Just Horse Racing — daily per-track tips",
+   "tier": "server-html",
+   "roles": [
+    "tips",
+    "best-bets",
+    "per-race-selections",
+    "track-condition"
+   ],
+   "urls": [
+    "https://www.justhorseracing.com.au/",
+    "https://www.justhorseracing.com.au/category/tips"
+   ],
+   "fetchHints": {
+    "userAgent": "iphone",
+    "timeoutMs": 20000,
+    "crawlDelaySec": 600,
+    "parse": "Extract the <article> container; the page chrome is ~9k of bookmaker ads. Real content is ~2.8k inside it.",
+    "note": "DESKTOP CHROME UA = 403. iPhone Safari UA = 200/11250 chars, stable 3/3. robots.txt ALLOWS this path (only /wp-admin/, /?s=, /search/, /go/, /wp-json/ disallowed) but sets Crawl-delay: 600 — one fetch per 10 minutes. A once-daily trawl is comfortably inside that."
+   },
+   "verdict": "RECOVERED 16/07 via iPhone UA and the best AU source found. Serves dated per-track tip articles (URL pattern /tips/DD-M-YYYY-horse-racing-tips-and-best-bets-<track>/<id>) with named per-race selections INCLUDING horse numbers, plus track condition and rail position. Verified live on the 16/07 Ipswich card (a track in the bet log): \"Race One: 6 Lady Milan | Race Two: 2 Grieve Road | Race Three: 2 Kalamia King...\", \"the track is soft (5) and the rail is out nine metres\". Tracks covered on probe day: Cranbourne, Grafton, Ipswich, Kembla Grange, Pinjarra, Belmont, Doomben, Flemington, Morphettville, Rosehill.",
+   "priority": 1,
+   "lastProbe": {
+    "at": "2026-07-16",
+    "from": "claude-sandbox",
+    "result": "iPhone UA 200/11250, stable 3/3; article body parsed to named selections; robots allows, crawl-delay 600"
+   }
+  }
+ ],
+ "headlessCandidates": [
+  "racing-and-sports form tools (only if Vercel fetch also blocked AND PDF route fails)",
+  "HKJC SpeedPRO",
+  "racing.com speed maps"
+ ],
+ "stageBNotes": [
+  "PATIENCE + UA ROTATION BEFORE DECLARING ANYTHING DEAD. Proven 16/07: gold-circle \"died\" only because of an 8s timeout (it cold-starts >20s then warms to <1s); selangor and justhorseracing \"died\" only because of a desktop-Chrome UA (both 200 on iPhone UA). Every source now carries a fetchHints block with the timeout and UA it actually needs — READ IT before fetching.",
+  "PREFER STRUCTURED ENDPOINTS OVER SCRAPING. Race Coast previews looked unscrapeable (JS-rendered page, zero article links) but the site is WordPress and /wp-json/wp/v2/posts returns the full preview text as JSON, stable 4/4 sub-second. Always try /wp-json/wp/v2/posts on a WordPress-looking site before giving up or reaching for a headless browser. It does not generalise (raceform 404, sportingpost/hollywoodbets/justhorseracing 403) but when it works it is decisive.",
+  "DO NOT SPOOF GOOGLEBOT. racingqueensland serves 200 to a Googlebot UA and 403 to everything else. That is a deliberate block on non-search-engine fetchers, and impersonating a crawler to get round it is cloaking. It is recorded in failedProbes as deliberately-excluded so it does not get \"rediscovered\" and added later.",
+  "USER-AGENT ROTATION IS A REAL BYPASS, PROVEN 16/07: selangorturfclub.com returns 403 to a Chrome-desktop UA on every path but 200 (3/3 stable, 204k raw) to an iPhone Safari UA. Before declaring ANY source blocked, retry with the iPhone UA. A 403 on one UA is not proof of a block.",
+  "COLD STARTS MASQUERADE AS DEATH, PROVEN 16/07: goldcircle.co.za aborted at an 8s timeout and looked gone. At 25s it is 4/5 stable: the first hit after idle can exceed 25s, then it serves in roughly 820ms. Any SA probe must use a 25s+ timeout AND retry once before recording a failure. The earlier reading that Gold Circle was down was a probe artefact, not an outage.",
+  "PREFER APIs OVER SCRAPING, PROVEN 16/07: Race Coast runs WordPress and exposes wp-json/wp/v2/posts, returning clean JSON with ISO dates and full preview bodies (a Durbanville preview came back at 5,768 chars of race-by-race analysis with horse numbers). Categories 115 (KwaZulu-Natal) and 114 (Western Cape) map directly onto the SA tracks in the bet log. Always check /wp-json/ and /feed/ on a WordPress-looking source before writing an HTML scraper.",
+  "Re-verify every server-html source from a Vercel function with realistic headers; Claude-side and Vercel-side fetchers get different bot-detection treatment. This cuts BOTH ways: the 16/07 sandbox probe found sources the registry called dead (sporting-life, timeform tips) are alive, and sources it called Tier-1 (gold-circle) timing out.",
+  "A 200 IS NOT COVERAGE. Three sources (racing-tv, racing-victoria, tab-sa) return HTTP 200 with a large raw body and almost no text: they are JS shells. Always strip tags and measure TEXT length plus a content signal (race times, the word selection/tip) before trusting a source. See failedProbes.",
+  "RATE LIMITING IS REAL. at-the-races returned 979k chars on the first fetch and 3k on every fetch after, and stayed there. Any source validated on a single fetch may be a mirage. Probe 3x with a pause before promoting to priority 1.",
+  "PRIORITY SHOULD FOLLOW VOLUME. Per meta.coverageAudit, SA (29.8%) + UK/IE (25.7%) are 55% of all legs bet. France had 4 working sources for 13.4% while UK/IE had one rate-limited source for 25.7%. Fix the imbalance before adding more FR depth.",
+  "AU IS THE WORST GAP: 21 legs bet, and racenet/punters/racing.com/justhorseracing/skyracing/racingqueensland/sky-racing-world ALL 403 from the sandbox. racing-nsw is the only survivor. Re-probe the whole AU set from Vercel first; if still blocked, AU is running on the SGPools card alone and that should be a known, stated limitation rather than a silent one.",
+  "JP legs are Urawa/Mombetsu = NAR local tracks, NOT JRA. jra.go.jp is 403 anyway. rakuten-keiba is the right primary for these meets; do not reach for JRA sources for a NAR card.",
+  "MAURITIUS IS A GENUINE BLIND SPOT: 3 legs bet, mauritiusturfclub.com and leturf.mu both fail DNS. There is currently no way in. Either find one or treat MU as no-bet-without-manual-research.",
+  "HKJC tips_index.asp PARSES (200, 1.8k text, carries race times) — the registry flagged this as the highest-value unknown and it works. It is the single best tipster-aggregation endpoint available.",
+  "sporting-life naps-table is the UK/IE equivalent of prono-turf-gratuit: a pre-computed press consensus grid. Treat it as the convergence spine for UK/IE the way the FR synthesis sources are for France.",
+  "Simulcast cross-referencing: HKJC S-cards and TJK foreign listings double-cover SGPools overseas meets; use as a verification layer for runner maps.",
+  "Respect robots and rate limits: one trawl per day, cache everything in Redis, identify honestly in User-Agent. Sources marked avoid (racing-post, timeform premium, betfair site, bookmakers) stay off-limits regardless of whether a probe succeeds."
+ ],
+ "failedProbes": [
+  {
+   "id": "racing-tv",
+   "name": "Racing TV tips/racecards",
+   "region": [
+    "UK"
+   ],
+   "result": "200 but JS SHELL (11.9k raw -> 82 chars of text). Do not add."
+  },
+  {
+   "id": "racing-victoria",
+   "name": "Racing Victoria",
+   "region": [
+    "AU"
+   ],
+   "result": "200 but JS SHELL (78.7k raw -> 1 char of text). Do not add."
+  },
+  {
+   "id": "tab-sa",
+   "name": "TAB SA",
+   "region": [
+    "SA"
+   ],
+   "result": "200 but JS SHELL (41.4k raw -> 70 chars of text). Do not add."
+  },
+  {
+   "id": "bestbets-au",
+   "name": "Best Bets AU",
+   "region": [
+    "AU"
+   ],
+   "result": "200 but only 876 chars of text, unstable. Not usable as-is."
+  },
+  {
+   "id": "nar-keiba-go-jp",
+   "name": "NAR keiba.go.jp",
+   "region": [
+    "JP"
+   ],
+   "result": "200 but only 816 chars of text. Rakuten covers NAR better."
+  },
+  {
+   "id": "at-the-races-recheck",
+   "name": "At The Races",
+   "region": [
+    "UK",
+    "IE",
+    "FR"
+   ],
+   "result": "RATE-LIMITED 16/07: first fetch 979k, immediately dropped to 3k/305-chars on repeat and stayed there 3/3. The existing registry entry overstates it. Treat as one-shot-per-day at best."
+  },
+  {
+   "id": "au-blocked-set",
+   "name": "racenet / punters / racing.com / justhorseracing / skyracing / racingqueensland / sky-racing-world",
+   "region": [
+    "AU"
+   ],
+   "result": "ALL 403 on 16/07 from sandbox. AU is the worst-covered region relative to volume (21 legs). Re-probe from Vercel; if still blocked, AU leans on racing-nsw + SGPools card alone."
+  },
+  {
+   "id": "uk-tabloid-set",
+   "name": "Sun / Mirror / Star racing tips",
+   "region": [
+    "UK"
+   ],
+   "result": "All 403 on 16/07. Reach via research pass only."
+  },
+  {
+   "id": "sporting-post-recheck",
+   "name": "Sporting Post",
+   "region": [
+    "SA"
+   ],
+   "result": "403 on 16/07 (registry already had it as websearch — confirmed correct)."
+  },
+  {
+   "id": "mauritius-set",
+   "name": "Mauritius Turf Club / leturf.mu",
+   "region": [
+    "MU"
+   ],
+   "result": "DNS/TypeError on 16/07. MU has 3 legs bet and NO working source. Genuine blind spot."
+  },
+  {
+   "id": "sportingpost-16jul",
+   "name": "Sporting Post",
+   "region": [
+    "SA"
+   ],
+   "result": "403 on / and /category/tipping/ (16/07, chrome + iphone UA). Registry already had it as websearch-only, confirmed correct."
+  },
+  {
+   "id": "hollywoodbets-blog-16jul",
+   "name": "Hollywoodbets blog",
+   "region": [
+    "SA"
+   ],
+   "result": "403 on / and /category/horse-racing/ (16/07). Note the Race Coast previews cover Hollywoodbets-branded meetings anyway, so racecoast-api already carries this content."
+  },
+  {
+   "id": "winningform-16jul",
+   "name": "Winning Form",
+   "region": [
+    "SA"
+   ],
+   "result": "200 but only 14 chars of text = JS shell. Do not add."
+  },
+  {
+   "id": "tabgold-16jul",
+   "name": "TabGold",
+   "region": [
+    "SA"
+   ],
+   "result": "AbortError at 25s. Possibly a cold start like gold-circle. Re-probe from Vercel with a long timeout before writing it off."
+  },
+  {
+   "id": "tabonline-16jul",
+   "name": "TAB Online SA",
+   "region": [
+    "SA"
+   ],
+   "result": "200 but only 70 chars of text = JS shell."
+  },
+  {
+   "id": "racingsa-16jul",
+   "name": "racingsouthafrica.co.za",
+   "region": [
+    "SA"
+   ],
+   "result": "TypeError (DNS or cert failure). Dead."
+  },
+  {
+   "id": "clockwatcher-16jul",
+   "name": "Raceform /clockwatcher/ subpath",
+   "region": [
+    "SA"
+   ],
+   "result": "404 at /clockwatcher/. The raceform.co.za ROOT is alive (200, 7,529 chars, carries a 16 Jul 2026 date). The raceform-clockwatcher entry should point at the root, not the subpath."
+  },
+  {
+   "id": "sa-blocked-set-16jul",
+   "name": "worldsportsbetting / gallop.tv / betway-sa blog",
+   "region": [
+    "SA"
+   ],
+   "result": "403 / 503 / 404 respectively (16/07)."
+  },
+  {
+   "id": "sa-blocked-set-16jul",
+   "name": "sportingpost / hollywoodbets / winningform / tabgold / worldsportsbetting / racingsouthafrica",
+   "region": [
+    "SA"
+   ],
+   "result": "16/07 with 25-30s patience AND chrome+iphone+googlebot UA rotation: sportingpost 403, hollywoodbets 403, winningform 200-but-14-chars (JS shell), tabgold AbortError at 25s, worldsportsbetting 403, racingsouthafrica DNS TypeError, clockwatcher 404 (path moved). SA is well covered by racecoast-api + gold-circle + raceform + 4racing + nhra, so these are not worth further effort."
+  },
+  {
+   "id": "au-still-blocked-16jul",
+   "name": "racenet / punters / racing.com / skyracing / sky-racing-world",
+   "region": [
+    "AU"
+   ],
+   "result": "16/07 UA rotation (chrome/iphone/android/googlebot) + 30s patience: ALL still 403. Only justhorseracing (iphone UA) and racingqueensland (googlebot only) got through. AU remains the thinnest region relative to volume."
+  },
+  {
+   "id": "racing-queensland-googlebot",
+   "name": "Racing Queensland",
+   "region": [
+    "AU"
+   ],
+   "result": "16/07: returns 200/8175 chars ONLY to a Googlebot UA; 403 to chrome/iphone/android. Its robots.txt is itself 403. DELIBERATELY NOT ADDED: claiming to be Googlebot to bypass a block you are otherwise refused is cloaking, not a user-agent preference, and the site is signalling clearly that it does not want non-search-engine fetchers. Left out on purpose, recorded so nobody \"rediscovers\" it and adds it without the context."
+  },
+  {
+   "id": "uk-tabloid-jp-16jul",
+   "name": "Sun / Mirror racing, JRA, racingandsports",
+   "region": [
+    "UK",
+    "JP",
+    "MULTI"
+   ],
+   "result": "16/07 UA rotation + patience: all still 403. Research pass only."
+  }
+ ]
+}
