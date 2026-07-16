@@ -1192,14 +1192,14 @@ module.exports = async (req, res) => {
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 4000,
-          // ASSISTANT PREFILL: seeding the reply with "{" makes a prose preamble
-          // structurally impossible — the model is already inside the JSON object and can
-          // only continue it. The prompt asks for JSON-only; this enforces it. Note the
-          // prefill is NOT echoed back in the response, so it is re-attached below.
-          messages: [
-            { role: "user", content },
-            { role: "assistant", content: "{" },
-          ],
+          // NO ASSISTANT PREFILL. Seeding the reply with "{" would make a prose preamble
+          // structurally impossible, and it is the standard trick for forcing JSON — but
+          // this model rejects it outright: HTTP 400 "This model does not support assistant
+          // message prefill. The conversation must end with a user message." Every intake
+          // and reconcile died on that until it was removed. The defence against preamble
+          // is therefore the CRITICAL OUTPUT RULE in the prompt plus the salvaging
+          // extractJson() parser, which is why that parser must stay tolerant.
+          messages: [{ role: "user", content }],
         }),
       });
       if (!cr.ok) {
@@ -1209,9 +1209,7 @@ module.exports = async (req, res) => {
         });
       }
       const cj = await cr.json();
-      // The assistant prefill "{" is NOT included in the response, so the reply begins
-      // mid-object. Re-attach it before parsing, or every reply looks like broken JSON.
-      const text = "{" + (cj.content || [])
+      const text = (cj.content || [])
         .map((c) => (c.type === "text" ? c.text : ""))
         .join("");
       let parsed;
@@ -1523,14 +1521,14 @@ module.exports = async (req, res) => {
         body: JSON.stringify({
           model: "claude-sonnet-4-6",
           max_tokens: 4000,
-          // ASSISTANT PREFILL: seeding the reply with "{" makes a prose preamble
-          // structurally impossible — the model is already inside the JSON object and can
-          // only continue it. The prompt asks for JSON-only; this enforces it. Note the
-          // prefill is NOT echoed back in the response, so it is re-attached below.
-          messages: [
-            { role: "user", content },
-            { role: "assistant", content: "{" },
-          ],
+          // NO ASSISTANT PREFILL. Seeding the reply with "{" would make a prose preamble
+          // structurally impossible, and it is the standard trick for forcing JSON — but
+          // this model rejects it outright: HTTP 400 "This model does not support assistant
+          // message prefill. The conversation must end with a user message." Every intake
+          // and reconcile died on that until it was removed. The defence against preamble
+          // is therefore the CRITICAL OUTPUT RULE in the prompt plus the salvaging
+          // extractJson() parser, which is why that parser must stay tolerant.
+          messages: [{ role: "user", content }],
         }),
       });
       if (!cr.ok) {
@@ -1540,9 +1538,7 @@ module.exports = async (req, res) => {
         });
       }
       const cj = await cr.json();
-      // The assistant prefill "{" is NOT included in the response, so the reply begins
-      // mid-object. Re-attach it before parsing, or every reply looks like broken JSON.
-      const text = "{" + (cj.content || [])
+      const text = (cj.content || [])
         .map((c) => (c.type === "text" ? c.text : ""))
         .join("");
       let parsed;
