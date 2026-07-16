@@ -1761,28 +1761,30 @@ module.exports.computeAudit = computeAudit; // exposed for test harnesses
 module.exports.computeRuleDecay = computeRuleDecay; // exposed for test harnesses
 
 // ---- Vercel function configuration ----
-// THE TIMEOUT BUG: the client already sets a 115s leash on intake/reconcile, and its
-// comment says that sits "just under the server function's own 120s cap". That cap was
-// never actually declared. Nothing here exported maxDuration, so the function ran on
-// whatever the platform default happened to be — 300s on Fluid compute, but only 15s on a
-// pre-Apr-2025 non-Fluid project. On the 15s path the client waits 115s for a function
-// that died at 15, and the failure looks like a hang rather than a timeout.
+// THE TIMEOUT BUG (fixed): the client set a 115s leash on intake/reconcile and its comment
+// claimed that sat "just under the server function's own 120s cap". No cap was declared
+// anywhere. The function ran on whatever the platform default happened to be, and the
+// client waited 115s for something that may already have been killed.
 //
-// Worse, intake/reconcile accept up to 8 images / 4.2MB and call Claude vision with
-// max_tokens 4000 — routinely 20-60s. A function killed mid-flight can leave stw:betlog
-// written but stw:meta un-bumped, or the pre-write snapshot taken with the SET never
-// applied. The write plumbing is careful; it just needs to be ALLOWED to finish.
+// TWO SOURCES OF TRUTH — READ THIS BEFORE CHANGING EITHER:
+// vercel.json also declares "api/stewards.js": { "maxDuration": 120 }. For plain Node /api
+// routes Vercel accepts BOTH this in-code config export and the vercel.json entry, and the
+// in-code value takes precedence. They currently agree at 120. If you change one, change
+// the other, or the file will say one thing and the platform will do another — which is
+// the exact failure this block was written to fix.
 //
-// 120s is deliberate, not maximal: it matches the client's existing 115s leash (which now
-// genuinely sits just under the server), it comfortably covers a fat 8-image vision parse,
-// and it still bounds a runaway. It is within the classic 60s ceiling ONLY if Fluid is off
-// — see the note below.
+// This export cannot simply be deleted in favour of vercel.json: the bodyParser limit below
+// has no vercel.json equivalent and must live here.
 //
-// IF THIS PROJECT IS NOT ON FLUID COMPUTE, a maxDuration above 60 is rejected at deploy
-// time on Pro (classic ceiling). Fluid is default for new projects and gives 300s default
-// / 800s max on Pro. If the deploy errors on this value, either enable Fluid compute in
-// project settings (preferred — it is also cheaper, billing active CPU rather than
-// wall-clock) or drop this to 60 and lower the client's slow leash to ~55s to match.
+// WHY 120: it covers a fat 8-image vision parse (up to 4.2MB b64, max_tokens 4000, commonly
+// 20-60s) with room to spare, still bounds a runaway, and matches the client's leash.
+// Sibling functions in vercel.json: trawl 300s, propose 120s. The client derives every
+// leash from those numbers (see SERVER_MAX_MS / TRAWL_MAX_MS / PROPOSE_MAX_MS in
+// stewards.html) rather than restating them.
+//
+// PLAN NOTE: 120 and trawl's 300 both exceed the classic non-Fluid ceiling of 60s. They
+// deploy, which means Fluid compute is enabled on this project (Fluid: 300s default, 800s
+// max on Pro). If Fluid is ever turned off, both will be rejected at deploy time.
 module.exports.config = {
   maxDuration: 120,
   api: {
