@@ -365,34 +365,114 @@ const WINS_TO_TAKE_THE_CROWN = 3;
 // manual "settle the week" button needed. Returns "Hammy", "Naddy", or "draw"
 // (a dead heat banks nobody a win, and a drawn week BREAKS a running streak,
 // exactly as losing one would — you have to actually WIN, not merely not-lose).
-function weekWinner(wk) {
+// ---------- THE one weekly tally: every stream, one answer ----------
+// THE BUG THIS KILLS: the hub crowned a week's winner with weekWinner(), which
+// counted claims + dares + the big duel + the theme duel + the quiz. The
+// scrapbook drew its own totals in gatherWeek() from claims + dares ONLY. So
+// the same week could show "Naddy edged it, 80 to 50" in the scrapbook while
+// the hub said Hammy won, because Hammy's 35-point duel win and 25-point quiz
+// win were invisible to the scrapbook. Two tallies, two truths, one very
+// confused household.
+//
+// Now there is exactly ONE tally. Both callers read it, so they cannot drift
+// apart again no matter what gets added later.
+// ============================================================
+// THE SINGLE SOURCE OF TRUTH FOR SCORING.
+//
+// THE BUG THIS FIXES: every score on every screen used to be computed from
+// THIS PHONE'S localStorage (loadClaims/loadDares/loadDuel). But localStorage
+// only ever holds what this phone did, plus whatever the sync effect happened
+// to fold in — and that effect only ever merges the CURRENT week ("w" + wk).
+//
+// So a past week's localStorage was frozen at whatever that device witnessed
+// while the week was live. Hammy's phone kept Hammy's claims, Naddy's kept
+// Naddy's, and neither ever backfilled the other. Week 1 therefore scored
+// differently on each phone: the hub crowned Hammy, the scrapbook crowned
+// Naddy, the season tally disagreed with both. Patchwork from multiple
+// sources, exactly as it felt.
+//
+// THE RULE, from here: the SHARED BOOK is the only truth for scoring. It is
+// the one place both phones write to and both phones read. localStorage is
+// now strictly a local CACHE for the live week's editing and for photo bytes,
+// never an input to any score.
+//
+// `shared` must be passed in. When it's genuinely absent (the very first load,
+// before the first fetch resolves) we fall back to this phone's cache so the
+// UI shows something sensible rather than a bare zero, and it self-corrects
+// the instant the book arrives.
+// ============================================================
+
+// Pull a week's claims from the shared book, falling back to the local cache
+// only when the book hasn't loaded yet.
+function claimsForWeek(wk, shared) {
+  const book = shared && shared.claims && shared.claims["w" + wk];
+  if (book) return book;
+  return shared ? {} : (loadClaims(wk) || {});
+}
+// Same for dares.
+function daresForWeek(wk, shared) {
+  const book = shared && shared.dares && shared.dares["w" + wk];
+  if (book) return book;
+  return shared ? [] : (loadDares(wk) || []);
+}
+// Duels and the quiz are player-keyed books, same rule.
+function duelForWeek(wk, shared) {
+  const book = shared && shared.duels && shared.duels["w" + wk];
+  if (book) return book;
+  return shared ? {} : (loadDuel(wk) || {});
+}
+function themeDuelForWeek(wk, shared) {
+  const book = shared && shared.themeDuels && shared.themeDuels["w" + wk];
+  if (book) return book;
+  return shared ? {} : (loadThemeDuel(wk) || {});
+}
+function quizBookForWeek(wk, shared) {
+  const book = shared && shared.quizzes && shared.quizzes["w" + wk];
+  if (book) return book;
+  return shared ? {} : (loadQuiz(wk) || {});
+}
+
+function weekTotals(wk, now, shared) {
   const { dealt } = dealtBoard(wk);
-  const claims = loadClaims(wk);
-  const totals = tallyScores(dealt, claims, wk);
-  const dares = loadDares(wk);
-  const dareBonus = tallyDares(dares);
+  // The board a week actually scores on is the dealt shoe PLUS the midweek
+  // wildcard and any festival one-offs. tallyScores only counts tasks present
+  // in the list it's handed, so leaving these out silently dropped their
+  // points from the hub's winner AND from the season tally: a wildcard grab
+  // scored on screen but vanished from the week's verdict.
+  const wild = wildcardForWeek(wk);
+  let board = wild ? dealt.concat([wild]) : dealt;
+  const fest = (typeof festivalTasks === "function" && now != null) ? festivalTasks(now) : [];
+  if (fest && fest.length) board = board.concat(fest);
+  const claims = claimsForWeek(wk, shared);
+  const totals = tallyScores(board, claims, wk);
+  const dareBonus = tallyDares(daresForWeek(wk, shared));
   let h = (totals.Hammy || 0) + (dareBonus.Hammy || 0);
   let n = (totals.Naddy || 0) + (dareBonus.Naddy || 0);
-  // The big-one duel: once Michael Oliver has ruled, the winner banks the marquee
-  // the marquee points. This gives the centrepiece real weight, but tuned (35,
-  // not 60) so a strong all-round week can still beat a single duel win.
-  const duel = loadDuel(wk);
+  // The big-one duel: once Michael Oliver has ruled, the winner banks the
+  // marquee points. Real weight, but tuned (35, not 60) so a strong all-round
+  // week can still beat a single duel win.
+  const duel = duelForWeek(wk, shared);
   if (duel && duel.verdict && duel.verdict.winner) {
     if (duel.verdict.winner === "Hammy") h += DUEL_WIN_PTS;
     else if (duel.verdict.winner === "Naddy") n += DUEL_WIN_PTS;
   }
   // The photo-theme duel: its own separate contest, its winner banks its prize.
-  const themeDuel = loadThemeDuel(wk);
+  const themeDuel = themeDuelForWeek(wk, shared);
   if (themeDuel && themeDuel.verdict && themeDuel.verdict.winner) {
     if (themeDuel.verdict.winner === "Hammy") h += THEME_DUEL_PTS;
     else if (themeDuel.verdict.winner === "Naddy") n += THEME_DUEL_PTS;
   }
   // Coach Saliba's quiz duel: winner (by score, ties broken on time) banks it.
-  const quizW = quizWinner(wk);
+  const quizW = quizWinner(wk, shared);
   if (quizW === "Hammy") h += QUIZ_DUEL_PTS;
   else if (quizW === "Naddy") n += QUIZ_DUEL_PTS;
-  if (h === n) return "draw";        // a dead heat: nobody banks the week
-  return h > n ? "Hammy" : "Naddy";
+  return { Hammy: h, Naddy: n };
+}
+
+function weekWinner(wk, now, shared) {
+  const t = weekTotals(wk, now, shared);
+  if (t.Hammy === t.Naddy) return "draw";  // a dead heat: nobody banks the week
+  return t.Hammy > t.Naddy ? "Hammy" : "Naddy";
 }
 
 // ---------- the streak calculator: consecutive wins, up to a given week ----------
@@ -401,7 +481,7 @@ function weekWinner(wk) {
 // ticks up on a win and snaps clean back to zero the instant they fail to win a
 // week — a loss OR a draw resets it. We return the current live streak for each,
 // plus the record of every settled week for the time capsule to leaf through.
-function seasonHistory(now) {
+function seasonHistory(now, shared) {
   const thisWk = weekNumber(now);
   const settled = [];               // { wk, winner } for each completed week
   const streak = { Hammy: 0, Naddy: 0 };
@@ -413,7 +493,7 @@ function seasonHistory(now) {
   // at 1 explicitly so a negative week can never spin the loop the wrong way.
   const firstWk = 1;
   for (let wk = firstWk; wk < thisWk; wk++) {
-    const winner = weekWinner(wk);
+    const winner = weekWinner(wk, now, shared);
     settled.push({ wk: wk, winner: winner });
     if (winner === "draw") {
       streak.Hammy = 0; streak.Naddy = 0;
@@ -1885,8 +1965,9 @@ function quizDone(data, who) { return !!(data && data[who] && typeof data[who].s
 // Who won the quiz? Higher score wins; a tie on score is broken by who finished
 // FIRST (rewards the surer, quicker knowledge); if neither has taken it, null.
 // Returns "Hammy" | "Naddy" | "draw" | null (not yet decidable).
-function quizWinner(wk) {
-  const data = loadQuiz(wk);
+function quizWinner(wk, shared) {
+  // shared book first: it is the only place BOTH phones' scores exist
+  const data = quizBookForWeek(wk, shared) || {};
   const h = data.Hammy, n = data.Naddy;
   const hDone = h && typeof h.score === "number";
   const nDone = n && typeof n.score === "number";
@@ -2706,7 +2787,7 @@ function tallyScores(dealt, claims, wk) {
 // roast feeds on. Defensive throughout: a missing field or empty source is
 // skipped gracefully, never a crash, never a silent whole-category drop.
 // ============================================================
-function gatherWeek(wk, shared) {
+function gatherWeek(wk, shared, now) {
   const out = {
     wk: wk,
     claims: [],      // completed board tasks, with photo/caption/taunt
@@ -2723,7 +2804,7 @@ function gatherWeek(wk, shared) {
   const dealt = (dealtBoard(wk) || {}).dealt || [];
   const taskById = {};
   dealt.forEach((t) => { taskById[t.id] = t; });
-  const claims = loadClaims(wk) || {};
+  const claims = claimsForWeek(wk, shared);
   Object.keys(claims).forEach((taskId) => {
     const c = claims[taskId];
     if (!c || !c.by) return;
@@ -2751,7 +2832,7 @@ function gatherWeek(wk, shared) {
   });
 
   // ---- 3) throw-down dares: settled ones, with any saucy confession ----
-  const dares = liveDares(loadDares(wk) || []);
+  const dares = liveDares(daresForWeek(wk, shared));
   dares.forEach((d) => {
     if (!d) return;
     out.dares.push({
@@ -2763,7 +2844,7 @@ function gatherWeek(wk, shared) {
   });
 
   // ---- 4) the two photo duels, each with its verdict ----
-  const bigDuel = (typeof loadDuel === "function") ? loadDuel(wk) : null;
+  const bigDuel = duelForWeek(wk, shared);
   if (bigDuel && (bigDuel.Hammy || bigDuel.Naddy || bigDuel.verdict)) {
     out.duels.push({
       kind: "The big one",
@@ -2772,7 +2853,7 @@ function gatherWeek(wk, shared) {
       verdict: bigDuel.verdict || null,
     });
   }
-  const themeDuel = (typeof loadThemeDuel === "function") ? loadThemeDuel(wk) : null;
+  const themeDuel = themeDuelForWeek(wk, shared);
   if (themeDuel && (themeDuel.Hammy || themeDuel.Naddy || themeDuel.verdict)) {
     out.duels.push({
       kind: "The photo theme",
@@ -2784,20 +2865,19 @@ function gatherWeek(wk, shared) {
   }
 
   // ---- 5) Coach Saliba's quiz result ----
-  const quizData = (typeof loadQuiz === "function") ? loadQuiz(wk) : null;
+  const quizData = quizBookForWeek(wk, shared);
   if (quizData && (quizData.Hammy || quizData.Naddy)) {
     out.quiz = {
       hammy: quizData.Hammy ? { score: quizData.Hammy.score } : null,
       naddy: quizData.Naddy ? { score: quizData.Naddy.score } : null,
-      winner: (typeof quizWinner === "function") ? quizWinner(wk) : null,
+      winner: (typeof quizWinner === "function") ? quizWinner(wk, shared) : null,
     };
   }
 
-  // ---- 6) the week's live scores, so the page can crown a leader ----
-  out.scores = tallyScores(dealt, claims, wk);
-  const dareBonus = (typeof tallyDares === "function") ? tallyDares(dares) : { Hammy: 0, Naddy: 0 };
-  out.scores.Hammy = (out.scores.Hammy || 0) + (dareBonus.Hammy || 0);
-  out.scores.Naddy = (out.scores.Naddy || 0) + (dareBonus.Naddy || 0);
+  // ---- 6) the week's scores, from the ONE tally the hub also uses ----
+  // Never recompute this locally: doing so is exactly how the scrapbook came to
+  // disagree with the hub about who won a week.
+  out.scores = weekTotals(wk, now, shared);
 
   // total tally: how much stuff the week holds, for empty-state checks
   out.total = out.claims.length + out.thoughts.length + out.moments.length +
@@ -2847,6 +2927,34 @@ const RAMSAY_AWARDS_DEMO = [
   { title: "Sizzle of the Week", line: "Okay. OKAY. That was actually good. Quick thinking, sharp snap, proper cheek in the caption. You've got a bit of fire in you after all. I hate that I'm impressed." },
 ];
 
+// Tidy a free-form dare for quoting inside a sentence. User dares can be
+// SHOUTY, multi-sentence, or a pasted instruction block, so we take the first
+// sentence, cap the length, drop trailing punctuation, and soften a full-caps
+// shout to sentence case so Gordon reads as a narrator rather than a megaphone.
+function tidyDareText(raw) {
+  let t = String(raw || "do something").trim();
+  // first sentence only: a dare's gist is almost always its opening clause
+  const stop = t.search(/[.!?](\s|$)/);
+  if (stop > 12) t = t.slice(0, stop);
+  t = t.replace(/[.!?\s]+$/, "");
+  if (t.length > 70) t = t.slice(0, 67).replace(/\s+\S*$/, "") + "...";
+  // Drop a leading label like "Quick dare:" or "Dare:" — Gordon is already
+  // saying it's a dare, so repeating it reads as a stutter.
+  t = t.replace(/^\s*(quick\s+)?dare\s*[:\-]\s*/i, "");
+  // SHOUTING reads badly mid-sentence. Judge by the proportion of capitals
+  // rather than requiring the WHOLE string to be caps, so a mixed prefix
+  // ("Quick dare: SAY IT OUT LOUD") is still calmed down.
+  const letters = t.replace(/[^A-Za-z]/g, "");
+  if (letters.length > 6) {
+    const caps = (t.match(/[A-Z]/g) || []).length;
+    if (caps / letters.length > 0.6) {
+      t = t.toLowerCase().replace(/^\s*([a-z])/, (m, c) => c.toUpperCase());
+    }
+  }
+  t = t.replace(/[.!?\s]+$/, "");
+  return t || "do something";
+}
+
 // Seeded pick so a week's demo roast is stable on both phones.
 //
 // The demo used to be eight generic lines reshuffled, naming nobody and quoting
@@ -2883,14 +2991,14 @@ function demoRoast(wk, week) {
   if (ducked.length) {
     const d = ducked[0];
     made.push({ title: "The Bottler's Medal",
-      line: d.to + " was dared to " + String(d.text || "do something").replace(/\.$/, "") + " and FOLDED. Ducked it. " + (d.secret ? "Then coughed up a secret instead, which somehow made it worse." : "No secret, no glory, just a quiet little surrender.") });
+      line: d.to + " was dared to \u201c" + tidyDareText(d.text) + "\u201d and FOLDED. Ducked it. " + (d.secret ? "Then coughed up a secret instead, which somehow made it worse." : "No secret, no glory, just a quiet little surrender.") });
   }
   // a landed dare deserves its due
   const landed = dares.filter((d) => d && d.result === "landed");
   if (landed.length) {
     const d = landed[0];
     made.push({ title: "Actually Did It, Fair Play",
-      line: d.to + " was told to " + String(d.text || "do it").replace(/\.$/, "") + " and just... did it. No whinging. I'm not saying I'm proud. I'm saying I'm not disappointed, which from me is a standing ovation." });
+      line: d.to + " was told to \u201c" + tidyDareText(d.text) + "\u201d and just... did it. No whinging. I'm not saying I'm proud. I'm saying I'm not disappointed, which from me is a standing ovation." });
   }
   // who did nothing
   const byCount = { Hammy: 0, Naddy: 0 };
@@ -3562,11 +3670,6 @@ function DuelArena({ now, wk, bigTask, who, onUploadPhoto, onVerdictBanked, spec
             <div style={{ fontFamily: FB, fontSize: 13, color: "rgba(255,255,255,.9)", lineHeight: 1.55, fontStyle: "italic" }}>
               "{verdict.reason}"
             </div>
-            {verdict.demo ? (
-              <div style={{ marginTop: 9, fontFamily: FM, fontSize: 9.5, color: "rgba(255,255,255,.4)" }}>
-                (stand-in verdict — Michael Oliver only judges for real once BOTH photos have finished uploading)
-              </div>
-            ) : null}
           </div>
         ) : null}
       </div>
@@ -3762,11 +3865,6 @@ function ThemeArena({ now, wk, theme, who, onUploadPhoto, onVerdictBanked, spect
             <div style={{ fontFamily: FB, fontSize: 13, color: "rgba(255,255,255,.9)", lineHeight: 1.55, fontStyle: "italic" }}>
               "{verdict.reason}"
             </div>
-            {verdict.demo ? (
-              <div style={{ marginTop: 9, fontFamily: FM, fontSize: 9.5, color: "rgba(255,255,255,.4)" }}>
-                (stand-in verdict — Michael Oliver only judges for real once BOTH photos have finished uploading)
-              </div>
-            ) : null}
           </div>
         ) : null}
       </div>
@@ -3780,7 +3878,7 @@ function ThemeArena({ now, wk, theme, who, onUploadPhoto, onVerdictBanked, spect
 // no judging, because language has right answers. Coach Saliba (Arsenal red)
 // presides. A player who's already taken it sees their result and waits for the
 // other; once both are in, the winner is shown.
-function QuizArena({ now, wk, who, spectating }) {
+function QuizArena({ now, wk, who, spectating, shared }) {
   const [data, setData] = useState(() => loadQuiz(wk));
   const quiz = quizForWeek(wk, now);
   const meDone = quizDone(data, who);
@@ -3884,7 +3982,7 @@ function QuizArena({ now, wk, who, spectating }) {
   }
 
   // ---- the resting view (not currently taking) ----
-  const winner = (meDone && otherDone) ? quizWinner(wk) : null;
+  const winner = (meDone && otherDone) ? quizWinner(wk, shared) : null;
   const myScore = meDone ? data[who].score : null;
   const theirScore = otherDone ? data[other].score : null;
 
@@ -5111,7 +5209,7 @@ function speakThai(text) {
 }
 
 // ---------- THE THAI SCHOOL SCREEN ----------
-function ThaiSchool({ me, now, spectating }) {
+function ThaiSchool({ me, now, spectating, shared }) {
   const words = wordsForToday(now); // the day's trio, in steady order
   const challenge = hardestOfDay(words); // the toughest one: the say-it-back target
   const particle = politeParticle(me);
@@ -5321,7 +5419,7 @@ function ThaiSchool({ me, now, spectating }) {
         </span>
         <div style={{ flex: 1, height: 1, background: T.line }} />
       </div>
-      <QuizArena now={now} wk={weekNumber(now)} who={me} spectating={spectating} />
+      <QuizArena now={now} wk={weekNumber(now)} who={me} spectating={spectating} shared={shared} />
     </div>
   );
 }
@@ -6423,18 +6521,18 @@ function ForecastDesk() {
         <button onClick={() => load(true)} title="Refresh" style={{
           cursor: "pointer", fontFamily: FM, fontSize: 10, color: T.coralDk,
           background: T.peach, border: "1px solid " + T.line, borderRadius: 10, padding: "6px 11px",
-        }}>\u21bb refresh</button>
+        }}>↻ refresh</button>
       </div>
 
       {loading && (
         <div style={{ ...cardBase, textAlign: "center", padding: "30px 16px", color: T.inkSoft, fontFamily: FM, fontSize: 12 }}>
-          reading the sky over Ko Kaeo\u2026
+          reading the sky over Ko Kaeo…
         </div>
       )}
 
       {failed && !loading && (
         <div style={{ ...cardBase, textAlign: "center", padding: "26px 16px" }}>
-          <div style={{ fontSize: 26 }}>\ud83c\udf25\ufe0f</div>
+          <div style={{ fontSize: 26 }}>🌥️</div>
           <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 17, color: T.ink, marginTop: 8 }}>The sky's being shy</div>
           <div style={{ fontFamily: FB, fontSize: 12.5, color: T.inkSoft, marginTop: 5, lineHeight: 1.5 }}>Couldn't reach the weather service. Check your connection and give it another go.</div>
           <button onClick={() => load(true)} style={{
@@ -6936,12 +7034,16 @@ function Hub({ now, scores, season, onGo, onSwitch, isFull, onResetWeek, wk: wkP
         </div>
         {isFull && onResetWeek ? (
           <button onClick={() => {
-            if (confirm("Dev reset: wipe this week's claims and set the scoreboard back to zero? (Only affects week " + (wkProp != null ? wkProp : wk) + " on this device.)")) onResetWeek();
+            // The old wording said "on this device", which was simply untrue:
+            // resetThisWeek stamps a wipe into the SHARED book, so it clears
+            // the week on BOTH phones. Telling someone a destructive action is
+            // local when it isn't is how you lose your partner's week.
+            if (confirm("Reset week " + (wkProp != null ? wkProp : wk) + " for BOTH of you?\n\nThis wipes the week's claims and dares on your phone AND on theirs, and sets the scoreboard back to zero. It cannot be undone.")) onResetWeek();
           }} style={{
             marginTop: 12, background: "transparent", border: "1px dashed #d8b8a4", borderRadius: 10,
             padding: "5px 12px", cursor: "pointer", fontFamily: FM, fontSize: 9, letterSpacing: ".08em",
             color: "#c9a48f", textTransform: "uppercase",
-          }}>reset my test data</button>
+          }}>reset this week (both phones)</button>
         ) : null}
       </div>
     </div>
@@ -6993,7 +7095,7 @@ function Scrapbook({ now, wk, shared, updateShared }) {
   // view on a week that no longer makes sense
   useEffect(() => { setViewWk(wk); }, [wk]);
 
-  const week = gatherWeek(viewWk, shared);
+  const week = gatherWeek(viewWk, shared, now);
   const closed = realWk > viewWk; // a week's business is done once we've moved past it
   // The roast for the week we're looking at. It lives in THREE places, in order
   // of authority: the shared book (so both phones read the identical verdict),
@@ -7123,7 +7225,7 @@ function Scrapbook({ now, wk, shared, updateShared }) {
           {summoning && !roast ? (
             <div style={{ ...card, textAlign: "center", padding: "24px 16px" }}>
               <div style={{ fontFamily: FB, fontSize: 13, color: T.inkSoft, fontStyle: "italic", lineHeight: 1.5 }}>
-                The chef is reading the week, muttering, sharpening things\u2026
+                The chef is reading the week, muttering, sharpening things…
               </div>
             </div>
           ) : roast ? (
@@ -7135,12 +7237,12 @@ function Scrapbook({ now, wk, shared, updateShared }) {
               ) : null}
               {(roast.awards || []).map((a, i) => (
                 <div key={i} style={{ ...card }}>
-                  <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 13.5, color: T.coralDk }}>\ud83c\udfc6 {a.title}</div>
-                  <div style={{ fontFamily: FB, fontSize: 13, color: T.ink, lineHeight: 1.6, marginTop: 5, fontStyle: "italic" }}>"{a.line}"</div>
+                  <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 13.5, color: T.coralDk }}>🏆 {a.title}</div>
+                  <div style={{ fontFamily: FB, fontSize: 13, color: T.ink, lineHeight: 1.6, marginTop: 5, fontStyle: "italic" }}>{a.line}</div>
                 </div>
               ))}
               <div style={{ textAlign: "center", fontFamily: FM, fontSize: 8.5, color: T.inkSoft, marginTop: 4, marginBottom: 6 }}>
-                {roast.demo ? "chef's verdict · offline reading" : "chef's verdict · Gordon Ramsay"}
+                {"chef's verdict · Gordon Ramsay"}
               </div>
             </div>
           ) : null}
@@ -7211,9 +7313,9 @@ function Scrapbook({ now, wk, shared, updateShared }) {
         <div key={"d" + i} style={{ ...card }}>
           <div style={{ fontFamily: FB, fontSize: 12.5, color: T.ink, lineHeight: 1.5 }}>{d.text}</div>
           <div style={{ fontFamily: FM, fontSize: 9, color: T.inkSoft, marginTop: 6 }}>
-            {who(d.from).name} \u2192 {who(d.to).name} · {String(d.result || "").toUpperCase()}
+            {who(d.from).name} → {who(d.to).name} · {String(d.result || "").toUpperCase()}
           </div>
-          {d.secret ? <div style={{ fontFamily: FB, fontSize: 11.5, color: T.spurs, fontStyle: "italic", lineHeight: 1.5, marginTop: 6 }}>\ud83c\udf36 Confessed: "{d.secret}"</div> : null}
+          {d.secret ? <div style={{ fontFamily: FB, fontSize: 11.5, color: T.spurs, fontStyle: "italic", lineHeight: 1.5, marginTop: 6 }}>🌶 Confessed: "{d.secret}"</div> : null}
         </div>
       ))}
 
@@ -7609,12 +7711,41 @@ function Game({ now, who, isFull, onSwitch }) {
       }
     }
 
+    // ---- one-time backfill: push EVERY week this phone knows about ----------
+    // This used to push only the CURRENT week, which is why past weeks scored
+    // differently on each phone: Hammy's week 1 claims never left Hammy's
+    // localStorage, Naddy's never left hers, and neither book ever held both.
+    // The hub, the scrapbook and the season tally then each read a half-empty
+    // board and disagreed. Now, once per load, we sweep every tg_claims_wk* and
+    // tg_dares_wk* key on the device and fold it into the shared book. The merge
+    // is monotonic and idempotent, so pushing a week that's already up there
+    // changes nothing, and after both phones have opened the app once, every
+    // week is complete and both agree forever.
     if (!bootSyncRef.current && !spectating) {
       bootSyncRef.current = true;
-      const localC = loadClaims(wk) || {};
-      if (Object.keys(localC).length > 0) pushClaimsToShared(wk, localC);
-      const localD = loadDares(wk) || [];
-      if (localD.length > 0) pushDaresToShared(wk, localD);
+      const weeks = {};
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i) || "";
+          if (key.indexOf("tg_claims_wk") === 0) weeks[key.slice(12)] = 1;
+          else if (key.indexOf("tg_dares_wk") === 0) weeks[key.slice(11)] = 1;
+        }
+      } catch (e) { /* storage unavailable: the live week below still runs */ }
+      weeks[String(wk)] = 1; // always include the live week, even if untouched
+      Object.keys(weeks).forEach((wStr) => {
+        const w = parseInt(wStr, 10);
+        if (!Number.isFinite(w) || w < 1) return; // ignore a malformed key
+        const localC = loadClaims(w) || {};
+        if (Object.keys(localC).length > 0) pushClaimsToShared(w, localC);
+        const localD = loadDares(w) || [];
+        if (localD.length > 0) pushDaresToShared(w, localD);
+        const localQ = loadQuiz(w) || {};
+        if (Object.keys(localQ).length > 0) pushQuizToShared(w, localQ);
+        const localDuel = loadDuel(w) || {};
+        if (Object.keys(localDuel).length > 0) pushDuelToShared(w, localDuel);
+        const localTheme = loadThemeDuel(w) || {};
+        if (Object.keys(localTheme).length > 0) pushThemeDuelToShared(w, localTheme);
+      });
     }
   }, [shared, wk]);
 
@@ -7625,29 +7756,16 @@ function Game({ now, who, isFull, onSwitch }) {
   let fullDealt = wild && wildcardLive(now) ? dealt.concat([wild]) : dealt;
   if (festTasks.length) fullDealt = fullDealt.concat(festTasks);
 
-  // live scores: tasks (with doubles + VAR) plus the dare economy
-  const taskScores = tallyScores(fullDealt, claims, wk);
-  const dareScores = tallyDares(dares);
-  const scores = {
-    Hammy: taskScores.Hammy + dareScores.Hammy,
-    Naddy: taskScores.Naddy + dareScores.Naddy,
-  };
-  // the big-one duel's marquee points, once Michael Oliver has ruled
-  const duelNow = loadDuel(wk);
-  if (duelNow && duelNow.verdict && duelNow.verdict.winner === "Hammy") scores.Hammy += DUEL_WIN_PTS;
-  else if (duelNow && duelNow.verdict && duelNow.verdict.winner === "Naddy") scores.Naddy += DUEL_WIN_PTS;
-  // the photo-theme duel's points, once judged
-  const themeNow = loadThemeDuel(wk);
-  if (themeNow && themeNow.verdict && themeNow.verdict.winner === "Hammy") scores.Hammy += THEME_DUEL_PTS;
-  else if (themeNow && themeNow.verdict && themeNow.verdict.winner === "Naddy") scores.Naddy += THEME_DUEL_PTS;
-  // Coach Saliba's quiz duel points, once decided
-  const quizNowW = quizWinner(wk);
-  if (quizNowW === "Hammy") scores.Hammy += QUIZ_DUEL_PTS;
-  else if (quizNowW === "Naddy") scores.Naddy += QUIZ_DUEL_PTS;
+  // Live scores: the ONE tally, the same one the hub's winner and the scrapbook
+  // read. There used to be three separate copies of this arithmetic and they
+  // drifted, which is how the scrapbook came to insist Naddy won a week the hub
+  // had already awarded to Hammy. One function, one answer, forever.
+  // (claims/dares are re-read inside; this recomputes whenever they change.)
+  const scores = weekTotals(wk, now, shared);
 
   // the season's streak picture: consecutive weekly wins toward the crown, plus
   // whether anyone's actually clinched it. This is what makes the chase visible.
-  const season = seasonHistory(now);
+  const season = seasonHistory(now, shared);
 
   // Seasonal memory: the moment a champion is crowned, capture a permanent
   // snapshot of that season into the shared archive, so years from now the two
@@ -7859,7 +7977,7 @@ function Game({ now, who, isFull, onSwitch }) {
     </Screen>;
   } else if (view === "school") {
     screen = <Screen title="Coach Saliba's Thai school" onBack={() => setView("hub")}>
-      <ThaiSchool me={me} now={now} spectating={spectating} />
+      <ThaiSchool me={me} now={now} spectating={spectating} shared={shared} />
     </Screen>;
   } else if (view === "farang") {
     screen = <Screen title="Pocket Farang" onBack={() => setView("hub")}>
