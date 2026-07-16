@@ -999,13 +999,24 @@ function renderCalib(){
 let batch=[];
 function todayDDMM(){const d=new Date();
   return String(d.getDate()).padStart(2,"0")+"/"+String(d.getMonth()+1).padStart(2,"0")+"/"+d.getFullYear();}
-// The single source of truth for the server's declared cap. stewards.js exports
-// config.maxDuration = 120. These leashes are derived from it rather than hardcoded to a
-// number that a comment merely CLAIMS the server uses — the previous comment said the
-// server had "its own 120s cap" when nothing on the server declared any cap at all, so
-// the client was patiently waiting 115s for a function the platform may have killed at 15.
-const SERVER_MAX_MS = 120000;          // must match config.maxDuration in stewards.js
-const SLOW_LEASH_MS = SERVER_MAX_MS - 5000;  // sit just under it, so the server gets its full time
+// The single source of truth for each server's declared cap. These MUST match the
+// maxDuration values in vercel.json (and stewards.js exports config.maxDuration = 120 in
+// code as well — Vercel allows either for plain Node /api routes, and in-code config takes
+// precedence, so if you change one, change both or they will drift).
+//
+// Every client leash is derived from these rather than hardcoded. The previous comment
+// claimed the server had "its own 120s cap" when nothing declared any cap at all; the
+// lesson is that a number a comment merely ASSERTS about another system will eventually
+// be a lie. Derive it, don't restate it.
+//
+// vercel.json at time of writing:  stewards 120s | trawl 300s | propose 120s
+const SERVER_MAX_MS = 120000;          // api/stewards.js
+const TRAWL_MAX_MS  = 300000;          // api/trawl.js
+const PROPOSE_MAX_MS = 120000;         // api/propose.js
+// Sit just under the server so it always gets its full time, and so an abort means the
+// server really is gone rather than the client giving up on a live request.
+const LEASH = (serverMs) => serverMs - 5000;
+const SLOW_LEASH_MS = LEASH(SERVER_MAX_MS);
 async function postApi(action,payload){
   // intake and reconcile both run a heavy vision parse server-side: up to 8 images and
   // 4.2MB to Claude vision at max_tokens 4000, routinely 20-60s. They get the long leash.
@@ -1588,7 +1599,7 @@ function renderMorning(msg){
     $("toutRun").disabled=true;
     qmsg("toutMsg","The Tout is at the gallops\u2026 triage, PDFs, pundits, weather. Give it a minute or two.");
     try{
-      const r=await trawlApi("action=run&stage=all",240000);
+      const r=await trawlApi("action=run&stage=all",LEASH(TRAWL_MAX_MS));
       if(r.error){ qmsg("toutMsg",r.error,"err"); }
       else{
         qmsg("toutMsg","Trawl complete in "+Math.round(r.totalMs/1000)+"s: "+r.meets.length+" meets packed. Loading\u2026","ok");
@@ -1612,7 +1623,7 @@ function renderMorning(msg){
       sr.disabled=true;
       qmsg("stableMsg","The Stable is reading the pack through the Charter\u2026 building your betlist.");
       try{
-        const r=await proposeApi("action=run",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"},150000);
+        const r=await proposeApi("action=run",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"},LEASH(PROPOSE_MAX_MS));
         if(r.error){ qmsg("stableMsg",r.error+((r.deselected&&r.deselected.length)?" ("+r.deselected.map(d=>d.venue).join(", ")+")":""),"err"); }
         else{ proposal=r;
           qmsg("stableMsg","Betlist ready: "+r.counts.win+" WIN, "+r.counts.pla+" PLA"+(r.counts.trio?", "+r.counts.trio+" Trio":"")+", "+money(r.counts.staked)+" staked"+(r.corrections.length?". "+r.corrections.length+" Charter correction(s) applied.":"."),"ok");
