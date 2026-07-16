@@ -60,6 +60,191 @@ function safeSetItem(key, value) {
   catch (e) { return false; }
 }
 
+// ---------- the photo vault: IndexedDB, the real home for image bytes ----------
+// THE ACTUAL CURE for photos that never show. Two separate faults were at play:
+//
+//   1) The memory wall kept raw photos in a React useState map (`localPhotos`).
+//      React state lives in RAM only. Refresh the page, switch tab, or let the
+//      phone evict the tab from memory (Android does this constantly) and that
+//      map resets to {}. The shared entry has hasPhoto:true, so the card renders
+//      "developing the photo..." forever. Nothing was ever saved anywhere.
+//
+//   2) Everything else (claims, duels) crammed base64 into localStorage, which
+//      caps at ~5MB across the WHOLE origin. Three photos and it's full, so the
+//      quota-shedding code silently nulled the bytes and the photo vanished.
+//
+// IndexedDB has no practical size cap (hundreds of MB), stores Blobs natively
+// rather than base64 (a third smaller), and survives refresh. So: bytes live
+// here, keyed by id. localStorage and the shared book only ever carry ids and
+// short public URLs. This is the separation that was missing all along.
+const PHOTO_DB = "tg_photos";
+const PHOTO_STORE = "photos";
+let _photoDbPromise = null;
+
+function photoDb() {
+  if (_photoDbPromise) return _photoDbPromise;
+  _photoDbPromise = new Promise((resolve) => {
+    try {
+      if (!window.indexedDB) { resolve(null); return; }
+      const req = indexedDB.open(PHOTO_DB, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(PHOTO_STORE)) db.createObjectStore(PHOTO_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+      // Safari private mode and some webviews hang here; never block forever.
+      setTimeout(() => resolve(null), 3000);
+    } catch (e) { resolve(null); }
+  });
+  return _photoDbPromise;
+}
+
+// Store a data-URL under an id. Converts to Blob first so we're not paying the
+// ~33% base64 tax on disk. Resolves true/false, never throws.
+function putPhoto(id, dataUrl) {
+  if (!id || !dataUrl) return Promise.resolve(false);
+  return photoDb().then((db) => {
+    if (!db) return false;
+    return new Promise((resolve) => {
+      try {
+        const blob = dataUrlToBlob(dataUrl);
+        const tx = db.transaction(PHOTO_STORE, "readwrite");
+        tx.objectStore(PHOTO_STORE).put(blob || dataUrl, id);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => resolve(false);
+        tx.onabort = () => resolve(false);
+      } catch (e) { resolve(false); }
+    });
+  });
+}
+
+// Fetch a stored photo back as something an <img src> accepts. Blobs come back
+// as object URLs (cheap, no decoding); legacy string entries pass straight
+// through. Resolves null if absent, never throws.
+function getPhoto(id) {
+  if (!id) return Promise.resolve(null);
+  return photoDb().then((db) => {
+    if (!db) return null;
+    return new Promise((resolve) => {
+      try {
+        const tx = db.transaction(PHOTO_STORE, "readonly");
+        const req = tx.objectStore(PHOTO_STORE).get(id);
+        req.onsuccess = () => {
+          const v = req.result;
+          if (!v) { resolve(null); return; }
+          if (typeof v === "string") { resolve(v); return; }
+          try { resolve(URL.createObjectURL(v)); } catch (e) { resolve(null); }
+        };
+        req.onerror = () => resolve(null);
+      } catch (e) { resolve(null); }
+    });
+  });
+}
+
+function delPhoto(id) {
+  if (!id) return Promise.resolve();
+  return photoDb().then((db) => {
+    if (!db) return;
+    try { db.transaction(PHOTO_STORE, "readwrite").objectStore(PHOTO_STORE).delete(id); } catch (e) {}
+  });
+}
+
+// data URL -> Blob, without a fetch() round trip (which some webviews refuse
+// for data: URLs). Returns null if the string isn't a well-formed data URL.
+function dataUrlToBlob(dataUrl) {
+  try {
+    if (!dataUrl || dataUrl.indexOf("data:") !== 0) return null;
+    const comma = dataUrl.indexOf(",");
+    if (comma < 0) return null;
+    const meta = dataUrl.slice(5, comma);
+    const mime = meta.split(";")[0] || "image/jpeg";
+    const bin = atob(dataUrl.slice(comma + 1));
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: mime });
+  } catch (e) { return null; }
+}
+
+// A tiny hook: given a photo id and an optional public URL, hand back something
+// renderable. Prefers the local vault copy (instant, works offline), falls back
+// to the uploaded URL (which is how the OTHER phone sees it). Revokes its object
+// URL on unmount so we don't leak blobs as you scroll a long wall.
+function useStoredPhoto(id, fallbackUrl) {
+  const [src, setSrc] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    let made = null;
+    if (id) {
+      getPhoto(id).then((s) => {
+        if (!alive) return;
+        if (s) { made = s.indexOf("blob:") === 0 ? s : null; setSrc(s); }
+        else setSrc(null);
+      });
+    } else setSrc(null);
+    return () => {
+      alive = false;
+      if (made) { try { URL.revokeObjectURL(made); } catch (e) {} }
+    };
+  }, [id]);
+  return src || fallbackUrl || null;
+}
+
+// ---------- upload ceiling: the hard limit we must never exceed ----------
+// Vercel serverless functions reject any request body over 4.5MB with a
+// 413 FUNCTION_PAYLOAD_TOO_LARGE, and /api/tg-photo is a serverless function.
+// Our uploader posts RAW decoded bytes (not base64), so the real ceiling is
+// 4.5MB of JPEG. A modern phone camera blows straight through that: a 12MP
+// shot is ~4MB and a 50MP shot is ~17MB, so those uploads were failing and
+// being swallowed by the .catch(), which is why some photos never got a
+// photoUrl and never reached the other phone. We aim well under the limit to
+// leave headroom for headers and any re-encode wobble.
+const UPLOAD_MAX_BYTES = 3.5 * 1024 * 1024;   // hard stop, comfortably under 4.5MB
+const UPLOAD_MAX_DIM = 1600;                   // plenty for a phone screen or a judge
+const UPLOAD_QUALITY = 0.82;                   // visually clean, much lighter
+
+// Roughly how many raw bytes a base64 data URL decodes to, without decoding it.
+// (4 base64 chars encode 3 bytes; trailing "=" padding shaves a byte or two.)
+function dataUrlBytes(dataUrl) {
+  if (!dataUrl || typeof dataUrl !== "string") return 0;
+  const comma = dataUrl.indexOf(",");
+  if (comma < 0) return 0;
+  const b64 = dataUrl.length - comma - 1;
+  const pad = dataUrl.endsWith("==") ? 2 : dataUrl.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor(b64 * 3 / 4) - pad);
+}
+
+// Shrink a photo until it is genuinely under the upload ceiling. Downscaling
+// once is not always enough (a busy, detailed scene can still encode fat), so
+// this re-encodes at progressively lower quality and, if it must, smaller
+// dimensions, and only gives up when it truly cannot win. Every photo bound for
+// the network goes through here, so no upload can ever be too large again.
+// Calls back with a data URL. Never throws; on any failure it hands back the
+// best copy it managed (or the original) so the flow always continues.
+function prepareForUpload(dataUrl, cb) {
+  if (!dataUrl || dataUrl.indexOf("data:") !== 0) { cb(dataUrl); return; }
+  // already small enough: don't touch it, no needless quality loss
+  if (dataUrlBytes(dataUrl) <= UPLOAD_MAX_BYTES) { cb(dataUrl); return; }
+  const attempts = [
+    { dim: UPLOAD_MAX_DIM, q: UPLOAD_QUALITY },
+    { dim: 1280, q: 0.75 },
+    { dim: 1024, q: 0.7 },
+    { dim: 800,  q: 0.6 },
+    { dim: 640,  q: 0.5 },
+  ];
+  let i = 0;
+  function attempt() {
+    if (i >= attempts.length) { cb(dataUrl); return; } // exhausted: send what we have
+    const a = attempts[i++];
+    downscalePhoto(dataUrl, (small) => {
+      if (small && dataUrlBytes(small) <= UPLOAD_MAX_BYTES) { cb(small); return; }
+      // still too fat: try harder rather than firing a doomed 413
+      attempt();
+    }, a.dim, a.q);
+  }
+  attempt();
+}
+
 // ---------- photo downscaler: keep on-device copies small enough to persist ----------
 // THE FIX for vanishing photos: a full-res phone photo as a base64 data URL is
 // often 5-10MB, which blows past localStorage's ~5MB ceiling. The write then
@@ -293,7 +478,7 @@ function seededShuffle(arr, seed) {
 // live board; resets carries per-week wipe stamps so the dev reset can't be
 // undone by a merge resurrecting old copies from the other phone.
 function emptySharedState() {
-  return { memories: [], season: { Hammy: 0, Naddy: 0 }, scrapbooks: [], varNotices: [], spoils: null, seasonsArchive: [], claims: {}, dares: {}, quizzes: {}, duels: {}, themeDuels: {}, resets: {}, updatedAt: 0 };
+  return { memories: [], season: { Hammy: 0, Naddy: 0 }, scrapbooks: [], varNotices: [], spoils: null, seasonsArchive: [], claims: {}, dares: {}, quizzes: {}, duels: {}, themeDuels: {}, roasts: {}, resets: {}, updatedAt: 0 };
 }
 
 // a local mirror so preview (and offline moments) still show something sensible
@@ -339,8 +524,14 @@ function mergeSharedEntry(localE, remoteE) {
   if (!localE) return remoteE;
   const merged = { ...remoteE, ...localE }; // local fields win, remote backfills
   const url = localE.photoUrl || remoteE.photoUrl || null;
-  merged.photoUrl = url;
-  if (url) merged.hasPhoto = true;
+  // Only WRITE the key when there's a real URL. Assigning null unconditionally
+  // added a photoUrl:null to entries that never had one, which made the merge
+  // non-idempotent (merge(x,x) !== x) and left the poll's change-detector
+  // seeing a phantom difference on every first compare.
+  if (url) merged.photoUrl = url;
+  // hasPhoto is monotonic too: a memory posted with a photo still "has" one
+  // while its upload is in flight, so a merge must never clear the flag.
+  if (url || localE.hasPhoto || remoteE.hasPhoto) merged.hasPhoto = true;
   return merged;
 }
 
@@ -421,8 +612,13 @@ function mergeClaimEntry(a, b) {
   // monotonic and must survive even if the fresher copy happens to lack it
   const merged = entryStamp(a) >= entryStamp(b) ? { ...b, ...a } : { ...a, ...b };
   const url = a.photoUrl || b.photoUrl || null;
-  merged.photoUrl = url;
-  if (url) merged.hasPhoto = true;
+  // only write a real URL, never a null: see mergeSharedEntry for why this
+  // matters (it keeps the merge idempotent).
+  if (url) merged.photoUrl = url;
+  // hasPhoto is MONOTONIC: once either side knows a photo exists, it exists.
+  // A plain field-merge could otherwise let a linkless copy from the other phone
+  // clear the flag, and the card would fall back to "developing..." forever.
+  if (url || a.hasPhoto || b.hasPhoto) merged.hasPhoto = true;
   return merged;
 }
 function mergeClaimMaps(a, b) {
@@ -515,6 +711,29 @@ function applyDareResets(book, resets) {
   });
   return out;
 }
+// Roasts, keyed by week ("w3" -> roast object). A roast is written once and
+// never revised, so the merge is simply "whoever has one, keeps it". If both
+// phones somehow summoned him at the same instant, the real (non-demo) verdict
+// is preferred over the offline stand-in, since that's the one you actually
+// paid for and the funnier of the two.
+function mergeRoastBooks(a, b) {
+  const A = (a && typeof a === "object") ? a : {};
+  const B = (b && typeof b === "object") ? b : {};
+  const out = {};
+  const keys = {};
+  Object.keys(A).forEach((k) => { keys[k] = 1; });
+  Object.keys(B).forEach((k) => { keys[k] = 1; });
+  Object.keys(keys).forEach((k) => {
+    const av = A[k], bv = B[k];
+    if (!av) { out[k] = bv; return; }
+    if (!bv) { out[k] = av; return; }
+    // both present: a real chef beats a demo one, else keep either (identical in spirit)
+    if (av.demo && !bv.demo) { out[k] = bv; return; }
+    out[k] = av;
+  });
+  return out;
+}
+
 function mergeSharedStates(local, remote) {
   if (!remote) return local;
   if (!local) return remote;
@@ -535,6 +754,12 @@ function mergeSharedStates(local, remote) {
     quizzes: mergeWeekBooks(local.quizzes, remote.quizzes, mergePlayerBook),
     duels: mergeWeekBooks(local.duels, remote.duels, mergePlayerBook),
     themeDuels: mergeWeekBooks(local.themeDuels, remote.themeDuels, mergePlayerBook),
+    // Gordon's verdicts, keyed by week. A roast is generated once and never
+    // edited, so whichever phone summoned him first is the canonical copy and
+    // simply wins. This is what puts the SAME roast on both phones (you two
+    // must be reading the same insults, or it isn't a shared joke) and it also
+    // halves the API spend: once Hammy has paid for week 3, Naddy reads his.
+    roasts: mergeRoastBooks(local.roasts, remote.roasts),
     resets: resets,
     // scalars: take whichever copy was stamped more recently
     season: recent.season || { Hammy: 0, Naddy: 0 },
@@ -594,8 +819,6 @@ function saveSharedState(state) {
 function useSharedState(readOnly) {
   const [shared, setShared] = useState(() => loadMirror());
   const latestRef = useRef(shared);        // always the freshest local state
-  const quietUntilRef = useRef(0);          // skip polls until this timestamp
-  const localStampRef = useRef(0);          // when we last made a local change
 
   function remember(state) { latestRef.current = state; }
 
@@ -631,20 +854,29 @@ function useSharedState(readOnly) {
     let alive = true;
 
     function pollOnce() {
-      // Respect the quiet window: if we've just made a local change, let it
-      // settle into the backend before we allow a fetch to replace anything.
-      if (Date.now() < quietUntilRef.current) return;
       fetchSharedState().then((incoming) => {
         if (!alive || !incoming) return;
-        const localTs = latestRef.current ? (latestRef.current.updatedAt || 0) : 0;
-        const incomingTs = incoming.updatedAt || 0;
-        const localChangedRecently = Date.now() - localStampRef.current < 8000;
-        // Only accept the poll if it's genuinely newer AND we haven't just
-        // changed things ourselves. Otherwise our local copy stands.
-        if (incomingTs >= localTs && !localChangedRecently) {
-          remember(incoming);
-          setShared(incoming);
-        }
+        const local = latestRef.current;
+        if (!local) { remember(incoming); setShared(incoming); return; }
+        // THE OLD SYNC BUG: this used to REJECT any poll for 8 full seconds
+        // after any local change, and skip polling entirely during a "quiet
+        // window". The intent was to stop a stale backend copy trampling an
+        // edit you'd just made. The effect was that the other phone's work went
+        // invisible for ~8s+ after you touched anything, which is exactly why
+        // a thrown dare seemed never to arrive: you'd look, see nothing, and
+        // give up before the blackout lifted.
+        //
+        // The fix: never DISCARD the other phone's work, MERGE it. mergeSharedStates
+        // is field-wise and monotonic (append-only lists union, a landed photo
+        // URL is never lost, the fresher stamp wins per entry), so folding the
+        // backend into our local copy keeps our own edits AND surfaces theirs
+        // immediately. Losing a race no longer means losing data, so there is
+        // nothing left to protect with a blackout.
+        const merged = mergeSharedStates(local, incoming);
+        // only re-render when something actually moved, so we don't thrash
+        if (stableStringify(merged) === stableStringify(local)) return;
+        remember(merged);
+        setShared(merged);
       });
     }
 
@@ -654,7 +886,7 @@ function useSharedState(readOnly) {
       remember(s); setShared(s);
     });
 
-    const t = setInterval(pollOnce, 3500);
+    const t = setInterval(pollOnce, 2000);
     return () => { alive = false; clearInterval(t); };
   }, []);
 
@@ -668,8 +900,6 @@ function useSharedState(readOnly) {
       // stamp our own change time so polls can tell ours is the newer copy
       const next = { ...draft, updatedAt: Date.now() };
       remember(next);
-      localStampRef.current = Date.now();
-      quietUntilRef.current = Date.now() + 1500; // brief hush so the save can fly
       // hand off to the serialized queue: it writes the freshest state, one save
       // at a time, so a burst of photo uploads can never trample each other
       scheduleSave();
@@ -1312,23 +1542,40 @@ function loadDuel(wk) {
   try { return JSON.parse(localStorage.getItem(duelKey(wk)) || "{}") || {}; }
   catch (e) { return {}; }
 }
+// Photo id for a duel submission, in the vault (never localStorage).
+function duelPhotoId(wk, who) { return "duel_" + wk + "_" + who; }
+// Persist the duel record WITHOUT any image bytes: those go to the vault, so
+// this stays a few hundred bytes and can never trip the quota. `hasPhoto` is
+// what everything else reads, since it survives where raw bytes did not.
 function saveDuel(wk, duel) {
   const key = duelKey(wk);
-  if (safeSetItem(key, JSON.stringify(duel || {}))) return;
-  // quota hit: the photoUrl still syncs, so drop local photo bytes and retry
-  const trimmed = JSON.parse(JSON.stringify(duel || {}));
-  ["Hammy", "Naddy"].forEach((p) => { if (trimmed[p]) trimmed[p].photo = null; });
-  safeSetItem(key, JSON.stringify(trimmed));
+  const slim = {};
+  Object.keys(duel || {}).forEach((k) => {
+    const v = duel[k];
+    if (v && typeof v === "object" && ("photo" in v || "photoUrl" in v)) {
+      const side = {};
+      Object.keys(v).forEach((f) => { if (f !== "photo") side[f] = v[f]; });
+      side.hasPhoto = !!(v.photo || v.hasPhoto || v.photoUrl);
+      slim[k] = side;
+      if (v.photo && String(v.photo).indexOf("data:") === 0) putPhoto(duelPhotoId(wk, k), v.photo);
+    } else slim[k] = v;
+  });
+  safeSetItem(key, JSON.stringify(slim));
 }
 // Record (or replace) a player's submission. Resubmitting simply overwrites.
 function submitDuelPhoto(wk, who, photo) {
   const duel = loadDuel(wk);
-  duel[who] = { photo: photo, photoUrl: (duel[who] && duel[who].photoUrl) || null, at: Date.now() };
+  duel[who] = { photo: photo, hasPhoto: !!photo, photoUrl: (duel[who] && duel[who].photoUrl) || null, at: Date.now() };
   saveDuel(wk, duel);
   return duel;
 }
-// Has this player got a submission in?
-function hasSubmitted(duel, who) { return !!(duel && duel[who] && duel[who].photo); }
+// Has this player got a submission in? Reads the durable flag rather than the
+// raw bytes: the bytes now live in the vault, so checking `.photo` here would
+// wrongly report "not submitted" on any fresh page load.
+function hasSubmitted(duel, who) {
+  const d = duel && duel[who];
+  return !!(d && (d.hasPhoto || d.photo || d.photoUrl));
+}
 
 // ---------- Michael Oliver judges the duel ----------
 // A DIFFERENT kind of thinking from his appeal work: rather than ruling on one
@@ -1352,7 +1599,7 @@ function judgeDuel(now, duel, bigTask, onDone) {
   const wk = weekNumber(now);
   const H = duel.Hammy || {}, N = duel.Naddy || {};
   // If only one player submitted, they win by walkover (honestly flagged).
-  const hIn = !!(H.photo || H.photoUrl), nIn = !!(N.photo || N.photoUrl);
+  const hIn = !!(H.hasPhoto || H.photo || H.photoUrl), nIn = !!(N.hasPhoto || N.photo || N.photoUrl);
   if (hIn && !nIn) { onDone({ winner: "Hammy", reason: "Naddy never filed a photo, so this is a walkover. A win is a win, but Michael Oliver notes the empty net with a raised eyebrow.", walkover: true }); return; }
   if (nIn && !hIn) { onDone({ winner: "Naddy", reason: "Hammy never filed a photo, so this is a walkover. A win is a win, but Michael Oliver notes the empty net with a raised eyebrow.", walkover: true }); return; }
   if (!hIn && !nIn) { onDone({ winner: "draw", reason: "Neither of you submitted a thing. Michael Oliver has abandoned the fixture and gone home. No points, no glory, hang your heads.", noContest: true }); return; }
@@ -1442,16 +1689,27 @@ function loadThemeDuel(wk) {
   try { return JSON.parse(localStorage.getItem(themeDuelKey(wk)) || "{}") || {}; }
   catch (e) { return {}; }
 }
+// Sibling of duelPhotoId for the photo-theme contest's own vault entries.
+function themePhotoId(wk, who) { return "theme_" + wk + "_" + who; }
+// Same discipline as the big duel: bytes to the vault, only light fields here.
 function saveThemeDuel(wk, duel) {
   const key = themeDuelKey(wk);
-  if (safeSetItem(key, JSON.stringify(duel || {}))) return;
-  const trimmed = JSON.parse(JSON.stringify(duel || {}));
-  ["Hammy", "Naddy"].forEach((p) => { if (trimmed[p]) trimmed[p].photo = null; });
-  safeSetItem(key, JSON.stringify(trimmed));
+  const slim = {};
+  Object.keys(duel || {}).forEach((k) => {
+    const v = duel[k];
+    if (v && typeof v === "object" && ("photo" in v || "photoUrl" in v)) {
+      const side = {};
+      Object.keys(v).forEach((f) => { if (f !== "photo") side[f] = v[f]; });
+      side.hasPhoto = !!(v.photo || v.hasPhoto || v.photoUrl);
+      slim[k] = side;
+      if (v.photo && String(v.photo).indexOf("data:") === 0) putPhoto(themePhotoId(wk, k), v.photo);
+    } else slim[k] = v;
+  });
+  safeSetItem(key, JSON.stringify(slim));
 }
 function submitThemePhoto(wk, who, photo) {
   const duel = loadThemeDuel(wk);
-  duel[who] = { photo: photo, photoUrl: (duel[who] && duel[who].photoUrl) || null, at: Date.now() };
+  duel[who] = { photo: photo, hasPhoto: !!photo, photoUrl: (duel[who] && duel[who].photoUrl) || null, at: Date.now() };
   saveThemeDuel(wk, duel);
   return duel;
 }
@@ -1463,7 +1721,7 @@ function submitThemePhoto(wk, who, photo) {
 function judgeThemeDuel(now, duel, theme, onDone) {
   const wk = weekNumber(now);
   const H = duel.Hammy || {}, N = duel.Naddy || {};
-  const hIn = !!(H.photo || H.photoUrl), nIn = !!(N.photo || N.photoUrl);
+  const hIn = !!(H.hasPhoto || H.photo || H.photoUrl), nIn = !!(N.hasPhoto || N.photo || N.photoUrl);
   if (hIn && !nIn) { onDone({ winner: "Hammy", reason: "Naddy never submitted for the theme, so it's a walkover. Michael Oliver accepts the win but eyes the empty frame with mild disappointment.", walkover: true }); return; }
   if (nIn && !hIn) { onDone({ winner: "Naddy", reason: "Hammy never submitted for the theme, so it's a walkover. Michael Oliver accepts the win but eyes the empty frame with mild disappointment.", walkover: true }); return; }
   if (!hIn && !nIn) { onDone({ winner: "draw", reason: "Neither of you answered the theme at all. Michael Oliver has packed up his monitor and gone for a curry. No points for this artistic no-show.", noContest: true }); return; }
@@ -2306,27 +2564,41 @@ function VarSheet({ task, claim, me, onResolve, onClose }) {
 // Stored under a per-week key so each week keeps its own board of claims.
 // Shape: { [taskId]: { by, at, photo, caption, taunt } }
 function claimsKey(wk) { return "tg_claims_wk" + wk; }
+// A claim's photo bytes live in the IndexedDB vault under this id, never in
+// localStorage. The claim record itself only carries the light stuff, so the
+// whole week's board of claims is a couple of KB and can never hit quota.
+function claimPhotoId(wk, taskId) { return "claim_" + wk + "_" + taskId; }
+// Renderable source for a claim's proof: vault bytes on the phone that took it,
+// public URL on the other phone.
+function useClaimPhoto(wk, taskId, claim) {
+  const has = !!(claim && (claim.hasPhoto || claim.photo || claim.photoUrl));
+  const local = useStoredPhoto(has && taskId ? claimPhotoId(wk, taskId) : null,
+    (claim && (claim.photoUrl || claim.photo)) || null);
+  return local;
+}
 function loadClaims(wk) {
   try { return JSON.parse(localStorage.getItem(claimsKey(wk)) || "{}"); }
   catch (e) { return {}; }
 }
+// Persist the week's claims. Photo BYTES are diverted to the vault and never
+// written here, so this payload stays tiny and the old quota-shedding dance
+// (which is what silently destroyed your photos) is gone entirely. Each record
+// keeps hasPhoto:true so the UI knows to look in the vault for it.
 function saveClaims(wk, claims) {
   const key = claimsKey(wk);
-  if (safeSetItem(key, JSON.stringify(claims))) return;
-  // Quota hit. Rather than lose the claim, shed the heaviest baggage: drop the
-  // local photo bytes from the OLDEST claims (their public photoUrl still rides
-  // the shared book, so they're not truly lost), keeping the newest photos and
-  // every claim record intact. Retry after each trim.
-  const entries = Object.keys(claims || {})
-    .map((k) => ({ k, at: (claims[k] && claims[k].at) || 0 }))
-    .sort((a, b) => a.at - b.at); // oldest first
-  const trimmed = JSON.parse(JSON.stringify(claims || {}));
-  for (let i = 0; i < entries.length; i++) {
-    if (trimmed[entries[i].k]) trimmed[entries[i].k].photo = null;
-    if (safeSetItem(key, JSON.stringify(trimmed))) return;
-  }
-  // last resort: store records with no local photos at all (URLs still sync)
-  safeSetItem(key, JSON.stringify(trimmed));
+  const slim = {};
+  Object.keys(claims || {}).forEach((k) => {
+    const c = claims[k];
+    if (!c) return;
+    const out = {};
+    Object.keys(c).forEach((f) => { if (f !== "photo") out[f] = c[f]; });
+    // a photo exists if we were handed bytes now, or the record already knew
+    out.hasPhoto = !!(c.photo || c.hasPhoto || c.photoUrl);
+    slim[k] = out;
+    // send the bytes to their proper home
+    if (c.photo && String(c.photo).indexOf("data:") === 0) putPhoto(claimPhotoId(wk, k), c.photo);
+  });
+  safeSetItem(key, JSON.stringify(slim));
 }
 
 // ---------- deal this week's board, grouped by TIER ----------
@@ -2576,17 +2848,78 @@ const RAMSAY_AWARDS_DEMO = [
 ];
 
 // Seeded pick so a week's demo roast is stable on both phones.
+//
+// The demo used to be eight generic lines reshuffled, naming nobody and quoting
+// nothing, so every week read identically and the joke died on second viewing.
+// Now it reaches into the ACTUAL week and names names: your real captions, your
+// real taunts, the dare you actually bottled. A roast is only funny when it's
+// about you. Generic filler is only used to pad when a week is genuinely bare.
 function demoRoast(wk, week) {
   const seed = "ramsay-wk" + wk;
+  const W = week || {};
+  const claims = W.claims || [], dares = W.dares || [], moments = W.moments || [], thoughts = W.thoughts || [];
+  const scores = W.scores || { Hammy: 0, Naddy: 0 };
+  const leader = scores.Hammy === scores.Naddy ? "draw" : (scores.Hammy > scores.Naddy ? "Hammy" : "Naddy");
+  const loser = leader === "draw" ? null : (leader === "Hammy" ? "Naddy" : "Hammy");
+
+  // ---- awards built from what actually happened this week ----
+  const made = [];
+  // the longest caption: someone wrote an essay under a photo of a signboard
+  const capped = claims.filter((c) => c && c.caption && c.caption.trim().length > 0);
+  if (capped.length) {
+    const longest = capped.slice().sort((a, b) => b.caption.length - a.caption.length)[0];
+    made.push({ title: "The Caption Nobody Asked For",
+      line: "\u201c" + longest.caption.trim().replace(/[.\s]+$/, "") + "\u201d. That's what " + longest.by + " wrote. Under a photograph. Voluntarily. I've read menus with more restraint, and menus are trying to sell me something." });
+  }
+  // a real taunt, quoted back at them
+  const taunted = claims.filter((c) => c && c.taunt && c.taunt.trim().length > 0);
+  if (taunted.length) {
+    const t = pick(taunted, seed + "-taunt");
+    made.push({ title: "Most Deluded Taunt",
+      line: "\u201c" + t.taunt.trim().replace(/[.\s]+$/, "") + "\u201d. " + t.by + " actually said that out loud. To another human being. In writing. The confidence is the funniest thing in this entire scrapbook." });
+  }
+  // a bottled dare, named
+  const ducked = dares.filter((d) => d && (d.result === "ducked" || d.result === "confessed"));
+  if (ducked.length) {
+    const d = ducked[0];
+    made.push({ title: "The Bottler's Medal",
+      line: d.to + " was dared to " + String(d.text || "do something").replace(/\.$/, "") + " and FOLDED. Ducked it. " + (d.secret ? "Then coughed up a secret instead, which somehow made it worse." : "No secret, no glory, just a quiet little surrender.") });
+  }
+  // a landed dare deserves its due
+  const landed = dares.filter((d) => d && d.result === "landed");
+  if (landed.length) {
+    const d = landed[0];
+    made.push({ title: "Actually Did It, Fair Play",
+      line: d.to + " was told to " + String(d.text || "do it").replace(/\.$/, "") + " and just... did it. No whinging. I'm not saying I'm proud. I'm saying I'm not disappointed, which from me is a standing ovation." });
+  }
+  // who did nothing
+  const byCount = { Hammy: 0, Naddy: 0 };
+  claims.forEach((c) => { if (c && byCount[c.by] != null) byCount[c.by]++; });
+  const idle = byCount.Hammy === 0 ? "Hammy" : byCount.Naddy === 0 ? "Naddy" : null;
+  if (idle) {
+    made.push({ title: "The Empty Plate Award",
+      line: idle + " claimed NOTHING. Not one. A whole week on a tropical island and " + idle + " brought me an empty plate and a shrug. Extraordinary." });
+  }
+  // a starred moment gets the tender flip he's famous for
+  const starred = moments.concat(thoughts).filter((m) => m && m.starred);
+  if (starred.length) {
+    const m = pick(starred, seed + "-star");
+    made.push({ title: "Chef's Kiss (rare, savour it)",
+      line: (m.text ? "\u201c" + String(m.text).trim().slice(0, 90).replace(/[.\s]+$/, "") + "\u201d. " : "") + "That one. " + m.by + " starred it and they were right to. Two of you, a long way from home, building something. That's lovely. Now get out of my kitchen before I get emotional." });
+  }
+
+  // pad with the generic bank only if the week was genuinely thin
   const pool = seededShuffle(RAMSAY_AWARDS_DEMO, seed);
-  const n = Math.min(pool.length, Math.max(3, Math.min(5, (week && week.total) ? Math.ceil(week.total / 2) : 4)));
-  const leader = (week && week.scores)
-    ? (week.scores.Hammy === week.scores.Naddy ? "draw" : (week.scores.Hammy > week.scores.Naddy ? "Hammy" : "Naddy"))
-    : "draw";
+  const target = Math.max(3, Math.min(5, made.length || 4));
+  const awards = made.slice(0, 5);
+  for (let i = 0; awards.length < target && i < pool.length; i++) {
+    if (!awards.some((a) => a.title === pool[i].title)) awards.push(pool[i]);
+  }
+
   const intro = leader === "draw"
     ? "Right, you two. Dead level this week. A DRAW. Nobody wins, nobody loses, everybody disappoints me equally. Let's get into it."
-    : leader + " edged it this week, and don't they know it. But leading isn't the same as impressing me, so wipe that grin off. Awards. Now.";
-  return { chef: "Gordon Ramsay", demo: true, intro: intro, awards: pool.slice(0, n) };
+    : leader + " edged it, " + scores[leader] + " to " + scores[loser] + ", and don't they know it. But leading isn't the same as impressing me, so wipe that grin off. Awards. Now.";
+  return { chef: "Gordon Ramsay", demo: true, intro: intro, awards: awards };
 }
 
 // Its own storage so a week's roast is computed ONCE and remembered, never
@@ -2762,9 +3095,11 @@ function ClaimSheet({ task, who, onDone, onClose }) {
 // Enlarged photo, the caption + taunt in full, the VAR appeal story if there was
 // one, and a Bluesky share button. Pure presentation of what the claim already
 // holds; nothing new is captured here.
-function ClaimDetail({ task, claim, onClose, onShare }) {
+function ClaimDetail({ task, claim, wk, onClose, onShare }) {
   const claimer = claim && claim.by ? PLAYERS[claim.by] : null;
   const ap = claim && claim.appeal;
+  // vault bytes on the phone that snapped it, public URL on the other phone
+  const proofSrc = useClaimPhoto(wk, task && task.id, claim);
   return (
     <div onClick={onClose} style={{
       position: "fixed", inset: 0, zIndex: 65, display: "flex", flexDirection: "column",
@@ -2787,9 +3122,9 @@ function ClaimDetail({ task, claim, onClose, onShare }) {
 
         {/* the enlarged photo: local bytes if we have them, else the shared
             public URL so the other phone sees the proof too */}
-        {claim && (claim.photo || claim.photoUrl) ? (
+        {proofSrc ? (
           <div style={{ marginTop: 16, borderRadius: 16, overflow: "hidden", border: "1px solid " + T.line }}>
-            <img src={claim.photo || claim.photoUrl} alt="proof" style={{ width: "100%", display: "block" }} />
+            <img src={proofSrc} alt="proof" style={{ width: "100%", display: "block" }} />
           </div>
         ) : (
           <div style={{
@@ -2855,9 +3190,24 @@ function ClaimDetail({ task, claim, onClose, onShare }) {
   );
 }
 
+
+// ---------- a proof thumbnail that fetches its own bytes from the vault ----------
+// Its own component (not inline in a .map) because it calls a hook, and hooks
+// may only run at the top level of a component.
+function ProofThumb({ wk, taskId, claim, size, border }) {
+  const src = useClaimPhoto(wk, taskId, claim);
+  if (!src) return null;
+  return (
+    <div style={{ width: size || 34, height: size || 34, borderRadius: 8, overflow: "hidden", border: border || ("1px solid " + T.line), flexShrink: 0 }}>
+      <img src={src} alt="proof" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+    </div>
+  );
+}
+
 // ---------- a single task row within an open group ----------
-function TaskRow({ task, claim, onClaim, me, onAppeal, canAppeal, onOpenDetail }) {
+function TaskRow({ task, claim, wk, onClaim, me, onAppeal, canAppeal, onOpenDetail }) {
   const claimed = claim && claim.by;
+  const proofSrc = useClaimPhoto(wk, task && task.id, claim);
   const claimer = claimed ? PLAYERS[claim.by] : null;
   return (
     <div style={{
@@ -2889,12 +3239,12 @@ function TaskRow({ task, claim, onClaim, me, onAppeal, canAppeal, onOpenDetail }
           {/* tappable proof thumbnail on a claimed card. Prefer the heavyweight
               local photo (instant, this phone), but fall back to the slim shared
               photoUrl so the OTHER phone sees the proof too. */}
-          {claimed && (claim.photo || claim.photoUrl) ? (
+          {claimed && proofSrc ? (
             <div onClick={() => onOpenDetail && onOpenDetail(task)} style={{
               width: 46, height: 46, borderRadius: 10, overflow: "hidden",
               border: "1px solid " + T.line, cursor: "pointer", position: "relative",
             }}>
-              <img src={claim.photo || claim.photoUrl} alt="proof" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              <img src={proofSrc} alt="proof" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
             </div>
           ) : null}
         </div>
@@ -2950,7 +3300,7 @@ function TaskRow({ task, claim, onClaim, me, onAppeal, canAppeal, onOpenDetail }
 }
 
 // ---------- a closed-by-default tier group ----------
-function TierGroup({ tier, tasks, claims, onClaim, open, onToggle, me, onAppeal, canAppeal, onOpenDetail }) {
+function TierGroup({ tier, tasks, claims, wk, onClaim, open, onToggle, me, onAppeal, canAppeal, onOpenDetail }) {
   const meta = TIER_META[tier];
   const claimedCount = tasks.filter((t) => claims[t.id] && claims[t.id].by).length;
   return (
@@ -2972,7 +3322,7 @@ function TierGroup({ tier, tasks, claims, onClaim, open, onToggle, me, onAppeal,
       {open && (
         <div>
           {tasks.map((t) => (
-            <TaskRow key={t.id} task={t} claim={claims[t.id]} onClaim={onClaim}
+            <TaskRow key={t.id} task={t} claim={claims[t.id]} wk={wk} onClaim={onClaim}
               me={me} onAppeal={onAppeal} canAppeal={canAppeal} onOpenDetail={onOpenDetail} />
           ))}
         </div>
@@ -2985,6 +3335,21 @@ function TierGroup({ tier, tasks, claims, onClaim, open, onToggle, me, onAppeal,
 // Replaces the ordinary big-tier card. Both players submit a photo (resubmit as
 // often as they like, latest wins) before Friday 10pm. At the cutoff, Michael
 // Oliver judges both at once and crowns a winner with a funny written verdict.
+// A duel submission thumbnail. Separate component so it can use the vault hook.
+// `kind` picks which vault namespace to read: the big duel or the photo theme.
+function DuelThumb({ wk, player, side, kind }) {
+  const id = side && (side.hasPhoto || side.photo || side.photoUrl)
+    ? (kind === "theme" ? themePhotoId(wk, player) : duelPhotoId(wk, player))
+    : null;
+  const src = useStoredPhoto(id, side && side.photoUrl);
+  if (!src) return <span style={{ fontFamily: FB, fontSize: 11, color: T.inkSoft, fontStyle: "italic" }}>no photo yet</span>;
+  return (
+    <div style={{ width: 44, height: 44, borderRadius: 8, overflow: "hidden", border: "1px solid " + T.line }}>
+      <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+    </div>
+  );
+}
+
 function DuelArena({ now, wk, bigTask, who, onUploadPhoto, onVerdictBanked, spectating }) {
   const [duel, setDuel] = useState(() => loadDuel(wk));
   const [judging, setJudging] = useState(false);
@@ -3106,13 +3471,7 @@ function DuelArena({ now, wk, bigTask, who, onUploadPhoto, onVerdictBanked, spec
             }}>
               <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 13, color: PLAYERS[player].colour }}>{player}</div>
               <div style={{ marginTop: 6, height: 44, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {duel[player] && (duel[player].photo || duel[player].photoUrl) ? (
-                  <div style={{ width: 44, height: 44, borderRadius: 8, overflow: "hidden", border: "1px solid " + T.line }}>
-                    <img src={duel[player].photo || duel[player].photoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                  </div>
-                ) : (
-                  <span style={{ fontFamily: FB, fontSize: 11, color: T.inkSoft, fontStyle: "italic" }}>no photo yet</span>
-                )}
+<DuelThumb wk={wk} player={player} side={duel[player]} kind="big" />
               </div>
               <div style={{ marginTop: 5, fontFamily: FM, fontSize: 9.5, letterSpacing: ".06em", color: isWinner ? "#2ea05a" : (inYet ? T.inkSoft : "#c99") }}>
                 {isWinner ? "WINNER 🏆" : (inYet ? "SUBMITTED" : "WAITING")}
@@ -3313,13 +3672,7 @@ function ThemeArena({ now, wk, theme, who, onUploadPhoto, onVerdictBanked, spect
             }}>
               <div style={{ fontFamily: FH, fontWeight: 700, fontSize: 13, color: PLAYERS[player].colour }}>{player}</div>
               <div style={{ marginTop: 6, height: 44, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {duel[player] && (duel[player].photo || duel[player].photoUrl) ? (
-                  <div style={{ width: 44, height: 44, borderRadius: 8, overflow: "hidden", border: "1px solid " + T.line }}>
-                    <img src={duel[player].photo || duel[player].photoUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                  </div>
-                ) : (
-                  <span style={{ fontFamily: FB, fontSize: 11, color: T.inkSoft, fontStyle: "italic" }}>no photo yet</span>
-                )}
+<DuelThumb wk={wk} player={player} side={duel[player]} kind="theme" />
               </div>
               <div style={{ marginTop: 5, fontFamily: FM, fontSize: 9.5, letterSpacing: ".06em", color: isWinner ? "#2ea05a" : (inYet ? T.inkSoft : "#c99") }}>
                 {isWinner ? "WINNER 🏆" : (inYet ? "SUBMITTED" : "WAITING")}
@@ -3716,6 +4069,10 @@ function Board({ now, who, claims, setClaims, wildcard, wk: wkProp, onShare, onA
   function uploadPhotoInBackground(taskObj, dataUrl) {
     const taskId = taskObj && taskObj.id ? taskObj.id : taskObj;
     if (!dataUrl || dataUrl.indexOf("data:") !== 0) return;
+    // shrink below Vercel's 4.5MB function-body limit before we post a byte
+    prepareForUpload(dataUrl, (ready) => uploadPhotoNow(taskObj, taskId, ready));
+  }
+  function uploadPhotoNow(taskObj, taskId, dataUrl) {
     try {
       const comma = dataUrl.indexOf(",");
       const meta = dataUrl.slice(5, comma);         // e.g. image/jpeg;base64
@@ -3754,6 +4111,9 @@ function Board({ now, who, claims, setClaims, wildcard, wk: wkProp, onShare, onA
   // Same tg-photo endpoint as claims; no-ops gracefully in preview.
   function uploadDuelPhotoInBackground(duelWk, player, dataUrl) {
     if (!dataUrl || dataUrl.indexOf("data:") !== 0) return;
+    prepareForUpload(dataUrl, (ready) => uploadDuelPhotoNow(duelWk, player, ready));
+  }
+  function uploadDuelPhotoNow(duelWk, player, dataUrl) {
     try {
       const comma = dataUrl.indexOf(",");
       const meta = dataUrl.slice(5, comma);
@@ -3786,6 +4146,9 @@ function Board({ now, who, claims, setClaims, wildcard, wk: wkProp, onShare, onA
   // URL onto the THEME storage so its judge can reach the photo on the live site.
   function uploadThemePhotoInBackground(duelWk, player, dataUrl) {
     if (!dataUrl || dataUrl.indexOf("data:") !== 0) return;
+    prepareForUpload(dataUrl, (ready) => uploadThemePhotoNow(duelWk, player, ready));
+  }
+  function uploadThemePhotoNow(duelWk, player, dataUrl) {
     try {
       const comma = dataUrl.indexOf(",");
       const meta = dataUrl.slice(5, comma);
@@ -3911,11 +4274,7 @@ function Board({ now, who, claims, setClaims, wildcard, wk: wkProp, onShare, onA
                   ) : null}
                   {claimed ? (
                     <div onClick={() => setDetailTask(t)} style={{ marginTop: 9, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
-                      {c.photo || c.photoUrl ? (
-                        <div style={{ width: 34, height: 34, borderRadius: 8, overflow: "hidden", border: "1px solid " + T.line }}>
-                          <img src={c.photo || c.photoUrl} alt="proof" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                        </div>
-                      ) : null}
+                      <ProofThumb wk={wk} taskId={t.id} claim={c} />
                       <span style={{ fontFamily: FB, fontSize: 12, fontWeight: 700, color: PLAYERS[c.by].colour }}>
                         {t.team ? "Done together" : c.by + " claimed this"} · details ›
                       </span>
@@ -3951,11 +4310,7 @@ function Board({ now, who, claims, setClaims, wildcard, wk: wkProp, onShare, onA
             </div>
             {claims[wildcard.id] && claims[wildcard.id].by ? (
               <div onClick={() => setDetailTask(wildcard)} style={{ marginTop: 9, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
-                {claims[wildcard.id].photo || claims[wildcard.id].photoUrl ? (
-                  <div style={{ width: 34, height: 34, borderRadius: 8, overflow: "hidden", border: "1px solid rgba(255,255,255,.5)" }}>
-                    <img src={claims[wildcard.id].photo || claims[wildcard.id].photoUrl} alt="proof" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                  </div>
-                ) : null}
+                <ProofThumb wk={wk} taskId={wildcard.id} claim={claims[wildcard.id]} border={"1px solid rgba(255,255,255,.5)"} />
                 <span style={{ fontFamily: FB, fontSize: 12, fontWeight: 700, color: PLAYERS[claims[wildcard.id].by].colour }}>
                   {claims[wildcard.id].by} grabbed the wildcard · details ›
                 </span>
@@ -3977,6 +4332,7 @@ function Board({ now, who, claims, setClaims, wildcard, wk: wkProp, onShare, onA
             tier={tier}
             tasks={groups[tier]}
             claims={claims}
+            wk={wk}
             open={openTier === tier}
             onToggle={() => setOpenTier(openTier === tier ? null : tier)}
             onClaim={(t) => tryClaim(t)}
@@ -4067,6 +4423,7 @@ function Board({ now, who, claims, setClaims, wildcard, wk: wkProp, onShare, onA
         <ClaimDetail
           task={detailTask}
           claim={claims[detailTask.id]}
+          wk={wk}
           onClose={() => setDetailTask(null)}
           onShare={(t, c) => { if (onShare) onShare(t, c); }}
         />
@@ -4124,6 +4481,9 @@ function Board({ now, who, claims, setClaims, wildcard, wk: wkProp, onShare, onA
 // it lands, so Bluesky sharing and cross-phone viewing work on the live site.
 function uploadMemoryPhoto(dataUrl, onUrl) {
   if (!dataUrl || dataUrl.indexOf("data:") !== 0) return;
+  prepareForUpload(dataUrl, (ready) => uploadMemoryPhotoNow(ready, onUrl));
+}
+function uploadMemoryPhotoNow(dataUrl, onUrl) {
   try {
     const comma = dataUrl.indexOf(",");
     const meta = dataUrl.slice(5, comma);
@@ -4181,12 +4541,17 @@ function timeAgo(then) {
 }
 
 // ---------- a single memory on the wall ----------
-function MemoryCard({ mem, me, photoSrc, onStar, onShare, onDelete }) {
+function MemoryCard({ mem, me, onStar, onShare, onDelete }) {
   const who = PLAYERS[mem.by];
   const colour = who ? who.colour : "#9a8a72";
   const mine = mem.by === me;
   // a photo is expected if the entry flags one or already has a URL
   const expectsPhoto = mem.hasPhoto || !!mem.photoUrl;
+  // The card asks the vault for its own photo, keyed by the memory id. On THIS
+  // phone that's an instant local blob; on the other phone the vault is empty
+  // and we fall through to the uploaded public URL. Either way it survives a
+  // refresh, which the old in-memory map never did.
+  const photoSrc = useStoredPhoto(expectsPhoto ? mem.id : null, mem.photoUrl);
   return (
     <div style={{ background: T.card, border: "1px solid " + T.line, borderRadius: 16, overflow: "hidden", marginBottom: 12 }}>
       {photoSrc ? (
@@ -4306,14 +4671,14 @@ function MemoryWall({ me, shared, updateShared, onShareToBluesky, spectating }) 
   const memories = (shared && Array.isArray(shared.memories)) ? shared.memories : [];
   const sorted = memories.slice().sort((a, b) => b.at - a.at);
 
-  // Raw photos (big data-URLs) are kept LOCAL to this device, keyed by memory id,
-  // purely for instant display. They are NEVER written into the shared book,
-  // because that book is fetched every few seconds by both phones and must stay
-  // small and fast. Only the slim public photoUrl ever enters the shared state.
-  // This is the real cure for "photo posts then vanishes": we were shovelling
-  // multi-megabyte image strings into shared state, so saves choked and the next
-  // poll wiped the entry. Now the shared payload is tiny.
-  const [localPhotos, setLocalPhotos] = useState({});
+  // Raw photos are kept LOCAL to this device in the IndexedDB vault, keyed by
+  // memory id. They are NEVER written into the shared book, because that book is
+  // fetched every few seconds by both phones and must stay small and fast. Only
+  // the slim public photoUrl ever enters the shared state.
+  //
+  // This used to be a useState map, which meant the bytes lived in RAM and were
+  // gone the moment the tab reloaded or Android evicted it, leaving the card
+  // stuck on "developing the photo..." forever. The vault fixes that properly.
 
   function postMemory({ text, photo }) {
     const id = uid();
@@ -4329,8 +4694,9 @@ function MemoryWall({ me, shared, updateShared, onShareToBluesky, spectating }) 
       hasPhoto: !!photo,
       sharedToBluesky: false, starred: false,
     };
-    // stash the raw image locally for instant display on THIS device only
-    if (photo) setLocalPhotos((prev) => ({ ...prev, [id]: photo }));
+    // stash the raw image in the on-device vault for instant display; keyed by
+    // the memory id so the card can find it again after any refresh
+    if (photo) putPhoto(id, photo);
     // write the slim memory (no heavy data) into the shared book
     updateShared((prev) => {
       const list = (prev && Array.isArray(prev.memories)) ? prev.memories : [];
@@ -4356,6 +4722,8 @@ function MemoryWall({ me, shared, updateShared, onShareToBluesky, spectating }) 
   }
 
   function removeMemory(mem) {
+    // bin the vault copy too, so removing a moment actually reclaims the space
+    delPhoto(mem.id);
     updateShared((prev) => {
       const list = (prev && Array.isArray(prev.memories)) ? prev.memories : [];
       return { ...prev, memories: list.filter((m) => m.id !== mem.id) };
@@ -4386,7 +4754,6 @@ function MemoryWall({ me, shared, updateShared, onShareToBluesky, spectating }) 
       ) : (
         sorted.map((mem) => (
           <MemoryCard key={mem.id} mem={mem} me={me}
-            photoSrc={localPhotos[mem.id] || mem.photoUrl || null}
             onStar={toggleStar} onShare={shareMemory} onDelete={removeMemory} />
         ))
       )}
@@ -6607,20 +6974,74 @@ function Screen({ title, onBack, children }) {
 // out his awards. Trawls EVERYTHING via gatherWeek: claims, thoughts, moments,
 // dares, duels, and the quiz. Nothing submitted goes unseen.
 // ============================================================
-function Scrapbook({ now, wk, shared }) {
-  const week = gatherWeek(wk, shared);
+// ---------- the scrapbook, now with a week archive ----------
+// THE BUG THIS FIXES: the roast only ever rendered when `closed` was true, and
+// `closed` was `realWk > wk` while `wk` was ALWAYS the live week. So closed was
+// permanently false, the roast block never rendered, fetchRoast was never called,
+// and Gordon never said a word. (Which also means no API calls were ever made:
+// it cost nothing, and there are no past roasts sitting anywhere to recover.)
+//
+// The fix is to let you actually LOOK at a past week. Pick any finished week and
+// its scrapbook opens, the chef is summoned for it (once, then cached forever in
+// tg_roast_wk*), and every roast you've ever generated stays browsable, exactly
+// like the memory wall keeps its moments.
+function Scrapbook({ now, wk, shared, updateShared }) {
   const realWk = weekNumber(now);
-  const closed = realWk > wk; // the week's business is done once we've moved past it
-  const [roast, setRoast] = useState(() => loadRoast(wk));
-  const [summoning, setSummoning] = useState(false);
+  // which week we're LOOKING at (defaults to the live one)
+  const [viewWk, setViewWk] = useState(wk);
+  // guard: if the real week ticks over while the app is open, don't strand the
+  // view on a week that no longer makes sense
+  useEffect(() => { setViewWk(wk); }, [wk]);
 
-  // Once the week has closed, summon the chef (real brain, demo fallback).
+  const week = gatherWeek(viewWk, shared);
+  const closed = realWk > viewWk; // a week's business is done once we've moved past it
+  // The roast for the week we're looking at. It lives in THREE places, in order
+  // of authority: the shared book (so both phones read the identical verdict),
+  // this phone's localStorage cache, then not-yet-summoned. Reading the shared
+  // copy first is what makes Gordon persistent across phones AND halves the
+  // spend: if Hammy paid for week 3, Naddy just reads his.
+  const sharedRoast = (shared && shared.roasts && shared.roasts["w" + viewWk]) || null;
+  const [roast, setRoast] = useState(() => sharedRoast || loadRoast(viewWk));
+  const [summoning, setSummoning] = useState(false);
+  // when you switch weeks, pick up that week's roast (shared first, then local)
+  useEffect(() => {
+    const fromShared = (shared && shared.roasts && shared.roasts["w" + viewWk]) || null;
+    setRoast(fromShared || loadRoast(viewWk));
+    setSummoning(false);
+    // eslint-disable-next-line
+  }, [viewWk]);
+  // if the OTHER phone summons him while we're looking, his verdict just appears
+  useEffect(() => {
+    if (sharedRoast && !roast) { setRoast(sharedRoast); setSummoning(false); saveRoast(viewWk, sharedRoast); }
+    // eslint-disable-next-line
+  }, [sharedRoast]);
+
+  // every week from 1 up to the live one, newest first: the archive
+  const weekOptions = [];
+  for (let i = realWk; i >= 1; i--) weekOptions.push(i);
+
+  // Once the week has closed, summon the chef (real brain, demo fallback), then
+  // publish him to the shared book so the other phone reads the same words
+  // rather than paying to generate a different roast of the same week.
   useEffect(() => {
     if (!closed || roast) return;
     setSummoning(true);
-    fetchRoast(wk, week, (r) => { setRoast(r); setSummoning(false); });
+    fetchRoast(viewWk, week, (r) => {
+      setRoast(r);
+      setSummoning(false);
+      // only publish a REAL verdict: a demo one is an offline stand-in and
+      // shouldn't occupy the shared slot that the genuine chef might yet fill
+      if (r && !r.demo && updateShared) {
+        updateShared((s) => {
+          const book = { ...((s && s.roasts) || {}) };
+          if (book["w" + viewWk]) return s; // someone beat us to it: leave theirs
+          book["w" + viewWk] = r;
+          return { ...s, roasts: book };
+        });
+      }
+    });
     // eslint-disable-next-line
-  }, [closed, wk]);
+  }, [closed, viewWk]);
 
   const leader = week.scores.Hammy === week.scores.Naddy ? null
     : (week.scores.Hammy > week.scores.Naddy ? "Hammy" : "Naddy");
@@ -6635,6 +7056,36 @@ function Scrapbook({ now, wk, shared }) {
 
   return (
     <div>
+      {/* THE ARCHIVE: pick any week. Past weeks summon the chef and keep his
+          verdict forever, so every roast stays readable, like the memory wall
+          keeps its moments. Only shown once there's actually a past week to
+          look at, so week one stays uncluttered. */}
+      {weekOptions.length > 1 ? (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontFamily: FM, fontSize: 9.5, letterSpacing: ".14em", textTransform: "uppercase", color: T.inkSoft, marginBottom: 8 }}>
+            The archive
+          </div>
+          <div style={{ display: "flex", gap: 7, overflowX: "auto", paddingBottom: 4 }}>
+            {weekOptions.map((n) => {
+              const on = n === viewWk;
+              const live = n === realWk;
+              return (
+                <button key={n} onClick={() => setViewWk(n)} style={{
+                  flexShrink: 0, cursor: "pointer",
+                  background: on ? T.ink : T.card,
+                  border: "1px solid " + (on ? T.ink : T.line),
+                  borderRadius: 11, padding: "7px 13px",
+                  fontFamily: FH, fontWeight: 700, fontSize: 12,
+                  color: on ? "#fff" : T.inkSoft,
+                }}>
+                  Week {n}{live ? " · live" : ""}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+
       {/* the chef header: menace while open, verdict once closed */}
       <div style={{
         background: closed ? "#2a1e1a" : T.card,
@@ -6645,7 +7096,7 @@ function Scrapbook({ now, wk, shared }) {
         {closed ? (
           <div>
             <div style={{ fontFamily: FH, fontWeight: 800, fontSize: 19, color: "#fff", marginTop: 8 }}>
-              The chef has judged Week {wk}
+              The chef has judged Week {viewWk}
             </div>
             <div style={{ fontFamily: FB, fontSize: 12.5, color: "rgba(255,255,255,.75)", marginTop: 5, lineHeight: 1.5 }}>
               He's read every photo, every caption, every feeble little taunt. Brace yourselves.
@@ -6800,6 +7251,124 @@ function Scrapbook({ now, wk, shared }) {
 }
 
 // ---------- THE GAME ROUTER ----------
+// ============================================================
+// THE RESCUE SWEEP: a one-time salvage for photos stranded by the old bugs.
+//
+// Before the vault existed, photo bytes were crammed into localStorage. Two
+// things then went wrong: oversized uploads were rejected by Vercel's 4.5MB
+// function limit (and silently swallowed by a bare .catch), and localStorage's
+// own ~5MB cap made the old code null out the oldest photos to make room.
+//
+// The upshot: some claims still have their BYTES sitting in localStorage but no
+// photoUrl, so the photo shows on this phone and is invisible on the other one.
+// Those are salvageable. This sweep finds them, pushes each one through the new
+// size-safe uploader, and stamps the returned URL into storage so the other
+// phone finally sees them.
+//
+// It is deliberately conservative:
+//   - runs ONCE ever (a localStorage flag stops it repeating)
+//   - only touches records that have bytes AND no photoUrl (never overwrites)
+//   - uploads are sequential, so we never hammer the network or race saves
+//   - any failure is skipped quietly; a rescue that can't run must never break
+//     the app or lose the local copy
+// Photos whose bytes are already gone (memory-wall RAM losses, quota-shed
+// claims) cannot be recovered by anything: there is simply nothing left to send.
+// ============================================================
+const RESCUE_FLAG = "tg_rescue_v1_done";
+
+// Upload one data URL, promise-style, resolving to a public URL or null.
+// Routes through prepareForUpload so an oversized stranded photo (the very
+// thing that failed before) is shrunk under the limit rather than 413ing again.
+function rescueUpload(dataUrl) {
+  return new Promise((resolve) => {
+    if (!dataUrl || dataUrl.indexOf("data:") !== 0) { resolve(null); return; }
+    prepareForUpload(dataUrl, (ready) => {
+      try {
+        const comma = ready.indexOf(",");
+        const meta = ready.slice(5, comma);
+        const ext = meta.indexOf("png") >= 0 ? "png" : meta.indexOf("webp") >= 0 ? "webp" : "jpg";
+        const bin = atob(ready.slice(comma + 1));
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        fetch("/api/tg-photo?ext=" + ext, {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: bytes,
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((d) => resolve((d && d.url) || null))
+          .catch(() => resolve(null));
+      } catch (e) { resolve(null); }
+    });
+  });
+}
+
+// Walk every stored week's claims, find photos with bytes but no URL, upload
+// them, and hand back a map of { weekKey: { taskId: url } } that actually landed.
+// Also moves any surviving bytes into the vault, since a rescued photo should
+// persist properly from now on rather than staying at the mercy of quota.
+function rescueStrandedPhotos() {
+  if (typeof localStorage === "undefined") return Promise.resolve(null);
+  let done = null;
+  try { done = localStorage.getItem(RESCUE_FLAG); } catch (e) { return Promise.resolve(null); }
+  if (done) return Promise.resolve(null);
+
+  // gather candidates across every tg_claims_wk* key
+  const jobs = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || key.indexOf("tg_claims_wk") !== 0) continue;
+      const wk = key.slice("tg_claims_wk".length);
+      let map = null;
+      try { map = JSON.parse(localStorage.getItem(key) || "{}"); } catch (e) { continue; }
+      Object.keys(map || {}).forEach((taskId) => {
+        const c = map[taskId];
+        // only rescue what is genuinely stranded: real bytes, no public URL
+        if (c && !c.photoUrl && c.photo && String(c.photo).indexOf("data:") === 0) {
+          jobs.push({ key: key, wk: wk, taskId: taskId, photo: c.photo });
+        }
+      });
+    }
+  } catch (e) { return Promise.resolve(null); }
+
+  if (!jobs.length) {
+    try { localStorage.setItem(RESCUE_FLAG, "1"); } catch (e) {}
+    return Promise.resolve(null);
+  }
+
+  const landed = {};
+  // strictly sequential: one upload at a time, so nothing races or floods
+  let chain = Promise.resolve();
+  jobs.forEach((j) => {
+    chain = chain.then(() => {
+      // keep the bytes safe in the vault regardless of whether the upload works
+      putPhoto(claimPhotoId(j.wk, j.taskId), j.photo);
+      return rescueUpload(j.photo).then((url) => {
+        if (!url) return;
+        // stamp the URL into this week's stored claims, without disturbing
+        // anything else that may have changed while we were uploading
+        try {
+          const cur = JSON.parse(localStorage.getItem(j.key) || "{}");
+          if (cur && cur[j.taskId] && !cur[j.taskId].photoUrl) {
+            cur[j.taskId].photoUrl = url;
+            cur[j.taskId].hasPhoto = true;
+            delete cur[j.taskId].photo; // bytes now live in the vault
+            localStorage.setItem(j.key, JSON.stringify(cur));
+          }
+        } catch (e) { /* storage unhappy: the URL still goes to shared below */ }
+        if (!landed[j.wk]) landed[j.wk] = {};
+        landed[j.wk][j.taskId] = url;
+      });
+    });
+  });
+
+  return chain.then(() => {
+    try { localStorage.setItem(RESCUE_FLAG, "1"); } catch (e) {}
+    return Object.keys(landed).length ? landed : null;
+  }).catch(() => null);
+}
+
 function Game({ now, who, isFull, onSwitch }) {
   const spectating = isSpectator(who); // a watching guest: reads everything, writes nothing
   const [view, setView] = useState("hub");
@@ -6841,6 +7410,43 @@ function Game({ now, who, isFull, onSwitch }) {
   // a slim copy (public photoUrl only, never raw bytes) rides the shared book
   // so BOTH phones see every claim and dare within a poll or two. Each changed
   // entry gets a `mod` stamp so the merge can tell fresh edits from stale copies.
+  // ---- the one-time rescue sweep ----------------------------------------
+  // On first load after this update, salvage any photo whose bytes are still on
+  // this phone but never made it to a public URL (the old oversized-upload and
+  // quota bugs). Anything recovered is stamped into local storage AND pushed to
+  // the shared book, so the other phone finally sees photos it never could.
+  // Spectators never write, so they never run it.
+  useEffect(() => {
+    if (spectating) return;
+    let alive = true;
+    rescueStrandedPhotos().then((landed) => {
+      if (!alive || !landed) return;
+      // fold every recovered URL into the shared book in ONE update, so we don't
+      // fire a burst of saves that the save queue would only have to coalesce
+      updateShared((s) => {
+        const book = { ...((s && s.claims) || {}) };
+        Object.keys(landed).forEach((wkNo) => {
+          const wkKey = "w" + wkNo;
+          const week = { ...(book[wkKey] || {}) };
+          Object.keys(landed[wkNo]).forEach((taskId) => {
+            const cur = week[taskId];
+            // never clobber a URL that arrived by some other route
+            if (cur && !cur.photoUrl) {
+              week[taskId] = { ...cur, photoUrl: landed[wkNo][taskId], hasPhoto: true, mod: Date.now() };
+            }
+          });
+          book[wkKey] = week;
+        });
+        return { ...s, claims: book };
+      });
+      // refresh the on-screen claims for the live week so rescued proof appears
+      // immediately rather than only after the next poll
+      setClaimsState(loadClaims(wk));
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function pushClaimsToShared(weekNo, map) {
     const wkKey = "w" + weekNo;
     updateShared((s) => {
@@ -6930,6 +7536,10 @@ function Game({ now, who, isFull, onSwitch }) {
   // sitting only in local storage up into the book (this is also the one-time
   // rescue for claims made before claims learned to travel).
   const bootSyncRef = useRef(false);
+  // Signature of the last quiz/duel data we pushed up. Stops the sync effect
+  // from pushing identical data forever (it depends on `shared`, and pushing
+  // mutates `shared`, so an unguarded push is an infinite render loop).
+  const lastPushSigRef = useRef("");
   useEffect(() => {
     if (!shared) return;
     const wkKey = "w" + wk;
@@ -6976,17 +7586,27 @@ function Game({ now, who, isFull, onSwitch }) {
     }
 
     // On every sync tick, also push our OWN local quiz/duel data UP into the
-    // shared book. Cheap (the merge dedups), and it guarantees a freshly-taken
-    // quiz or freshly-submitted duel photo travels even though those screens
-    // don't hold the shared hook themselves. This is the piece that fixes the
-    // "I can't see her score / photo" bug at its root.
+    // shared book, so a freshly-taken quiz or freshly-submitted duel photo
+    // travels even though those screens don't hold the shared hook themselves.
+    //
+    // GUARDED against an infinite loop: this effect depends on `shared`, and
+    // pushing calls updateShared, which changes `shared`, which re-runs this
+    // effect... forever. (React caps that with "Maximum update depth exceeded"
+    // and the app burns CPU re-rendering in a tight cycle.) So we only push when
+    // the local copy has ACTUALLY changed since our last push, tracked by a
+    // signature ref. Identical data pushes nothing, the loop closes, and a real
+    // change still syncs exactly once.
     if (!spectating) {
       const myQ = loadQuiz(wk) || {};
-      if (Object.keys(myQ).length > 0) pushQuizToShared(wk, myQ);
       const myDuel = loadDuel(wk) || {};
-      if (Object.keys(myDuel).length > 0) pushDuelToShared(wk, myDuel);
       const myTheme = loadThemeDuel(wk) || {};
-      if (Object.keys(myTheme).length > 0) pushThemeDuelToShared(wk, myTheme);
+      const sig = stableStringify([wk, myQ, slimDuel(myDuel), slimDuel(myTheme)]);
+      if (sig !== lastPushSigRef.current) {
+        lastPushSigRef.current = sig;
+        if (Object.keys(myQ).length > 0) pushQuizToShared(wk, myQ);
+        if (Object.keys(myDuel).length > 0) pushDuelToShared(wk, myDuel);
+        if (Object.keys(myTheme).length > 0) pushThemeDuelToShared(wk, myTheme);
+      }
     }
 
     if (!bootSyncRef.current && !spectating) {
@@ -7255,7 +7875,7 @@ function Game({ now, who, isFull, onSwitch }) {
     </Screen>;
   } else {
     screen = <Screen title="The scrapbook" onBack={() => setView("hub")}>
-      <Scrapbook now={now} wk={wk} shared={shared} />
+      <Scrapbook now={now} wk={wk} shared={shared} updateShared={updateShared} />
     </Screen>;
   }
 
