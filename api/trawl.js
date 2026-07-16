@@ -125,18 +125,53 @@ function htmlToText(html, cap) {
 }
 
 // ---- region detection + adapter registry (scout manifest, stage A verdicts) ----
+// Map a meet's venue string to an adapter region.
+//
+// THIS WAS SILENTLY LOSING HALF THE BOOK. The old version only matched long-form country
+// names ("south africa", "united kingdom"), but the ledger is full of short codes ("SA",
+// "UK", "FR", "AU"), bracketed venues ("Ascot (UK)", "Kenilworth (SA)", "Greyville Poly
+// (SA)") and bare course names. Every one of those fell through to "OTHER", which has no
+// adapters, so the morning trawl fetched NOTHING for them and the day's read was built on
+// air. Measured against the live ledger: 209 of 429 settled legs were in meets that
+// resolved to OTHER. The single biggest source of blind spots in the whole pipeline, and
+// it looked like a working trawl the entire time.
+//
+// Order matters: check the most specific signals first (course names, bracketed codes),
+// then bare two-letter codes as a whole-word match so "SA" does not match "Saint-Cloud"
+// and "MB" (Mombetsu) does not match a random word containing mb.
 function regionOf(venue) {
-  const v = String(venue || "").toLowerCase();
-  if (v.includes("south africa")) return "SA";
-  if (v.includes("france")) return "FR";
-  if (v.includes("korea")) return "KR";
-  if (v.includes("malaysia") || v.includes("selangor") || v.includes("penang")) return "MY";
-  if (v.includes("turkey") || v.includes("türkiye")) return "TR";
-  if (v.includes("hong kong") || v.includes("sha tin") || v.includes("happy valley")) return "HK";
-  if (v.includes("united kingdom") || v.includes("ireland")) return "UK";
-  if (v.includes("australia") || v.includes("new zealand")) return "AU";
-  if (v.includes("japan")) return "JP";
-  if (v.includes("singapore")) return "SG";
+  const v = String(venue || "").toLowerCase().trim();
+  if (!v) return "OTHER";
+  // whole-word code test: "SA", "(SA)", "[SGP SA3]", "SA "
+  const code = (c) => new RegExp("(^|[^a-z])" + c + "([^a-z]|$)", "i").test(v);
+
+  // --- South Africa: country, code, and every course actually bet
+  if (v.includes("south africa") || code("sa") ||
+      /greyville|scottsville|durbanville|kenilworth|turffontein|fairview|vaal|hollywoodbets/.test(v)) return "SA";
+  // --- France
+  if (v.includes("france") || code("fr") ||
+      /chantilly|deauville|saint-cloud|longchamp|vincennes|dieppe|vittel|lyon-parilly|la teste|compiegne|clairefontaine|maisons-laffitte/.test(v)) return "FR";
+  // --- Korea (SK = Seoul/Seongnam in the ledger's shorthand)
+  if (v.includes("korea") || code("kr") || code("sk") || /seoul|busan|jeju/.test(v)) return "KR";
+  // --- Malaysia
+  if (/malaysia|selangor|penang|perak|ipoh|sungai besi/.test(v) || code("my")) return "MY";
+  // --- Turkey
+  if (/turkey|türkiye|turkiye|ankara|istanbul|bursa|izmir|adana|elazig|sanliurfa|diyarbakir|kocaeli/.test(v) || code("tr") || code("tur")) return "TR";
+  // --- Hong Kong
+  if (/hong kong|sha tin|happy valley/.test(v) || code("hk")) return "HK";
+  // --- UK & Ireland (course list covers the bracketed "Ascot (UK)" style too)
+  if (/united kingdom|ireland|england|scotland|wales/.test(v) || code("uk") || code("ire") || code("gb") ||
+      /ascot|newcastle|musselburgh|ffos las|carlisle|curragh|hamilton|doncaster|ayr|pontefract|lingfield|wolverhampton|newmarket|goodwood|york|epsom|cheltenham|aintree|haydock|sandown|kempton|chepstow|bath|brighton|catterick|chester|leicester|nottingham|redcar|ripon|salisbury|thirsk|windsor|yarmouth|beverley|hexham|kelso|perth|southwell|stratford|uttoxeter|warwick|wetherby|worcester|down royal|leopardstown|fairyhouse|naas|navan|punchestown|tipperary|galway|gowran|dundalk|limerick|cork|killarney|listowel|roscommon|sligo|tramore|wexford|ballinrobe|bellewstown|clonmel|kilbeggan|laytown|thurles/.test(v)) return "UK";
+  // --- Australia & NZ (MB = Muswellbrook / Melbourne-area shorthand in the ledger)
+  if (/australia|new zealand/.test(v) || code("au") || code("nz") || code("qld") || code("nsw") || code("vic") || code("mb") ||
+      /ipswich|taree|muswellbrook|tamworth|ballarat|wagga|wellington|northam|perth|melbourne|sydney|brisbane|adelaide|randwick|flemington|caulfield|moonee valley|rosehill|doomben|eagle farm|gold coast|sunshine coast|canberra|newcastle \(aus\)|gosford|hawkesbury|kembla|nowra|orange|scone|dubbo|goulburn|bathurst|grafton|lismore|coffs harbour|port macquarie|armidale|inverell|moree|narrandera|griffith|leeton|albury|corowa|wodonga|shepparton|bendigo|geelong|kilmore|kyneton|sale|seymour|swan hill|warrnambool|hanging rock|pakenham|cranbourne|sandown|mornington|yarra valley/.test(v)) return "AU";
+  // --- Japan (NAR locals are what actually gets bet, not JRA)
+  if (v.includes("japan") || code("jp") || /urawa|mombetsu|kawasaki|funabashi|ohi|oi |monbetsu|kanazawa|kochi|saga|nagoya|sonoda|himeji|morioka|mizusaki/.test(v)) return "JP";
+  // --- Germany (adapter added 16/07; without this branch a German meet silently got none)
+  if (/germany|deutschland|hamburg|baden-baden|cologne|köln|koln|dusseldorf|düsseldorf|munich|münchen|munchen|hannover|dortmund|krefeld|mulheim|mülheim|hoppegarten|frankfurt|bremen|leipzig|dresden|magdeburg/.test(v) || code("de") || code("ger")) return "DE";
+  // --- Singapore: kept for card labelling. NOTE there is no SG adapter and no SG racing
+  // since Kranji closed in Oct 2024, so this only ever tags historical/labelled rows.
+  if (v.includes("singapore") || code("sg")) return "SG";
   return "OTHER";
 }
 
@@ -356,6 +391,22 @@ async function stageSources(pack) {
   pack.sourceHealth = results.map((s) => ({
     id: s.id, region: s.region, ok: s.ok, chars: s.text.length, error: s.error,
   }));
+
+  // BLIND MEETS. A meet whose region has no adapter (Peru, Mauritius — anything falling to
+  // "OTHER") gets an empty sources array and would otherwise look identical to a meet whose
+  // sources all happened to fail: silently sourceless, with the day's read built on nothing.
+  // The Charter's data-edge-gate law says "only bet meets where we have a genuine data
+  // edge"; this is what lets that gate actually see. Surfaced on the pack so the reader and
+  // the slip-builder can both treat it as the hard signal it is.
+  pack.blindMeets = pack.meets
+    .filter((m) => !(m.sources || []).some((s) => s.ok && s.chars > 900))
+    .map((m) => ({ venue: m.venue, region: m.region, reason: (ADAPTERS[m.region] || []).length ? "all sources failed today" : "no adapter for region " + m.region }));
+  if (pack.blindMeets.length) {
+    pack.blindWarning =
+      pack.blindMeets.length + " meet(s) have NO usable source today (" +
+      pack.blindMeets.map((b) => b.venue).join(", ") +
+      "). The data-edge gate cannot be satisfied for these: treat any pick there as unevidenced.";
+  }
   return pack;
 }
 
