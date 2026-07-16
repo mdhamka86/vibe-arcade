@@ -992,7 +992,44 @@ function renderCalib(){
     "</b> &middot; Settled <b>"+e.settled+"</b> &middot; Staked <b>"+money(e.staked)+
     '</b> &middot; Net <b style="color:'+(e.netPL<0?"var(--red)":"var(--green)")+'">'+money(e.netPL)+
     "</b></div><div class=\"lesson\">Review gate: hold to ~10 settled before any conclusion. Refunds excluded from settled, per journal convention.</div></div>";
+  // The rule-decay panel. The Charter is excellent at forming rules from evidence and has
+  // no mechanism for noticing when one has stopped being true — the Medium-High selection
+  // rule was promoted on 19 legs at +19.2% and nothing ever re-tested it. This asks the
+  // ledger whether each standing claim still holds, in-sample vs out-of-sample.
+  h+='<div class="card"><h3>Rule decay</h3>'+
+     '<div class="lesson">Tests each standing Charter claim against the whole ledger, splitting on the day the rule changed. A claim marked DECAYED is not automatically wrong: it means the evidence that justified it no longer supports it at full scale, and it deserves a fresh look rather than being inherited.</div>'+
+     '<button class="qbtn gold small" id="decayBtn" type="button" style="margin-top:10px;">Re-test the Charter against the ledger</button>'+
+     '<div class="qmsg" id="decayMsg"></div><div id="decayHost"></div></div>';
   $("pane-calib").innerHTML=h;
+  const db=$("decayBtn");
+  if(db) db.onclick=runDecay;
+}
+
+async function runDecay(){
+  const btn=$("decayBtn");
+  if(btn){ btn.disabled=true; btn.textContent="Re-testing\u2026"; }
+  qmsg("decayMsg","","");
+  $("decayHost").innerHTML="";
+  try{
+    const d=await api("action=ruledecay",{},30000);
+    const rows=(d.checks||[]).map(c=>{
+      const bad=c.status==="DECAYED";
+      const col=bad?"var(--red)":(c.status==="PARTIAL"?"var(--amber)":"var(--sage)");
+      return '<div class="lesson" style="border-left:2px solid '+col+';padding-left:11px;margin-bottom:9px;">'+
+        '<b style="color:'+col+';letter-spacing:.08em;font-size:11px;">'+esc(c.status)+'</b><br>'+
+        '<b>'+esc(c.claim)+'</b><br>'+
+        '<span style="color:var(--muted)">'+esc(c.detail)+'</span></div>';
+    }).join("");
+    $("decayHost").innerHTML=
+      '<div style="margin-top:12px;font-size:12px;color:var(--faint);">Split at '+esc(d.ruleDate)+
+      ' \u00b7 '+d.settledLegs+' settled model legs</div>'+rows+
+      '<div class="lesson" style="color:var(--faint);margin-top:4px;">'+esc(d.note||"")+'</div>';
+    qmsg("decayMsg",(d.checks||[]).length+" claims re-tested on "+d.settledLegs+" settled legs.","ok");
+  }catch(e){
+    qmsg("decayMsg",String(e.message||e),"err");
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent="Re-test the Charter against the ledger"; }
+  }
 }
 
 // ---- quill tab (Phase 2: the write path) ----
