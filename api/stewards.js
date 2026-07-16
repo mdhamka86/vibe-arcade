@@ -1493,6 +1493,7 @@ module.exports = async (req, res) => {
         "For each horse bet extract: the RECEIPT number (letters and digits only, e.g. 557A0429); " +
         "the full SELECTION text verbatim; the MEET / country and course if shown; the COUPON CODE if shown; " +
         "the RACE number (the digits attached to the meet code, per the grammar above); the BET TYPE; the UNIT count (the number after 'U'); and the total AMOUNT staked in dollars. " +
+        "MULTI-HORSE STRAIGHT BETS: it is common to place the SAME bet type on SEVERAL horses in ONE race as a single ticket, e.g. 'U2 FR8 PLA 2-3-5' = 2 units PLACE on horse 2, horse 3 AND horse 5 in France race 8, $30 total. This is NOT an exotic: it is three ordinary place bets sharing one receipt. Tell them apart by BET TYPE, never by the presence of dashes: WIN and PLA are ALWAYS straight bets however many horses are listed. For these put the FULL horse list exactly as printed into horseNo ('2-3-5') and leave combo empty. Only TRIO / FORECAST / PLACE FORECAST / TIERCE / QUARTET are exotics. " +
         "For the HORSE field: a WIN or PLA bet has a single horse number, put it in horseNo. " +
         "An EXOTIC (TRIO, Forecast, Quartet) is a COMBINATION, not one horse: leave horseNo null and put the full combination string (e.g. '4-5-9/4-5-9/4-5-9' or '1-3-7') in the combo field. Never force a single horse number onto an exotic. " +
         "Read the numbers exactly as printed. If a genuinely single-horse field is unreadable use null; do not guess. " +
@@ -1547,14 +1548,61 @@ module.exports = async (req, res) => {
       } catch (e) {
         return res.status(502).json({ error: String(e.message || e) });
       }
-      const rawBets = Array.isArray(parsed.bets) ? parsed.bets : [];
+      const rawBetsRead = Array.isArray(parsed.bets) ? parsed.bets : [];
 
-      // receipts already in the vault, so re-uploading the same page never double-logs
+      // MULTI-HORSE STRAIGHT BETS -> ONE LEG PER HORSE.
+      // Placing the same bet type on several horses in one race as a single ticket
+      // ("U2 FR8 PLA 2-3-5" = 2 units place on horses 2, 3 and 5, $30) is a mobile
+      // shortcut, not a different bet: mechanically it is three ordinary place bets
+      // sharing one receipt. The journal has ALWAYS stored one row per horse — 167 PLA
+      // legs, zero multi-horse rows, and eight races already split by hand — because, as
+      // the Model Notes put it, the legs "settle independently". A 2-3-5 ticket must
+      // therefore become three rows, or the ledger cannot settle them.
+      //
+      // Without this, "PLA 2-3-5" hit the single-selection regex, silently kept ONLY
+      // horse 2, and logged the whole $30 against it. Horses 3 and 5 vanished.
+      //
+      // The split is by BET TYPE, never by punctuation: a dashed list on a WIN/PLA is
+      // several horses, the identical-looking list on a TRIO is one combination.
+      const EXOTIC_SET = ["TRIO", "TRO", "FORECAST", "FC", "PLACE FORECAST", "TIERCE", "QUARTET", "QUAD", "QT", "QUINELLA", "QN"];
+      const isExoticBet = (t) => EXOTIC_SET.includes(String(t || "").trim().toUpperCase());
+      const rawBets = [];
+      for (const b of rawBetsRead) {
+        const horseField = b == null ? "" : String(b.horseNo == null ? "" : b.horseNo).trim();
+        const isMulti = !isExoticBet(b && b.betType) && /^\d+(\s*[-,/]\s*\d+)+$/.test(horseField);
+        if (!isMulti) { rawBets.push(b); continue; }
+        const horses = horseField.split(/[-,/]/).map((x) => x.trim()).filter(Boolean);
+        // The receipt amount is the TOTAL across every horse on the ticket. Each horse
+        // carries an equal share, which is how SGPools prices it: units x $5 per horse.
+        const total = num(b.amount);
+        const per = horses.length ? r2(total / horses.length) : total;
+        for (const h of horses) {
+          rawBets.push(Object.assign({}, b, {
+            horseNo: h,
+            combo: "",
+            amount: per,
+            // every split leg shares the parent receipt: that is the audit trail back to
+            // the one physical ticket, and the dedupe key that stops a re-upload doubling.
+            _splitFrom: horseField,
+            _splitCount: horses.length,
+          }));
+        }
+      }
+
+      // Receipts already in the vault, so re-uploading the same page never double-logs.
+      // The key must match the one used at lookup below: receipt + horse (or + combo for
+      // exotics), NOT the bare receipt. A multi-horse ticket splits into several legs that
+      // all share one receipt, so a bare-receipt key would let the first horse in and
+      // reject its siblings as duplicates.
       const rxRec = /receipt\s+([0-9A-Z]+)/i;
       const existingReceipts = new Set();
       log.forEach((b) => {
         const m = rxRec.exec(String(b.notes || ""));
-        if (m) existingReceipts.add(m[1].toUpperCase());
+        if (!m) return;
+        const rec = m[1].toUpperCase();
+        const t = String(b.betType || "").toUpperCase();
+        const isEx = ["TRIO", "FORECAST", "QUARTET", "QUINELLA", "TIERCE", "PLACE FORECAST"].includes(t);
+        existingReceipts.add(rec + "|" + (isEx ? "combo:" + String(b.combo || "").trim() : "h:" + String(b.horseNo == null ? "" : b.horseNo).trim()));
       });
 
       const normType = (t) => {
@@ -1595,7 +1643,13 @@ module.exports = async (req, res) => {
             raceNo = selRace;
           }
           const tail = selM[4];
-          if (/[\-\/]/.test(tail)) selCombo = tail; else selHorse = tail;
+          // Decide by BET TYPE, never by punctuation. The old test was
+          // `if (/[-\/]/.test(tail))` -> combo, which meant a straight place bet on
+          // several horses ("U2 FR8 PLA 2-3-5") was read as a combination, so horseNo came
+          // back null and the leg rendered as "#?" with the whole $30 against it. A dashed
+          // tail on a WIN/PLA is a LIST OF HORSES; the identical-looking tail on a TRIO is
+          // ONE combination. Only the bet type can tell them apart.
+          if (exotic) selCombo = tail; else selHorse = tail;
         }
         // exotics carry a combination, not a single horse; singles carry a horse number
         const combo = exotic
@@ -1605,26 +1659,46 @@ module.exports = async (req, res) => {
           ? "" // exotics never store a single horse number
           : (b.horseNo == null ? (selHorse || "") : String(b.horseNo).trim()) || selHorse;
 
-        if (receipt && existingReceipts.has(receipt)) {
+        // DEDUPE KEY = receipt + horse, not receipt alone. A multi-horse ticket splits into
+        // several legs that all legitimately share ONE receipt ("U2 FR8 PLA 2-3-5" -> three
+        // legs, receipt 559DD930). Keying on the receipt alone would commit the first horse
+        // and silently discard the rest as duplicates — the same shape of bug as the split
+        // itself, just further down the pipe. Including the horse keeps re-upload protection
+        // intact (the same page twice still collides) while letting siblings through.
+        const dedupeKey = receipt ? receipt + "|" + (exotic ? "combo:" + combo : "h:" + horseNo) : "";
+
+        if (dedupeKey && existingReceipts.has(dedupeKey)) {
           warnings.push(
-            "Receipt " + receipt + " is already in the book, skipped to avoid a duplicate."
+            "Receipt " + receipt + (horseNo ? " (horse " + horseNo + ")" : "") +
+            " is already in the book, skipped to avoid a duplicate."
           );
           continue;
         }
-        if (receipt && seen.has(receipt)) {
-          warnings.push("Receipt " + receipt + " appeared twice in the upload, kept once.");
+        if (dedupeKey && seen.has(dedupeKey)) {
+          warnings.push("Receipt " + receipt + (horseNo ? " (horse " + horseNo + ")" : "") + " appeared twice in the upload, kept once.");
           continue;
         }
-        if (receipt) seen.add(receipt);
+        if (dedupeKey) seen.add(dedupeKey);
 
-        // stake note. For singles, flat-stake sanity ($10 WIN / $5 PLA). For exotics,
-        // stakes legitimately vary with units and combo size, so only a soft note, never a block.
+        // STAKE NOTE. This compares UNITS, not dollars. The old check compared the leg's
+        // total against a per-unit figure ($5 PLA / $10 WIN), so any multi-unit leg tripped
+        // a false alarm: "U3 FR5 PLA 3" is $15, which is correct for 3 units, yet it warned
+        // "stake $15 differs from the usual flat $5 for PLA". That manufactured most of the
+        // "differences from plan" on a slip that was actually read perfectly.
+        //
+        // The real Charter rule is about UNIT COUNT: flat $10 WIN (2 units) + $5 PLA
+        // (1 unit). So flag the unit count, which is the thing the rule actually governs.
+        // Exotic stakes legitimately vary with units and combo size: soft note only, never a block.
         let stakeNote = "";
         if (!exotic) {
-          const expected = betType === "WIN" ? 10 : betType === "PLA" ? 5 : null;
-          if (expected != null && amount && Math.abs(amount - expected) > 0.01)
+          const perUnit = 5; // SGPools unit
+          const expectedUnits = betType === "WIN" ? 2 : betType === "PLA" ? 1 : null;
+          const actualUnits = amount && perUnit ? Math.round((amount / perUnit) * 100) / 100 : null;
+          if (expectedUnits && actualUnits && Math.abs(actualUnits - expectedUnits) > 0.01) {
             stakeNote =
-              "stake $" + amount + " differs from the usual flat $" + expected + " for " + betType;
+              actualUnits + (actualUnits === 1 ? " unit" : " units") + " ($" + amount + ") where the flat rule is " +
+              expectedUnits + (expectedUnits === 1 ? " unit" : " units") + " ($" + expectedUnits * perUnit + ") for " + betType;
+          }
         } else if (amount && Math.abs(amount - 6) > 0.01) {
           // soft, informational only: exotics are allowed any stake
           stakeNote = "exotic staked $" + amount + " (exotics vary by units/combo, no flat rule)";
