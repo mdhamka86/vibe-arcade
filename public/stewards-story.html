@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>The Stewards' Room — Inquiry Findings</title>
+<style>
+  /* ── tokens: inherited from the Stewards' Room house style ───────────────── */
+  :root{
+    --bg:#15171a; --card:#1d2024; --card2:#191c1f; --line:#2c3035;
+    --ink:#e6e4df; --muted:#8b8d8a; --faint:#5f6360;
+    --brass:#b8945f; --brass-soft:#8a6f47;
+    --sage:#8ea08c; --green:#7fa87f;
+    --red:#c17b72; --amber:#c9a15e; --blue:#7f95a8;
+    --rail:#22262a;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased; line-height:1.6;
+    padding:0 0 64px;
+  }
+  .mono{font-family:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    font-variant-numeric:tabular-nums;}
+  .wrap{max-width:680px;margin:0 auto;padding:0 20px;}
+
+  /* ── the signature: a stewards' inquiry notice ──────────────────────────── */
+  .notice{
+    border-bottom:1px solid var(--line);
+    padding:38px 0 30px; margin-bottom:34px;
+    position:relative;
+  }
+  .stamp{
+    display:inline-flex; align-items:center; gap:8px;
+    border:1px solid var(--brass-soft); color:var(--brass);
+    border-radius:3px; padding:5px 10px;
+    font-size:10.5px; font-weight:600; letter-spacing:.16em; text-transform:uppercase;
+    margin-bottom:20px;
+  }
+  .stamp .dot{width:5px;height:5px;border-radius:50%;background:var(--brass);
+    box-shadow:0 0 8px rgba(184,148,95,.7);}
+  .notice h1{
+    margin:0; font-weight:300; font-size:34px; letter-spacing:-0.02em; line-height:1.15;
+  }
+  .notice h1 em{font-style:normal;color:var(--brass);}
+  .notice .lede{
+    color:var(--muted); font-size:15px; margin-top:14px; max-width:52ch;
+  }
+  .notice .filed{
+    margin-top:22px; font-size:11.5px; color:var(--faint); letter-spacing:.06em;
+  }
+
+  /* ── section headers encode the inquiry structure ───────────────────────── */
+  .sec{margin:38px 0 0;}
+  .sec > .hd{
+    display:flex; align-items:baseline; gap:12px;
+    padding-bottom:9px; margin-bottom:18px;
+    border-bottom:1px solid var(--line);
+  }
+  .sec > .hd .num{
+    font-size:10.5px; color:var(--brass-soft); letter-spacing:.14em; font-weight:600;
+  }
+  .sec > .hd h2{
+    margin:0; font-size:13px; font-weight:600; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--ink);
+  }
+
+  p{margin:0 0 14px;}
+  .body{font-size:15px; color:#cfcdc8;}
+  .body strong{color:var(--ink); font-weight:600;}
+
+  /* ── the tote board: the one bold moment ────────────────────────────────── */
+  .board{
+    background:var(--card2); border:1px solid var(--line); border-radius:10px;
+    overflow:hidden; margin:8px 0 6px;
+  }
+  .board .top{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:11px 15px; border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#1e2226,#191c20);
+  }
+  .board .top .t{font-size:10.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--brass);font-weight:600;}
+  .board .top .r{font-size:10.5px;color:var(--faint);letter-spacing:.05em;}
+  .grid{display:grid; grid-template-columns:repeat(2,1fr);}
+  .cell{
+    padding:17px 15px; border-right:1px solid var(--line); border-bottom:1px solid var(--line);
+  }
+  .cell:nth-child(2n){border-right:none;}
+  .cell .n{
+    font-size:27px; font-weight:500; letter-spacing:-0.03em; color:var(--ink);
+    display:block; line-height:1.1;
+  }
+  .cell .n .u{font-size:14px;color:var(--muted);font-weight:400;letter-spacing:0;}
+  .cell .l{
+    font-size:10.5px; color:var(--faint); letter-spacing:.11em; text-transform:uppercase;
+    margin-top:7px; display:block;
+  }
+  .cell.hero .n{color:var(--brass); font-size:31px;}
+
+  /* ── the running rail: a horizontal form-line of the countries ──────────── */
+  .rail{
+    display:flex; flex-wrap:wrap; gap:6px; margin:4px 0 2px;
+  }
+  .flag{
+    border:1px solid var(--line); background:var(--card);
+    border-radius:20px; padding:5px 11px; font-size:12px; color:var(--muted);
+    white-space:nowrap;
+  }
+  .flag.hot{border-color:var(--brass-soft); color:var(--brass);}
+
+  /* ── finding cards ──────────────────────────────────────────────────────── */
+  .find{
+    background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:16px 17px; margin-bottom:11px;
+  }
+  .find .k{
+    font-size:10.5px; letter-spacing:.13em; text-transform:uppercase;
+    color:var(--sage); font-weight:600; margin-bottom:7px;
+  }
+  .find .k.brass{color:var(--brass);}
+  .find .k.blue{color:var(--blue);}
+  .find h3{margin:0 0 7px; font-size:16px; font-weight:500; letter-spacing:-0.01em;}
+  .find p{margin:0; font-size:14px; color:var(--muted); line-height:1.62;}
+  .find p + p{margin-top:9px;}
+
+  /* ── the winners' enclosure ─────────────────────────────────────────────── */
+  .horse{
+    display:flex; align-items:baseline; gap:10px;
+    padding:10px 0; border-bottom:1px solid var(--rail);
+    font-size:14px;
+  }
+  .horse:last-child{border-bottom:none;}
+  .horse .nm{color:var(--ink); font-weight:500; flex:1; min-width:0;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .horse .wh{color:var(--faint); font-size:11.5px; letter-spacing:.03em;
+    flex-shrink:0; display:none;}
+  .horse .pay{color:var(--green); flex-shrink:0;}
+  @media(min-width:520px){ .horse .wh{display:block;} }
+
+  /* ── the ledger line: honest bottom ─────────────────────────────────────── */
+  .ledger{
+    border:1px solid var(--brass-soft); border-radius:10px;
+    padding:19px 18px; background:linear-gradient(180deg,rgba(184,148,95,.05),transparent);
+  }
+  .ledger .row{
+    display:flex; justify-content:space-between; align-items:baseline;
+    padding:7px 0; font-size:14px;
+  }
+  .ledger .row .lab{color:var(--muted);}
+  .ledger .row .val{color:var(--ink);}
+  .ledger .row.tot{
+    border-top:1px solid var(--line); margin-top:7px; padding-top:12px;
+  }
+  .ledger .row.tot .lab{color:var(--ink); font-weight:600;}
+  .ledger .row.tot .val{color:var(--brass); font-size:19px; font-weight:500;}
+  .ledger .foot{
+    margin-top:14px; padding-top:13px; border-top:1px solid var(--line);
+    font-size:13px; color:var(--muted); line-height:1.6;
+  }
+
+  /* ── the edge: the four points, given room to breathe ───────────────────── */
+  .edge{
+    margin-top:11px; padding:20px 18px 18px;
+    border:1px solid var(--brass-soft); border-radius:10px;
+    background:linear-gradient(180deg,rgba(184,148,95,.07),rgba(184,148,95,.02));
+  }
+  .tide{display:flex; align-items:center; gap:11px; margin-bottom:9px;}
+  .tide-l{font-size:12.5px; color:var(--muted); width:118px; flex-shrink:0;}
+  .tide-bar{
+    flex:1; height:7px; border-radius:4px; background:var(--rail);
+    overflow:hidden; min-width:0;
+  }
+  .tide-fill{display:block; height:100%; border-radius:4px;}
+  .tide-fill.house{width:100%; background:var(--faint);}
+  .tide-fill.us{width:78.3%; background:var(--brass);}
+  .tide-v{font-size:12.5px; color:var(--muted); width:52px; text-align:right; flex-shrink:0;}
+  .tide-v.brass{color:var(--brass); font-weight:600;}
+  .edge-out{
+    display:flex; align-items:center; gap:14px;
+    margin-top:16px; padding-top:15px; border-top:1px solid rgba(184,148,95,.2);
+  }
+  .edge-out .big{
+    font-size:52px; line-height:.9; font-weight:500; color:var(--brass);
+    letter-spacing:-0.04em; flex-shrink:0;
+  }
+  .edge-out .big-l{font-size:13px; color:var(--ink); line-height:1.45;}
+  .edge-note{
+    margin:14px 0 0; font-size:12.5px; color:var(--muted); line-height:1.6;
+  }
+  .edge-note strong{color:var(--ink);}
+
+  /* ── the target: next month's card ──────────────────────────────────────── */
+  .tgt{
+    background:var(--card); border:1px solid var(--line); border-radius:10px;
+    padding:16px 17px; margin-bottom:11px;
+    display:flex; gap:14px; align-items:flex-start;
+  }
+  .tgt .mark{
+    width:26px; height:26px; border-radius:50%; flex-shrink:0; margin-top:1px;
+    border:1px solid var(--brass-soft); color:var(--brass);
+    display:flex; align-items:center; justify-content:center;
+    font-size:11px; font-weight:600;
+  }
+  .tgt .b{min-width:0;}
+  .tgt h3{margin:0 0 5px; font-size:15px; font-weight:500; letter-spacing:-0.01em;}
+  .tgt p{margin:0; font-size:13.5px; color:var(--muted); line-height:1.6;}
+  .tgt p strong{color:var(--ink);}
+
+  .kicker{
+    margin-top:34px; padding:20px 18px;
+    border:1px solid var(--line); border-radius:10px; background:var(--card2);
+    text-align:center;
+  }
+  .kicker .q{font-size:16px; color:var(--ink); font-weight:400; line-height:1.55;}
+  .kicker .a{font-size:12px; color:var(--faint); margin-top:11px; letter-spacing:.05em;}
+
+  .sig{
+    margin-top:30px; padding-top:18px; border-top:1px solid var(--line);
+    font-size:11.5px; color:var(--faint); text-align:center; letter-spacing:.05em;
+  }
+  .sig b{color:var(--brass-soft); font-weight:600;}
+
+  @media(max-width:420px){
+    .notice h1{font-size:28px;}
+    .cell .n{font-size:24px;} .cell.hero .n{font-size:27px;}
+  }
+  @media(prefers-reduced-motion:no-preference){
+    .notice,.sec,.kicker{animation:rise .5s cubic-bezier(.2,.7,.3,1) both;}
+    .sec:nth-of-type(1){animation-delay:.05s} .sec:nth-of-type(2){animation-delay:.1s}
+    .sec:nth-of-type(3){animation-delay:.15s} .sec:nth-of-type(4){animation-delay:.2s}
+    @keyframes rise{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ═══ THE INQUIRY NOTICE ═══════════════════════════════════════════════ -->
+  <div class="notice">
+    <div class="stamp"><span class="dot"></span>Inquiry opened 19 June 2026</div>
+    <h1>The Stewards' Room<br /><em>has been sitting for 27 days.</em></h1>
+    <p class="lede">
+      In racing, when something needs explaining, the stewards call an inquiry.
+      They pull the evidence, they hear the argument, and they publish a verdict
+      even when it is unflattering. This is that, but for a betting model.
+    </p>
+    <p class="filed mono">FILED FOR N. NADINE &nbsp;·&nbsp; 16 JULY 2026 &nbsp;·&nbsp; hammyLabs</p>
+  </div>
+
+  <!-- ═══ 01 · WHAT IT IS ══════════════════════════════════════════════════ -->
+  <div class="sec">
+    <div class="hd"><span class="num mono">01</span><h2>The problem</h2></div>
+    <div class="body">
+      <p>
+        Betting on horses is easy. Knowing whether you are any <strong>good</strong> at it is
+        almost impossible. A punter remembers the winners, forgets the losers, and tells
+        themselves a story that flatters. Memory is a terrible auditor.
+      </p>
+      <p>
+        The Stewards' Room exists to make that self-deception impossible. Every bet is
+        logged before the race runs, with the reasoning attached, and settled against the
+        official record afterwards. Not the version you remember. The version that happened.
+      </p>
+    </div>
+  </div>
+
+  <!-- ═══ 02 · THE CHARTER ═════════════════════════════════════════════════ -->
+  <div class="sec">
+    <div class="hd"><span class="num mono">02</span><h2>The charter</h2></div>
+
+    <div class="find">
+      <div class="k brass">Rule one</div>
+      <h3>Write the reason down first</h3>
+      <p>Every leg carries the reasoning it was picked on, recorded <em>before</em> the result is known. You cannot retro-fit a good story onto a lucky win if the story is already in writing.</p>
+    </div>
+
+    <div class="find">
+      <div class="k brass">Rule two</div>
+      <h3>Flat stakes. Always.</h3>
+      <p>Early on, the model staked more on the picks it felt best about. Those picks did worst. The confidence label now records what the model <em>expected</em> and moves no money at all. It is an honesty meter, not a throttle.</p>
+    </div>
+
+    <div class="find">
+      <div class="k brass">Rule three</div>
+      <h3>Prove it before you scale it</h3>
+      <p>No new idea gets more money until it has earned it over a real sample. Every trial runs capped, in its own ledger, so a bad idea costs almost nothing to discover.</p>
+    </div>
+
+    <div class="find">
+      <div class="k brass">Rule four</div>
+      <h3>Reconcile to the cent</h3>
+      <p>The journal is checked against the actual Singapore Pools receipts, every day. If the wallet and the ledger disagree, the ledger is wrong until proven otherwise.</p>
+    </div>
+  </div>
+
+  <!-- ═══ 03 · THE BOARD ═══════════════════════════════════════════════════ -->
+  <div class="sec">
+    <div class="hd"><span class="num mono">03</span><h2>The board so far</h2></div>
+
+    <div class="board">
+      <div class="top">
+        <span class="t">Running totals</span>
+        <span class="r mono">19 JUN — 16 JUL 2026</span>
+      </div>
+      <div class="grid">
+        <div class="cell hero">
+          <span class="n mono">162</span>
+          <span class="l">Races contested</span>
+        </div>
+        <div class="cell hero">
+          <span class="n mono">60</span>
+          <span class="l">Meets attended</span>
+        </div>
+        <div class="cell">
+          <span class="n mono">292</span>
+          <span class="l">Bets logged</span>
+        </div>
+        <div class="cell">
+          <span class="n mono">155</span>
+          <span class="l">Horses backed</span>
+        </div>
+        <div class="cell">
+          <span class="n mono">12</span>
+          <span class="l">Countries</span>
+        </div>
+        <div class="cell">
+          <span class="n mono">27 <span class="u">days</span></span>
+          <span class="l">Since first bet</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="rail" style="margin-top:14px;">
+      <span class="flag hot">South Africa</span>
+      <span class="flag hot">UK &amp; Ireland</span>
+      <span class="flag hot">France</span>
+      <span class="flag">Australia</span>
+      <span class="flag">Turkey</span>
+      <span class="flag">Japan</span>
+      <span class="flag">Hong Kong</span>
+      <span class="flag">Malaysia</span>
+      <span class="flag">Korea</span>
+      <span class="flag">Germany</span>
+      <span class="flag">Mauritius</span>
+      <span class="flag">Peru</span>
+    </div>
+    <p class="body" style="font-size:13px;color:var(--faint);margin-top:11px;">
+      One phone. Twelve racing jurisdictions. Every card read before the gates opened.
+    </p>
+  </div>
+
+  <!-- ═══ 04 · FINDINGS ════════════════════════════════════════════════════ -->
+  <div class="sec">
+    <div class="hd"><span class="num mono">04</span><h2>What we actually learned</h2></div>
+
+    <div class="find">
+      <div class="k">Finding</div>
+      <h3>The place pool is the quiet hero</h3>
+      <p><strong>96 of 156</strong> place bets returned money. A 61.5% cash rate. Backing a horse to merely run top-three is unglamorous and it is the thing that has kept the book alive.</p>
+    </div>
+
+    <div class="find">
+      <div class="k">Finding</div>
+      <h3>Confidence was pointing backwards</h3>
+      <p>The picks labelled <em>High</em> confidence performed <strong>worst</strong> of any band. Not slightly, consistently. That discovery is the single most valuable thing the journal has produced, and it only surfaced because the labels were being written down and scored.</p>
+      <p>Most punters never find this out about themselves. This one is measured every single day.</p>
+    </div>
+
+    <div class="find">
+      <div class="k">Finding</div>
+      <h3>South Africa is the sharp end</h3>
+      <p>Across <strong>86 legs</strong>, the South African book is running at <strong>-0.2%</strong>. Effectively breakeven, in a game engineered to take a cut of every ticket. It is the region with the best data, and it shows.</p>
+    </div>
+
+    <div class="find">
+      <div class="k blue">Improvement</div>
+      <h3>The tool keeps auditing itself</h3>
+      <p>The engine now re-tests its own rules against the full ledger, so a rule that stops being true announces itself instead of quietly being inherited. It has already caught one that had gone stale.</p>
+      <p>The source list has been rebuilt too, from 24 to 43 verified feeds across every region on the coupon.</p>
+    </div>
+  </div>
+
+  <!-- ═══ 05 · THE ENCLOSURE ═══════════════════════════════════════════════ -->
+  <div class="sec">
+    <div class="hd"><span class="num mono">05</span><h2>The winners' enclosure</h2></div>
+    <div class="board" style="padding:4px 15px 6px;">
+      <div class="horse"><span class="nm">Smashed Avo</span><span class="wh mono">SELANGOR</span><span class="pay mono">$10 → $54</span></div>
+      <div class="horse"><span class="nm">Mister Chang</span><span class="wh mono">DIEPPE, FR</span><span class="pay mono">$10 → $46</span></div>
+      <div class="horse"><span class="nm">Blind Date</span><span class="wh mono">KENILWORTH, SA</span><span class="pay mono">$15 → $48</span></div>
+      <div class="horse"><span class="nm">Come Together</span><span class="wh mono">GREYVILLE POLY</span><span class="pay mono">$10 → $34</span></div>
+      <div class="horse"><span class="nm">Classy Clarets</span><span class="wh mono">MUSSELBURGH, UK</span><span class="pay mono">$10 → $32</span></div>
+      <div class="horse"><span class="nm">Lost Boys</span><span class="wh mono">ASCOT, UK</span><span class="pay mono">$10 → $30</span></div>
+      <div class="horse"><span class="nm">Easy On Me</span><span class="wh mono">SELANGOR</span><span class="pay mono">$5 → $27</span></div>
+    </div>
+    <p class="body" style="font-size:13px;color:var(--faint);margin-top:11px;">
+      Best day: <span class="mono">21 June</span> — 36 legs across three continents, <span style="color:var(--green)">+$78.10</span>.
+    </p>
+  </div>
+
+  <!-- ═══ 06 · THE VERDICT ═════════════════════════════════════════════════ -->
+  <div class="sec">
+    <div class="hd"><span class="num mono">06</span><h2>The verdict</h2></div>
+    <div class="ledger">
+      <div class="row"><span class="lab">Staked across 27 days</span><span class="val mono">$1,980.00</span></div>
+      <div class="row"><span class="lab">Returned</span><span class="val mono">$1,700.00</span></div>
+      <div class="row tot"><span class="lab">Cost of the hobby</span><span class="val mono">$280.00</span></div>
+      <div class="foot">
+        That is <strong style="color:var(--ink)">$10.37 a day</strong>, or <strong style="color:var(--ink)">$1.73 a race</strong>.
+      </div>
+    </div>
+
+    <!-- the four points: the actual headline, given its own air -->
+    <div class="edge">
+      <div class="tide">
+        <span class="tide-l">The house takes</span>
+        <span class="tide-bar"><span class="tide-fill house"></span></span>
+        <span class="tide-v mono">−18.0%</span>
+      </div>
+      <div class="tide">
+        <span class="tide-l">The model gives back</span>
+        <span class="tide-bar"><span class="tide-fill us"></span></span>
+        <span class="tide-v mono brass">−14.1%</span>
+      </div>
+      <div class="edge-out">
+        <span class="big mono">4</span>
+        <span class="big-l">points better than the house<br />expects of a punter picking at random</span>
+      </div>
+      <p class="edge-note">
+        Singapore Pools takes up to 18% out of every pool before a single dividend is paid.
+        That is the tide everyone swims against. Across <strong>274 settled bets</strong>, the
+        model swims about four points faster than it.
+      </p>
+    </div>
+
+    <div class="ledger" style="margin-top:11px;">
+      <div class="foot" style="margin-top:0;padding-top:0;border-top:none;">
+        It is not a profit. It was never going to be one on a coffee-money stake. But it is a
+        measurable, honest edge over the takeout, and it is written down where it cannot lie.
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ 07 · THE TARGET ══════════════════════════════════════════════════ -->
+  <div class="sec">
+    <div class="hd"><span class="num mono">07</span><h2>Set for August</h2></div>
+    <p class="body" style="font-size:14px;color:var(--muted);margin-bottom:16px;">
+      A target has to be something you can be caught missing. "Make a profit" is a wish,
+      and on 27 days of data it would take roughly <span class="mono">500</span> more bets to
+      even prove it happened. So the targets are things that can be counted by the 31st.
+    </p>
+
+    <div class="tgt">
+      <span class="mark mono">01</span>
+      <div class="b">
+        <h3>Zero bets at meets we cannot read</h3>
+        <p>The inquiry's sharpest finding. Mauritius and Japan — the two regions with no form data available — account for <strong>7% of the bets and 35% of the entire loss</strong>. Twenty legs, running at <strong>-64.5%</strong>, against <strong>-10.0%</strong> everywhere else. Skip those and the book is a different animal. Countable: the number should be nil.</p>
+      </div>
+    </div>
+
+    <div class="tgt">
+      <span class="mark mono">02</span>
+      <div class="b">
+        <h3>Get Medium-High to 100 settled bets</h3>
+        <p>It sits at <strong>46</strong>. Not enough to trust either way — the honest read needs closer to 200. Reaching 100 by the end of August would put the band halfway to a verdict that means something, instead of a hunch wearing a number.</p>
+      </div>
+    </div>
+
+    <div class="tgt">
+      <span class="mark mono">03</span>
+      <div class="b">
+        <h3>Keep the ledger at zero flags</h3>
+        <p>Fourteen betting days, <strong>292 bets</strong>, reconciled to the cent against the official receipts, with nothing unexplained. That is the part that makes every other number on this page worth reading. It stays at zero.</p>
+      </div>
+    </div>
+
+    <div class="tgt">
+      <span class="mark mono">04</span>
+      <div class="b">
+        <h3>Hold the line on stakes</h3>
+        <p>No sizing up after a good day. The one time the model bet more on its favourite picks, those picks did worst. <strong>$10 and $5</strong>, flat, regardless of how good it feels. The discipline is the asset.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="kicker">
+    <p class="q">Most people bet for a month and end up with a feeling.<br />This one ended up with <em style="color:var(--brass);font-style:normal">evidence</em>.</p>
+    <p class="a mono">STEWARDS' INQUIRY — FINDINGS PUBLISHED IN FULL</p>
+  </div>
+
+  <p class="sig">
+    THE STEWARDS' ROOM &nbsp;·&nbsp; A <b>hammyLabs</b> INSTRUMENT<br />
+    Every figure on this page is pulled from the live journal. Nothing rounded in our favour.
+  </p>
+
+</div>
+</body>
+</html>
