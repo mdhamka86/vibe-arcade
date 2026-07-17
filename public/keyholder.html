@@ -43,7 +43,21 @@
 // ============================================================
 
 // ------------------------------------------------------------
-// CLIENT BLOCK — the only thing that changes per engagement.
+// CLIENT BLOCK — the chrome. Names, dates, tier, currency, coordinates.
+//
+// HONEST SCOPE NOTE (verified by audit, not aspiration):
+// Rewriting this block correctly re-skins the shell — masthead, fee maths,
+// tier gating, FX, hours, the whole frame follows. It does NOT rewrite the
+// engagement. The PHASES and COST_GROUPS below are Phuket-specific prose
+// written for a two-child family: 5 references to Rachel and Ethan by name,
+// ~16 to Phuket/BISP/Ko Kaew. A fork for a childless client leaves "School
+// shortlist built for Rachel (Y7) and Ethan (Y3)" on their board and bills
+// them for a capital levy they don't owe.
+//
+// So a fork is: rewrite CLIENT, then rewrite PHASES + COST_GROUPS for that
+// family's actual move. That second half is the job the concierge is being
+// paid for, and it is the reason this is a white-glove service and not a SaaS.
+// The engine is generic. The engagement never is.
 // ------------------------------------------------------------
 const CLIENT = {
   engagement: "PKT-2026-014",
@@ -133,10 +147,10 @@ function tierIncludes(itemTier) {
 // rendered. Every task states plainly who is accountable for it.
 // ------------------------------------------------------------
 const OWNER = {
-  concierge: { id: "concierge", label: "We handle this",   short: "Us",     colour: "#c9a227" },
-  client:    { id: "client",    label: "You must do this", short: "You",    colour: "#5b8db8" },
-  vendor:    { id: "vendor",    label: "Vendor, we coordinate", short: "Vendor", colour: "#7fa88b" },
-  licensed:  { id: "licensed",  label: "Licensed professional", short: "Referred", colour: "#c98b5a" },
+  concierge: { id: "concierge", label: "Concierge handles this", short: "Concierge", colour: "#c9a227" },
+  client:    { id: "client",    label: "Client must do this",    short: "Client",    colour: "#5b8db8" },
+  vendor:    { id: "vendor",    label: "Vendor, concierge coordinates", short: "Vendor", colour: "#7fa88b" },
+  licensed:  { id: "licensed",  label: "Licensed professional",  short: "Referred",  colour: "#c98b5a" },
 };
 
 // ------------------------------------------------------------
@@ -423,8 +437,8 @@ const COST_GROUPS = [
   },
   {
     group: "The engagement",
-    weight: "Us",
-    lead: "Our fee, for completeness. It should be the least surprising line here.",
+    weight: "Concierge fee",
+    lead: "The concierge fee, for completeness. It should be the least surprising line here.",
     items: [
       { id: "en-fee", label: "Concierge fee · " + CLIENT.tier + " tier", val: 0, oneOff: true, isFee: true,
         src: "Fifty percent on signing, balance on move-in day. No scope creep.",
@@ -848,9 +862,22 @@ function Masthead({ who, days, p }) {
 
       <div style={{ fontFamily: disp, fontSize: 19, fontWeight: 400, color: C.bone2, lineHeight: 1.5,
         marginBottom: 22, maxWidth: 620 }}>
-        The <span style={{ color: C.bone }}>{CLIENT.familyName} family</span> move to {CLIENT.dest.city} on{" "}
+        The <span style={{ color: C.bone }}>{CLIENT.familyName} family</span>{" "}
+        {days > 0 ? "move to " : "moved to "}{CLIENT.dest.city} on{" "}
         <span style={{ color: C.bone }}>{fmtDate(CLIENT.moveInDate)}</span>.
         {days > 0 && <span> That is <span style={{ color: C.brass }}>{days} days</span> away.</span>}
+        {days <= 0 && (() => {
+          // post-arrival. Bespoke buys 30 days of access; anything else is done.
+          const since = -days;
+          if (CLIENT.tier !== "Bespoke") {
+            return <span> That was <span style={{ color: C.bone2 }}>{since} days</span> ago.</span>;
+          }
+          const left = 30 - since;
+          if (left > 0) return <span> Concierge access runs for{" "}
+            <span style={{ color: C.brass }}>{left} more day{left === 1 ? "" : "s"}</span>.</span>;
+          return <span> Concierge access closed{" "}
+            <span style={{ color: C.bone2 }}>{-left} day{-left === 1 ? "" : "s"}</span> ago.</span>;
+        })()}
       </div>
 
       <div style={{ marginBottom: 9 }}><LedgerRule p={p} /></div>
@@ -1372,7 +1399,9 @@ function AdmissionsClock() {
               <div style={{ fontFamily: mono, fontSize: 8, letterSpacing: ".12em",
                 textTransform: "uppercase", color: C.bone3, marginBottom: 5 }}>You land</div>
               <div style={{ fontFamily: mono, fontSize: 15, color: C.bone }}>
-                {daysUntil(CLIENT.moveInDate)} days
+                {daysUntil(CLIENT.moveInDate) > 0
+                  ? daysUntil(CLIENT.moveInDate) + " days"
+                  : "landed"}
               </div>
               <div style={{ fontFamily: mono, fontSize: 9, color: C.bone3, marginTop: 3 }}>
                 {fmtShort(CLIENT.moveInDate)}
@@ -1391,7 +1420,7 @@ function AdmissionsClock() {
           </div>
 
           {/* the gap between landing and term start, which is the real risk */}
-          {toTerm > 0 && daysUntil(CLIENT.moveInDate) > 0 && (
+          {toTerm > 0 && daysUntil(CLIENT.moveInDate) > 0 && ADMISSIONS.showGap !== false && (
             <div style={{ fontFamily: body, fontSize: 11.5, color: C.bone2, lineHeight: 1.6,
               marginTop: 12, paddingLeft: 11, borderLeft: "2px solid " + col + "66" }}>
               {(() => {
@@ -1417,7 +1446,7 @@ function SplitStrip({ split }) {
   const order = ["concierge", "client", "vendor", "licensed"];
   return (
     <div style={{ marginBottom: 22 }}>
-      <Eyebrow>Who owes what</Eyebrow>
+      <Eyebrow>Who is accountable</Eyebrow>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 1,
         background: C.line, border: "1px solid " + C.line, borderRadius: 3, overflow: "hidden" }}>
         {order.map(k => {
