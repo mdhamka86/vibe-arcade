@@ -299,12 +299,32 @@ function phuketToday() {
 }
 
 async function stageTriage(dateParam) {
-  const url =
-    BASE + "/api/triage2" + (dateParam ? "?date=" + encodeURIComponent(dateParam) : "");
+  // THE SGPools RACE CARD IS THE SINGLE SOURCE OF TRUTH. Everything downstream — every
+  // tipster, every preview, every selection — is checked against what comes back here.
+  //
+  // TWO THINGS THIS MUST NEVER DO AGAIN:
+  //
+  // 1. Call triage2 WITHOUT a date. It silently defaults to the FIRST available date on
+  //    the SGPools list, which is usually days stale (asked on 17/07, returned 11/07).
+  //    A stale card is worse than no card: it looks authoritative and is wrong.
+  //
+  // 2. Assume the runner map arrived. map=1 is now explicit rather than trusting a
+  //    downstream default, and a meet with no runners is treated as having no card at all.
+  const want = dateParam || phuketToday();
+  const url = BASE + "/api/triage2?map=1&date=" + encodeURIComponent(want);
   const r = await fetchWithTimeout(url, 25000, true);
   if (!r.ok) throw new Error("triage2 failed: " + r.error);
   const t = r.body;
   if (t.error) throw new Error("triage2: " + t.error);
+
+  // THE CARD MUST BE FOR THE DAY WE ASKED FOR. If SGPools has no card for today, the
+  // honest answer is "no racing to bet", not "here is some other day's racing".
+  if (t.date && String(t.date).trim() !== String(want).trim())
+    throw new Error(
+      "SGPools card date mismatch: asked for " + want + ", got " + t.date +
+      ". Refusing to build a book against another day's card. Available: " +
+      (t.dates || []).join(", ")
+    );
 
   const gated = [];
   const deselected = [];
@@ -388,9 +408,125 @@ async function stageSources(pack) {
     m.sources = (byRegion[m.region] || []).map((s) => ({
       id: s.id, ok: s.ok, error: s.error, chars: s.text.length, text: s.text,
     }));
-  pack.sourceHealth = results.map((s) => ({
-    id: s.id, region: s.region, ok: s.ok, chars: s.text.length, error: s.error,
-  }));
+  // ============================================================================
+  // THE SSOT GATE — the SGPools race card is the single source of truth.
+  // ============================================================================
+  // Standing instruction from Hammy, given repeatedly and violated on 17/07/2026:
+  // the SGPools race card at RaceCards.aspx is the ULTIMATE source of truth, and
+  // EVERY tip source must reference back to it. Verify on date, meet, venue, race
+  // number, horse number and horse name. Nothing else is authoritative.
+  //
+  // What went wrong on 17/07: Race Coast's API served previews for 18/07, 19/07,
+  // 15/07 — and NOTHING for 17/07, because their pundits cover Hollywoodbets
+  // tracks and today's SGPools "South Africa" was a course they do not preview.
+  // Gold Circle likewise served a Durbanville sheet for a meeting SGPools was not
+  // carrying. The trawl fetched both successfully, and a source returning 14k of
+  // rich pundit prose looks EXACTLY like a working source whether it describes
+  // today's card or next Saturday's. Six legs were staked on horses nobody had
+  // analysed: not one of the six tipped horses appeared on the SGPools SA card,
+  // and five of six race distances disagreed.
+  //
+  // Fetching a source successfully is NOT the same as the source being about the
+  // meeting we can bet. That question was never asked. It is asked here now.
+  //
+  // The card gives us every field needed to answer it, so we use all of them:
+  //   - RUNNER NAMES: how many of this meet's actual runners does the source name?
+  //     This is the strongest signal and cannot be faked by coincidence.
+  //   - RACE DISTANCES: the card says R6 is 1400m; a source calling R6 "1250m" is
+  //     describing a different race, however confident its prose sounds.
+  //   - THE DATE: the card is for a specific day. A source naming a DIFFERENT date
+  //     prominently is previewing another meeting.
+  // A source that fails on runners is disqualified outright — its race and horse
+  // numbers are meaningless for this coupon and any pick taken from it lands on an
+  // unrelated horse.
+  const ssotVerify = (meet, text) => {
+    const names = [];
+    const dists = [];
+    (meet.raceMap || []).forEach((r) => {
+      if (r.dist && /^\d+m$/.test(String(r.dist))) dists.push(String(r.dist).toLowerCase());
+      (r.runners || []).forEach((h) => {
+        const n = String(h.name || "").trim();
+        if (n.length > 3) names.push(n);
+      });
+    });
+    const norm = (x) => String(x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const body = norm(text);
+    const raw = String(text || "").toLowerCase();
+
+    const nameHits = names.filter((n) => body.includes(norm(n)));
+    const namePct = names.length ? Math.round((nameHits.length / names.length) * 100) : 0;
+    const distHits = [...new Set(dists)].filter((d) => raw.includes(d.replace("m", "m")) || raw.includes(d.replace("m", " m")));
+
+    // Date check: does the source name a date OTHER than the card's, and not the card's?
+    const cardDate = String(pack.date || "").trim(); // DD/MM/YYYY
+    const dm = cardDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    let dateWarn = null;
+    if (dm) {
+      const MON = ["january","february","march","april","may","june","july","august","september","october","november","december"];
+      const d = String(parseInt(dm[1], 10));
+      const monthName = MON[parseInt(dm[2], 10) - 1] || "";
+      const mentionsToday =
+        raw.includes(cardDate) ||
+        (monthName && new RegExp("\\b" + d + "\\s+" + monthName + "\\b").test(raw));
+      // other dates of the same month named in the text
+      const others = monthName
+        ? [...raw.matchAll(new RegExp("\\b(\\d{1,2})\\s+" + monthName + "\\b", "g"))].map((x) => x[1])
+        : [];
+      const otherDays = [...new Set(others)].filter((x) => x !== d);
+      if (!mentionsToday && otherDays.length)
+        dateWarn =
+          "names " + monthName + " " + otherDays.join(", ") + " but NOT " + d + " " + monthName +
+          " (the card's date)";
+    }
+
+    return { names: names.length, nameHits: nameHits.length, namePct, distHits: distHits.length, dists: [...new Set(dists)].length, dateWarn };
+  };
+
+  // Run the gate over every source on every meet. A source that names NONE of the
+  // card's runners is disqualified: `ssotFail` is set, and buildCopyText refuses
+  // to hand its text to the model at all. Half-measures are what got us here — a
+  // warning buried in 14k of prose is a warning the model reads past.
+  for (const m of pack.meets) {
+    for (const s of m.sources || []) {
+      if (!s.ok || !s.text) continue;
+      const v = ssotVerify(m, s.text);
+      s.ssot = v;
+      if (v.names >= 8 && v.nameHits === 0) {
+        s.ssotFail =
+          "names 0 of the " + v.names + " runners on the SGPools card for " + m.venue +
+          (v.dateWarn ? "; " + v.dateWarn : "") +
+          " — this source is about a DIFFERENT MEETING and its race/horse numbers do not " +
+          "apply to this coupon";
+      } else if (v.names >= 8 && v.namePct < 5 && v.dateWarn) {
+        s.ssotFail =
+          "names only " + v.nameHits + " of " + v.names + " card runners (" + v.namePct + "%) and " +
+          v.dateWarn + " — treated as a different meeting";
+      }
+    }
+    const live = (m.sources || []).filter((s) => s.ok && s.text && !s.ssotFail);
+    const rejected = (m.sources || []).filter((s) => s.ssotFail);
+    m.ssotRejected = rejected.map((s) => ({ id: s.id, why: s.ssotFail }));
+    // A meet whose every source failed the gate is UNSOURCED, and must be said so
+    // plainly. This is precisely the 17/07 South Africa case: sources fetched fine,
+    // all of them described other meetings, and the model was handed them as if
+    // they were today's homework.
+    if ((m.sources || []).length && !live.length && rejected.length)
+      m.ssotBlind =
+        "EVERY source for " + m.venue + " failed verification against the SGPools card. " +
+        "No source published analysis of this meeting. There is NO data edge here today: " +
+        "do not select from this meet.";
+  }
+
+  pack.sourceHealth = results.map((s) => {
+    const m = pack.meets.find((x) => (x.sources || []).some((y) => y.id === s.id));
+    const src = m ? (m.sources || []).find((y) => y.id === s.id) : null;
+    return {
+      id: s.id, region: s.region, ok: s.ok, chars: s.text.length, error: s.error,
+      ssot: src && src.ssot ? src.ssot.nameHits + "/" + src.ssot.names + " card runners" : null,
+      ssotFail: src ? src.ssotFail || null : null,
+    };
+  });
+
 
   // BLIND MEETS. A meet whose region has no adapter (Peru, Mauritius — anything falling to
   // "OTHER") gets an empty sources array and would otherwise look identical to a meet whose
@@ -473,8 +609,28 @@ function buildCopyText(pack) {
     });
     (m.sources || []).forEach((s) => {
       if (!s.ok) L.push("\n[" + s.id + "] failed: " + s.error);
-      else L.push("\n[" + s.id + "]\n" + String(s.text).slice(0, 4500));
+      else if (s.ssotFail) {
+        // WITHHELD, not warned. The 17/07 lesson: a caution banner sitting above 14k of
+        // confident pundit prose is a caution the model reads straight past — it did, and
+        // six legs went on horses nobody analysed. If a source cannot be verified against
+        // the SGPools card, its text is not shown at all. There is nothing in it worth
+        // reading: every race number and horse number in it belongs to another meeting.
+        L.push(
+          "\n[" + s.id + "] WITHHELD — FAILED VERIFICATION AGAINST THE SGPools CARD: " +
+          s.ssotFail + ". Its text is deliberately not included. Do not ask for it and do " +
+          "not select from it."
+        );
+      } else {
+        const v = s.ssot;
+        const note =
+          v && v.names
+            ? "\n(verified against the SGPools card: names " + v.nameHits + " of " + v.names +
+              " runners" + (v.dateWarn ? "; NOTE it " + v.dateWarn : "") + ")"
+            : "";
+        L.push("\n[" + s.id + "]" + note + "\n" + String(s.text).slice(0, 4500));
+      }
     });
+    if (m.ssotBlind) L.push("\n*** " + m.ssotBlind + " ***");
   }
   return L.join("\n");
 }

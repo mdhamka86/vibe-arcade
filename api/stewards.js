@@ -829,6 +829,64 @@ module.exports = async (req, res) => {
       });
     }
 
+    if (action === "amendleg") {
+      // Correct the DESCRIPTIVE fields of a leg: the horse name, the reason, the
+      // confidence label. Deliberately CANNOT touch date, meet, race, horse number,
+      // bet type, stake, result or payout — those are what the receipt and the tote
+      // decide, and they belong to settle/voidlegs, not to a text edit. This exists
+      // for the case where the money is right but the story attached to it is wrong.
+      //
+      // Why: on 17/07 a leg was placed as "U1 MB6 PLA 1" (Melbourne race 6, horse 1)
+      // but carried the name FAIRY KNIGHT and a reason about Sooty at Durbanville,
+      // because propose.js had silently overwritten the model's horse name with the
+      // name sitting at that number on a DIFFERENT venue's card. The bet was real; the
+      // description was foreign to it. The vault could void the leg or settle it, but
+      // had no way to simply tell the truth about it.
+      if (req.method !== "POST")
+        return res.status(405).json({ error: "POST required" });
+      const body = parseBody(req);
+      const xlRow = parseInt(body.xlRow, 10);
+      const why = String(body.why || "").trim();
+      if (!isFinite(xlRow))
+        return res.status(422).json({ error: "xlRow is required" });
+      if (!why)
+        return res.status(422).json({ error: "why is required: amending a leg is a decision and must carry its reason" });
+
+      const [logRaw] = await redis([["GET", "stw:betlog"]]);
+      const _expBetlog = logRaw == null ? null : sha(logRaw);
+      if (!logRaw) return res.status(404).json({ error: "Vault not seeded yet" });
+      const log = JSON.parse(logRaw);
+      const row = log.find((r) => r.xlRow === xlRow);
+      if (!row) return res.status(404).json({ error: "xlRow " + xlRow + " not found" });
+
+      // Only these three may change. Anything else is a settlement or a void.
+      const FIELDS = ["horseName", "reason", "confidence"];
+      const changed = {};
+      for (const f of FIELDS) {
+        if (!(f in body)) continue;
+        const next = body[f] == null ? "" : String(body[f]).slice(0, 4000);
+        if (String(row[f] == null ? "" : row[f]) === next) continue;
+        changed[f] = { from: row[f] == null ? "" : row[f], to: next };
+      }
+      if (!Object.keys(changed).length)
+        return res.status(422).json({ error: "Nothing to amend: send at least one of horseName, reason, confidence with a new value" });
+
+      row.amendHistory = row.amendHistory || [];
+      row.amendHistory.push({ at: new Date().toISOString(), changed, why });
+      row.amendHistory = row.amendHistory.slice(-10);
+      for (const f of Object.keys(changed)) row[f] = changed[f].to;
+
+      const str = JSON.stringify(log);
+      const { verify, allMatch } = await writeVerified(
+        { "stw:betlog": str },
+        { "stw:betlog": _expBetlog }
+      );
+      if (!allMatch)
+        return res.status(409).json({ error: "Write refused: the bet log changed while this amendment was being prepared. Reload and try again.", verify });
+      const meta = await bumpMeta({ "stw:betlog": sha(str) }, "amendleg", "row " + xlRow + ": " + Object.keys(changed).join(", "));
+      return res.status(200).json({ ok: true, xlRow, changed, verify, rev: meta.rev });
+    }
+
     if (action === "voidlegs") {
       // Retire a bet-log row that should never have been written: a duplicate, a misread,
       // a leg logged against the wrong day. The row is NOT deleted — it moves to the Void

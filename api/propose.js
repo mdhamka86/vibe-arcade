@@ -254,6 +254,28 @@ function packBrief(pack) {
   );
   for (const m of pack.meets) {
     L.push("\n#### " + m.venue + " [" + m.region + ", score " + m.score + ", " + m.races + " races" + (m.coupon ? ", " + m.coupon : "") + "]");
+    // THE TRAWL'S SSOT VERDICT COMES FIRST, BEFORE ANY PROSE.
+    // The trawl verifies every source against the SGPools card — the single source of
+    // truth — on runner names, race distances and the card's date. A source that names
+    // NONE of the card's runners is describing a different meeting, and its text is
+    // withheld rather than shown. When EVERY source for a meet fails that check, the
+    // meet has no analysis at all today and must not be selected from.
+    //
+    // This is the 17/07/2026 lesson stated in code: Race Coast had published previews for
+    // 18 and 19 July but nothing for the 17th, the trawl handed them over anyway, and six
+    // legs were staked on South African horses that were never analysed — the numbers came
+    // from another day's card. An unsourced meet is not an invitation to try harder.
+    if (m.ssotBlind) {
+      L.push("*** " + m.ssotBlind + " ***");
+      L.push("DO NOT PROPOSE ANY LEG FROM THIS MEET. Skipping it is the correct outcome, not a failure.");
+      (m.ssotRejected || []).forEach((r) =>
+        L.push("  withheld: [" + r.id + "] " + r.why)
+      );
+      continue;
+    }
+    (m.ssotRejected || []).forEach((r) =>
+      L.push("  SOURCE WITHHELD [" + r.id + "]: " + r.why)
+    );
     if (m.weather && !m.weather.error)
       L.push(
         "WEATHER: rain yesterday " + m.weather.yesterdayRainMm + "mm, today " +
@@ -689,7 +711,11 @@ module.exports = async (req, res) => {
         "CALIBRATION UPDATE (16/07/2026, rule-decay audit on 429 settled legs) — the following were RETIRED and must NOT be treated as proven: (a) \"WIN bleeds ~2x PLA\" has INVERTED (WIN -14.5%, PLA -18.6%, ratio 0.78x), so do NOT trim WIN legs on that reasoning; (b) \"Medium-High is the only green band\" DECAYED (+19.2% on 19 legs in-sample, -17.6% on 110 legs out-of-sample, -13.4% combined), so Medium-High must NOT bias selection. Both were promoted on samples one to two orders of magnitude too small. " +
         "WHAT SURVIVES: flat staking (confidence is a gauge, never a throttle), and the inverted ladder (High is still the worst WIN band at -19.1%). What the evidence actually supports is BEING PICKIER, not a bet type: after 26/06 WIN improved (-19.6% to -9.8%) as WIN legs were cut to the cleanest spots, while PLA worsened (-9.4% to -22.2%) as place legs were expanded. Fewer, better legs on either pool. Do NOT read that as \"go WIN-heavy\" — that is the same one-window reasoning that produced the retired Medium-High rule. " +
         "Every horse number you cite MUST come from the runner map in the pack (the SGPools coupon card). If you cannot confirm a number there, flag it UNCONFIRMED. Never invent a number from tipster ordering. " +
-        "THE NUMBERING TRAP — THIS IS THE ONE THAT PUTS MONEY ON THE WRONG HORSE. SGPools MERGES several venues into ONE meet and RENUMBERS the races end to end (a \"South Africa\" meet is often Turffontein + Durbanville combined into Race 1-17 under a single coupon Code). Every press source — Gold Circle, Race Coast, Racenet — numbers races within ITS OWN venue. So \"Durbanville Race 6\" and SGPools \"SA Race 6\" are almost never the same race. NEVER carry a race or horse number across from a preview. The ONLY correct method: take the horse NAME from your analysis, then FIND THAT NAME in the runner map, and use the race number and horse number the runner map gives it. The runner map is the SGPools card itself and is the sole authority. If the name is not in the runner map, do not guess a number — flag the leg UNCONFIRMED and say so. A leg whose name and number disagree is worse than no leg at all, because it looks confident while pointing at a stranger.";
+        "THE SGPools RACE CARD IS THE SINGLE SOURCE OF TRUTH. The runner map in this pack IS that card, fetched from SGPools itself. It is the ONLY authority for what is running, in which race, under which number, on which day. Every tip source — Gold Circle, Race Coast, Racenet, Timeform, all of them — is a SECONDARY OPINION that must be verified back against the card before you may act on a single word of it. A source is not evidence because it is confident, detailed or well known. It is evidence only if the card agrees it is talking about today's meeting. " +
+        "VERIFY ON EVERY FIELD: date, meet, venue, race number, horse number, horse name. All six. A preview may be genuine journalism about a real meeting and still be useless here because it is the wrong day or the wrong course. " +
+        "THE METHOD, WHICH IS NOT OPTIONAL: form your view from the sources, then take the horse NAME and FIND IT IN THE RUNNER MAP. Use the race number and horse number the RUNNER MAP gives it. NEVER carry a race number or a horse number across from a preview — press sources number races within their own venue and their own card, and those numbers routinely mean something completely different on the SGPools coupon. If the name is not in the runner map, the horse is not bettable here: drop the leg or flag it UNCONFIRMED. Do not guess. " +
+        "WHY THIS IS WRITTEN SO FORCEFULLY: on 17/07/2026 the trawl served a Gold Circle tipsheet for a Durbanville meeting SGPools was not carrying, and Race Coast previews for 18/07 and 19/07 — because no source had published anything for that day's actual SA card. The model read them as today's homework. Not one of the six tipped horses appeared anywhere on the SGPools SA card and five of six race distances disagreed, yet six legs were staked on horses nobody had analysed. Every one of those sources fetched perfectly. Fetching a source is not the same as the source being about the meeting you can bet. " +
+        "A source marked WITHHELD in this pack failed that verification. Its content is deliberately absent. Do not speculate about what it might have said and do not select from the meet on its strength. A meet marked with an SSOT blind warning has NO verified analysis today: take nothing from it. A short, honest book beats a confident one built on another day's racing.";
 
       const prompt =
         "THE CHARTER (immovable law):\n" + charterText(ch) +
