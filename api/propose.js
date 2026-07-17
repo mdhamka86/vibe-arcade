@@ -688,7 +688,8 @@ module.exports = async (req, res) => {
         "You do NOT chase winners; a short, selective book is success, not timidity. " +
         "CALIBRATION UPDATE (16/07/2026, rule-decay audit on 429 settled legs) — the following were RETIRED and must NOT be treated as proven: (a) \"WIN bleeds ~2x PLA\" has INVERTED (WIN -14.5%, PLA -18.6%, ratio 0.78x), so do NOT trim WIN legs on that reasoning; (b) \"Medium-High is the only green band\" DECAYED (+19.2% on 19 legs in-sample, -17.6% on 110 legs out-of-sample, -13.4% combined), so Medium-High must NOT bias selection. Both were promoted on samples one to two orders of magnitude too small. " +
         "WHAT SURVIVES: flat staking (confidence is a gauge, never a throttle), and the inverted ladder (High is still the worst WIN band at -19.1%). What the evidence actually supports is BEING PICKIER, not a bet type: after 26/06 WIN improved (-19.6% to -9.8%) as WIN legs were cut to the cleanest spots, while PLA worsened (-9.4% to -22.2%) as place legs were expanded. Fewer, better legs on either pool. Do NOT read that as \"go WIN-heavy\" — that is the same one-window reasoning that produced the retired Medium-High rule. " +
-        "Every horse number you cite MUST come from the runner map in the pack (the SGPools coupon card). If you cannot confirm a number there, flag it UNCONFIRMED. Never invent a number from tipster ordering.";
+        "Every horse number you cite MUST come from the runner map in the pack (the SGPools coupon card). If you cannot confirm a number there, flag it UNCONFIRMED. Never invent a number from tipster ordering. " +
+        "THE NUMBERING TRAP — THIS IS THE ONE THAT PUTS MONEY ON THE WRONG HORSE. SGPools MERGES several venues into ONE meet and RENUMBERS the races end to end (a \"South Africa\" meet is often Turffontein + Durbanville combined into Race 1-17 under a single coupon Code). Every press source — Gold Circle, Race Coast, Racenet — numbers races within ITS OWN venue. So \"Durbanville Race 6\" and SGPools \"SA Race 6\" are almost never the same race. NEVER carry a race or horse number across from a preview. The ONLY correct method: take the horse NAME from your analysis, then FIND THAT NAME in the runner map, and use the race number and horse number the runner map gives it. The runner map is the SGPools card itself and is the sole authority. If the name is not in the runner map, do not guess a number — flag the leg UNCONFIRMED and say so. A leg whose name and number disagree is worse than no leg at all, because it looks confident while pointing at a stranger.";
 
       const prompt =
         "THE CHARTER (immovable law):\n" + charterText(ch) +
@@ -789,11 +790,36 @@ module.exports = async (req, res) => {
               String(s).toLowerCase().replace(/[^a-z0-9]/g, "");
             const cardName = cardIndex[key];
             if (norm(cardName) !== norm(leg.horseName)) {
+              // A NAME MISMATCH IS NOT A TYPO. It is proof that the model's race/horse
+              // NUMBER does not mean what the model thought it meant.
+              //
+              // SGPools INTEGRATES several venues into one renumbered sequence per meet
+              // (SA = Turffontein + Durbanville merged into Race 1-17 under one Code).
+              // Gold Circle, Race Coast and every press preview number races within their
+              // OWN venue. So "Durbanville R6 #1 = Sooty" and "SGPools SA R6 #1 = Fairy
+              // Knight" are both true and refer to DIFFERENT RACES.
+              //
+              // The old code took the card name as authoritative and overwrote the model's
+              // name, keeping the number. That produced a leg headed "R6 #1 FAIRY KNIGHT"
+              // whose reasoning discussed Sooty — and since the slip is built from the
+              // number, it would have put real money on a horse nobody analysed. Silently
+              // repairing the symptom made the fatal error invisible.
+              //
+              // Now: keep BOTH names, keep the model's own name in the leg so the heading
+              // and the reasoning cannot contradict each other, and flag UNCONFIRMED so it
+              // must be checked on the SGPools card before it is ever staked.
+              leg.unconfirmed = true;
+              leg.cardName = cardName;
               corrections.push(
-                "card-match note: R" + leg.raceNo + " #" + leg.horseNo + " " + leg.meet +
-                  " is '" + cardName + "' on the SGPools card (model said '" + leg.horseName + "') — using the card name"
+                "NUMBERING MISMATCH — DO NOT PLACE UNCHECKED: the model picked '" +
+                  leg.horseName + "' as R" + leg.raceNo + " #" + leg.horseNo + " " + leg.meet +
+                  ", but the SGPools card says #" + leg.horseNo + " in that race is '" + cardName +
+                  "'. These are different horses, which means the source's race numbering does not " +
+                  "match the SGPools integrated card (SGPools merges venues and renumbers; press " +
+                  "previews number within their own venue). Find '" + leg.horseName +
+                  "' on the SGPools card and use ITS integrated race and horse number, or drop the leg. " +
+                  "Flagged UNCONFIRMED."
               );
-              leg.horseName = cardName;
             }
           }
         }
