@@ -114,7 +114,21 @@ function parseAll(html) {
       const cells = [...row[1].matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) =>
         c[1].replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&nbsp;/g, " ").trim()
       );
-      if (cells.length >= 2 && /^\d{1,2}$/.test(cells[0]) && /[A-Za-z]/.test(cells[1])) {
+      // A runner row is: number | name | ... The first cell must be a plain integer
+      // (this correctly rejects the header rows, whose first cells read "HorseNo",
+      // "Jockey", "Colour", "Sire") and the second must contain a letter.
+      //
+      // The bound was /^\d{1,2}$/, which silently dropped any runner numbered 100+.
+      // Verified 17/07/2026 against the live card: the highest number across all 8
+      // meets is 18, so this was never firing — but the cap was arbitrary, and a
+      // dropped runner here is invisible everywhere downstream. \d{1,3} costs nothing.
+      //
+      // Deliberately NOT loosened to accept "1a"/"1b" coupled entries: checked every
+      // runner on all 8 of today's meets and every horse number is a plain integer.
+      // SGPools renumbers into its own unambiguous coupon sequence, which is what a
+      // tote operator must do because the number IS the bet. Do not add speculative
+      // tolerance to the one parser the whole book trusts.
+      if (cells.length >= 2 && /^\d{1,3}$/.test(cells[0]) && /[A-Za-z]/.test(cells[1])) {
         runners.push({ no: parseInt(cells[0], 10), name: cells[1] });
       }
     }
@@ -248,7 +262,37 @@ module.exports = async (req, res) => {
     meets.forEach((mt) => { if (mt.date && dates.indexOf(mt.date) === -1) dates.push(mt.date); });
     if (wantList) { res.status(200).json({ dates }); return; }
 
-    const chosen = date && dates.indexOf(date) !== -1 ? date : dates[0];
+    // DATE SELECTION. If a caller ASKS for a date, they must get that date or an
+    // error — never a different day's card wearing the right day's clothes.
+    //
+    // The old line was:
+    //   const chosen = date && dates.indexOf(date) !== -1 ? date : dates[0];
+    // which silently fell back to the FIRST available date whenever the requested
+    // one was absent or misspelled. On 17/07/2026 that returned the 11/07 card to a
+    // caller asking for today, six days stale, with a 200 and no hint anything was
+    // wrong. A stale card is worse than no card: it is authoritative-looking and
+    // false, and everything downstream (the trawl's SSOT checks, the card-match law,
+    // the bet slip itself) treats whatever this returns as ground truth.
+    //
+    // No date param still defaults to dates[0] — that is the documented convenience
+    // for exploratory calls — but an EXPLICIT and unavailable date is now a 404.
+    let chosen;
+    if (date) {
+      if (dates.indexOf(date) === -1) {
+        res.status(404).json({
+          error:
+            "No SGPools race card for " + date + ". Available dates: " +
+            (dates.length ? dates.join(", ") : "(none)") +
+            ". Refusing to substitute a different day's card.",
+          requested: date,
+          dates,
+        });
+        return;
+      }
+      chosen = date;
+    } else {
+      chosen = dates[0];
+    }
     const todays = meets.filter((mt) => mt.date === chosen);
 
     const results = await Promise.all(
