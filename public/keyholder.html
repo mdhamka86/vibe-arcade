@@ -1,0 +1,2182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>The Keyholder — Private Relocation Concierge</title>
+<meta name="description" content="A private relocation concierge board. One engagement, two parties, everything visible." />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: #10161f; }
+  #root { min-height: 100vh; }
+  .loading { color:#c9a227; font-family:'IBM Plex Mono',monospace; text-align:center; padding-top:42vh;
+    font-size:12px; letter-spacing:.32em; text-transform:uppercase; }
+  .errbox { color:#e06c5a; font-family:monospace; font-size:12px; white-space:pre-wrap; padding:20px; line-height:1.5; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: #0d121a; }
+  ::-webkit-scrollbar-thumb { background: #2a3646; border-radius: 4px; }
+  button:focus-visible, input:focus-visible, select:focus-visible {
+    outline: 2px solid #c9a227; outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
+</style>
+</head>
+<body>
+<div id="root"><div class="loading">Lighting the candles…</div></div>
+
+<script id="appsrc" type="text/plain">
+
+// ============================================================
+// THE KEYHOLDER — private relocation concierge board.
+// Proof of concept. Fictional client: the Tan family, SG -> Phuket.
+// Demonstrates: concierge<>client shared board, tier gating,
+// setup-cost calculator, who-does-what accountability tagging.
+//
+// Every client-specific value lives in the CLIENT block below.
+// A new engagement = fork this file, rewrite CLIENT, ship.
+// Nothing below the CLIENT block knows who the client is.
+//
+// Scaffold pattern matches the established hammyLabs single-file apps.
+// ============================================================
+
+// ------------------------------------------------------------
+// CLIENT BLOCK — the only thing that changes per engagement.
+// ------------------------------------------------------------
+const CLIENT = {
+  engagement: "PKT-2026-014",
+  tier: "Signature",              // Essentials | Signature | Bespoke
+  familyName: "Tan",
+  parties: {
+    client:    { name: "Wei Ming", role: "Client",    colour: "#5b8db8" },
+    partner:   { name: "Jia Hui",  role: "Client",    colour: "#a3739a" },
+    concierge: { name: "Hammy",    role: "Concierge", colour: "#c9a227" },
+    associate: { name: "Nadine",   role: "Concierge", colour: "#7fa88b" },
+  },
+  children: [
+    { name: "Rachel", age: 11, year: "Year 7" },
+    { name: "Ethan",  age: 7,  year: "Year 3" },
+  ],
+  origin: { city: "Singapore", country: "Singapore", currency: "SGD", symbol: "S$" },
+  dest:   { city: "Phuket", country: "Thailand", currency: "THB", symbol: "฿",
+            lat: 7.9506, lon: 98.3703, area: "Ko Kaew" },
+  fxDefault: 25.5,                // THB per 1 SGD
+  moveInDate: "2026-08-14",
+  signedDate: "2026-06-02",
+  totalFee: 5000,                 // in origin currency
+  depositPct: 50,
+  hours: { open: 8, close: 20, tz: "Thailand time (GMT+7)" },
+  // whimsy flag: gamification is opt-in per client, decided at scoping.
+  playful: false,
+  // how long a researched figure stays trustworthy before it needs re-checking.
+  // school fees move annually; rents move seasonally. 90 days is the compromise.
+  staleAfterDays: 90,
+};
+
+// ------------------------------------------------------------
+// PROVENANCE — the corridor knowledge, dated.
+//
+// Every researched figure carries the day it was checked and where it
+// came from. This is the difference between local knowledge and a guess
+// in a suit. It is also the liability control: a fee that has drifted
+// shows amber rather than quietly being wrong in a client's budget.
+// ------------------------------------------------------------
+const TODAY = new Date();
+function ageDays(iso) {
+  return Math.floor((TODAY - new Date(iso + "T00:00:00+07:00")) / 86400000);
+}
+function freshness(iso) {
+  if (!iso) return { state: "none", days: null };
+  const d = ageDays(iso);
+  if (d <= CLIENT.staleAfterDays) return { state: "fresh", days: d };
+  if (d <= CLIENT.staleAfterDays * 2) return { state: "ageing", days: d };
+  return { state: "stale", days: d };
+}
+const FRESH_COLOUR = { fresh: "#7fa88b", ageing: "#c98b5a", stale: "#e06c5a", none: "#7d8a9c" };
+// Every date in this app is a Thailand date. Formatting without pinning the
+// zone renders it a day early for anyone west of Bangkok, which on a
+// "verified on" stamp is a small lie and on a move-in date is a large one.
+const TZ = "Asia/Bangkok";
+function fmtShort(iso) {
+  return new Date(iso + "T00:00:00+07:00")
+    .toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: TZ });
+}
+
+// derived
+const PARTY = CLIENT.parties;
+const PARTY_LIST = Object.values(PARTY);
+function partyByName(n) { return PARTY_LIST.find(p => p.name === n) || null; }
+function partyColour(n) { const p = partyByName(n); return p ? p.colour : "#7d8a9c"; }
+// a name on the board that is not a party to this engagement is worth showing
+// as such rather than silently styling it like everyone else.
+function isKnownParty(n) { return !!partyByName(n); }
+function isConcierge(n) { const p = partyByName(n); return !!p && p.role === "Concierge"; }
+
+// ------------------------------------------------------------
+// TIERS — mirrors the pricing one-pager exactly.
+// ------------------------------------------------------------
+const TIERS = ["Essentials", "Signature", "Bespoke"];
+const TIER_RANK = { Essentials: 1, Signature: 2, Bespoke: 3 };
+const TIER_META = {
+  Essentials: { fee: 2000, blurb: "Expert guidance, not a full handoff." },
+  Signature:  { fee: 5000, blurb: "Home move-in ready on arrival day." },
+  Bespoke:    { fee: 10000, blurb: "You land, and it already feels like home." },
+};
+function tierIncludes(itemTier) {
+  return TIER_RANK[CLIENT.tier] >= TIER_RANK[itemTier];
+}
+
+// ------------------------------------------------------------
+// OWNERSHIP — the liability layer. Section 4 & 5 of the agreement,
+// rendered. Every task states plainly who is accountable for it.
+// ------------------------------------------------------------
+const OWNER = {
+  concierge: { id: "concierge", label: "We handle this",   short: "Us",     colour: "#c9a227" },
+  client:    { id: "client",    label: "You must do this", short: "You",    colour: "#5b8db8" },
+  vendor:    { id: "vendor",    label: "Vendor, we coordinate", short: "Vendor", colour: "#7fa88b" },
+  licensed:  { id: "licensed",  label: "Licensed professional", short: "Referred", colour: "#c98b5a" },
+};
+
+// ------------------------------------------------------------
+// THE BOARD — the itemised scope. This IS the Service Proposal.
+// If it isn't on this board, it isn't in the engagement.
+// ------------------------------------------------------------
+const PHASES = [
+  {
+    id: "schools",
+    title: "Schools",
+    sub: "The long pole. Started first, finishes last.",
+    lead: "Phuket's established schools run 6 to 12 month waiting lists for the popular year groups, and Year 7 is one of them. This phase opened the day the engagement was signed.",
+    tasks: [
+      { id: "sch-shortlist", t: "School shortlist built for Rachel (Y7) and Ethan (Y3)",
+        owner: "concierge", tier: "Essentials",
+        note: "Four schools scoped against year group, curriculum and drive time from the shortlisted homes." },
+      { id: "sch-tour-bisp", t: "BISP campus tour arranged",
+        owner: "concierge", tier: "Essentials",
+        note: "Ko Kaew campus. We're a seven-minute walk away, so we attend in person and send you the video walkthrough." },
+      { id: "sch-waitlist", t: "Waitlist registrations submitted",
+        owner: "concierge", tier: "Essentials",
+        note: "Registered at two schools in parallel. You can decline an offer later; you cannot jump a queue." },
+      { id: "sch-docs", t: "School reports gathered and translated where needed",
+        owner: "client", tier: "Essentials",
+        note: "We cannot request your children's records on your behalf. Budget two to four weeks if anything needs certified translation." },
+      { id: "sch-cat4", t: "CAT4 assessment scheduled",
+        owner: "vendor", tier: "Essentials",
+        note: "Sat at the school, administered by the school. We book the slot and get you there." },
+      { id: "sch-offer", t: "Offer received and place accepted",
+        owner: "client", tier: "Essentials",
+        note: "The acceptance and the deposit are yours to sign. We'll tell you the day it lands." },
+      { id: "sch-bus", t: "School bus route confirmed against the home",
+        owner: "concierge", tier: "Signature",
+        note: "Checked before you commit to a property, not after. This has undone more than one family." },
+      { id: "sch-uniform", t: "Uniforms and kit sourced and placed at home",
+        owner: "concierge", tier: "Bespoke",
+        note: "Sized, bought, hung in the wardrobe before you walk in." },
+    ],
+  },
+  {
+    id: "home",
+    title: "Home",
+    sub: "Shortlist, viewings, lease.",
+    lead: "Property is chosen around the school run, not the other way round. Every home on the shortlist was drive-timed at 7:40am on a school day.",
+    tasks: [
+      { id: "hm-brief", t: "Housing brief agreed",
+        owner: "concierge", tier: "Essentials",
+        note: "Three bedrooms, pool access, under twenty minutes to the school gate at peak." },
+      { id: "hm-shortlist", t: "Curated shortlist of six homes",
+        owner: "concierge", tier: "Essentials",
+        note: "Six seen in person by us, filmed, with the honest notes. Not a portal dump." },
+      { id: "hm-viewings", t: "Accompanied viewings",
+        owner: "concierge", tier: "Essentials",
+        note: "We walk each one with you, in person or on a live call if you're still in Singapore." },
+      { id: "hm-deepclean", t: "Pre-move-in condition inspection",
+        owner: "concierge", tier: "Signature",
+        note: "Photographed room by room before you sign. Mould, plumbing, aircon, the lot. We learned this one the hard way." },
+      { id: "hm-lease", t: "Lease reviewed by a Thai-licensed lawyer",
+        owner: "licensed", tier: "Essentials",
+        note: "We are not lawyers and will not read your lease for you. We introduce; you engage them directly." },
+      { id: "hm-sign", t: "Lease signed and deposits paid",
+        owner: "client", tier: "Essentials",
+        note: "Two months' deposit plus first month. Paid by you, direct to the landlord." },
+      { id: "hm-keys", t: "Keys collected and held",
+        owner: "concierge", tier: "Signature",
+        note: "We hold them until you land. That's rather the whole idea." },
+    ],
+  },
+  {
+    id: "paper",
+    title: "Paperwork",
+    sub: "Visas, permits, the unglamorous half.",
+    lead: "Enrolling a child requires the right visa status. This phase and the schools phase are joined at the hip, which is exactly where families get caught out.",
+    tasks: [
+      { id: "pp-visa-ref", t: "Immigration consultant introduced",
+        owner: "licensed", tier: "Essentials",
+        note: "We are not immigration consultants. A child on a school place needs the correct visa route, and that advice must come from someone licensed to give it." },
+      { id: "pp-visa-apply", t: "Visa applications submitted",
+        owner: "client", tier: "Essentials",
+        note: "Filed by you with your consultant. We track the date, we do not file it." },
+      { id: "pp-tdac", t: "Thai digital arrival card completed for all four",
+        owner: "client", tier: "Essentials",
+        note: "Required for entry. Ten minutes online. Everyone forgets it." },
+      { id: "pp-bank", t: "Bank account introduction arranged",
+        owner: "concierge", tier: "Essentials",
+        note: "Introduction and the appointment. The signing is you, in person, with your passport." },
+      { id: "pp-sim", t: "SIM cards arranged",
+        owner: "concierge", tier: "Essentials",
+        note: "Four SIMs, registered, in an envelope at the airport." },
+      { id: "pp-util", t: "Utilities live before arrival",
+        owner: "concierge", tier: "Signature",
+        note: "Power, water, fibre. On, tested, before the door opens." },
+    ],
+  },
+  {
+    id: "arrival",
+    title: "Arrival",
+    sub: "The day itself.",
+    lead: "Everything above exists so that this day is boring.",
+    tasks: [
+      { id: "ar-transfer", t: "Private airport transfer booked",
+        owner: "concierge", tier: "Essentials",
+        note: "One vehicle, four people, luggage for a life. Booked, confirmed, driver named." },
+      { id: "ar-movers", t: "Shipped goods coordinated with the mover",
+        owner: "vendor", tier: "Signature",
+        note: "You contract the mover directly. We coordinate the delivery window and meet them at the house." },
+      { id: "ar-furnish", t: "Furniture sourced and placed",
+        owner: "concierge", tier: "Signature",
+        note: "Sourced locally, delivered, built, positioned. Beds made." },
+      { id: "ar-orient", t: "Neighbourhood orientation walk",
+        owner: "concierge", tier: "Essentials",
+        note: "The clinic, the market, the 7-Eleven that has the good sandwiches. Two hours, on foot." },
+      { id: "ar-kitchen", t: "Kitchen stocked and toiletries placed",
+        owner: "concierge", tier: "Bespoke",
+        note: "Enough for four days. Milk in the fridge, coffee on the counter." },
+      { id: "ar-driver", t: "On-call driver for the first week",
+        owner: "vendor", tier: "Bespoke",
+        note: "Seven days. Named driver, your schedule." },
+      { id: "ar-doctor", t: "Family doctor and clinic registration",
+        owner: "concierge", tier: "Bespoke",
+        note: "Registered before you need it, which is the only sensible time to do it." },
+    ],
+  },
+  {
+    id: "after",
+    title: "First 30 Days",
+    sub: "Post move-in concierge access.",
+    lead: "Bespoke tier only, and capped at thirty days from move-in by the agreement. After that it's a separate retainer.",
+    tasks: [
+      { id: "af-access", t: "Concierge access open",
+        owner: "concierge", tier: "Bespoke",
+        note: "Thirty days from move-in. Anything on the island, we handle it or we find who does." },
+      { id: "af-schoolrun", t: "First school run walked with you",
+        owner: "concierge", tier: "Bespoke",
+        note: "Both children, first morning, gate to gate." },
+      { id: "af-staff", t: "Household staff introduced and scheduled",
+        owner: "concierge", tier: "Bespoke",
+        note: "Vetted, interviewed, references checked before they meet you." },
+    ],
+  },
+];
+
+// ------------------------------------------------------------
+// THE ADMISSIONS WINDOW — the second clock.
+//
+// Move-in day is the obvious countdown. It is not the urgent one.
+// Phuket schools run an August academic year, and the main application
+// wave is October to February. Competitive year groups (Year 7, IB
+// Diploma) often close by Christmas. A family moving in August with a
+// Year 7 child has already missed the main wave and is in waitlist
+// territory. Saying so plainly is the job.
+// ------------------------------------------------------------
+const ADMISSIONS = {
+  termStart: "2026-08-17",          // August academic year
+  mainWave: { from: "2025-10-01", to: "2026-02-28" },
+  springWave: { from: "2026-03-01", to: "2026-05-31" },
+  // Year 7 is named repeatedly as one of the tight groups
+  tightYears: ["Year 7", "Year 12"],
+  verified: "2026-07-15",
+  src: "Phuket admissions guidance, cross-checked across four sources",
+};
+
+function waveNow() {
+  const now = TODAY;
+  const d = iso => new Date(iso + "T00:00:00+07:00");
+  if (now <= d(ADMISSIONS.mainWave.to)) return "main";
+  if (now <= d(ADMISSIONS.springWave.to)) return "spring";
+  return "late";
+}
+function tightChildren() {
+  return CLIENT.children.filter(c => ADMISSIONS.tightYears.includes(c.year));
+}
+
+const ALL_TASKS = PHASES.flatMap(p => p.tasks.map(t => ({ ...t, phase: p.id })));
+// only tasks the client's tier actually bought are live scope
+const SCOPED_TASKS = ALL_TASKS.filter(t => tierIncludes(t.tier));
+const OUT_OF_SCOPE = ALL_TASKS.filter(t => !tierIncludes(t.tier));
+
+// ------------------------------------------------------------
+// THE LANDING BILL — the sales asset.
+// Amounts in destination currency (THB). Client edits; it recomputes.
+// Figures verified July 2026. Schools move annually; leases don't.
+// Every line carries provenance, because a number without a source
+// is just a guess wearing a suit.
+// ------------------------------------------------------------
+const COST_GROUPS = [
+  {
+    group: "Schools",
+    weight: "The big one",
+    lead: "For most families this is larger than the rent. It surprises people every time.",
+    items: [
+      { id: "sch-lev-1", label: "Capital levy · Rachel", val: 200000,
+        src: "Refundable when she leaves. Ties up capital for years.", oneOff: true,
+        ver: "2026-07-15", how: "Published school fee schedules, cross-checked across four guides" },
+      { id: "sch-lev-2", label: "Capital levy · Ethan", val: 200000,
+        src: "Same again. Some schools cap this per family; confirm at offer.", oneOff: true,
+        ver: "2026-07-15", how: "Published fee schedules. Per-family caps vary; confirm at offer" },
+      { id: "sch-reg", label: "Registration & application fees", val: 12000,
+        src: "Non-refundable, per child, paid at application not offer.", oneOff: true,
+        ver: "2026-07-15", how: "Application fee ฿6,000/child at the established schools" },
+      { id: "sch-fee-1", label: "Tuition · Rachel (Y7)", val: 780000, annual: true,
+        src: "Y7 sits in the upper band at the established British schools.",
+        ver: "2026-07-15", how: "Y7–8 published band. Schools review fees annually; confirm at offer" },
+      { id: "sch-fee-2", label: "Tuition · Ethan (Y3)", val: 620000, annual: true,
+        src: "Primary bands run materially below secondary.",
+        ver: "2026-07-15", how: "Y1–3 published band, mid-range of the island cluster" },
+      { id: "sch-bus", label: "School bus · both children", val: 95000, annual: true,
+        src: "Optional. Worth it if you're off the direct route.",
+        ver: "2026-07-15", how: "Published transport schedule. Route must be confirmed against the home" },
+      { id: "sch-extras", label: "Uniform, trips, activities", val: 60000, annual: true,
+        src: "The line nobody budgets for and everybody pays.",
+        ver: "2026-07-15", how: "Guidance puts extras at ฿30k–80k/yr at this school tier" },
+    ],
+  },
+  {
+    group: "Home",
+    weight: "Front-loaded",
+    lead: "Almost all of this comes back to you, eventually, if the place is left as you found it.",
+    items: [
+      { id: "hm-dep", label: "Security deposit (2 months)", val: 160000,
+        src: "Refundable. Standard on a family home in this bracket.", oneOff: true,
+        ver: "2026-07-12", how: "Two months is the local standard on a long let. Our own lease matched it" },
+      { id: "hm-adv", label: "First month rent", val: 80000,
+        src: "Three-bed family homes in the school catchments run ฿80k–150k/mo.", oneOff: true,
+        ver: "2026-07-12", how: "Catchment rental range for family villas near the school cluster" },
+      { id: "hm-rent", label: "Rent (monthly, ongoing)", val: 80000, recurring: true,
+        src: "The number that repeats. Everything else fades.",
+        ver: "2026-07-12", how: "Bottom of the catchment band. Moves with season and proximity" },
+      { id: "hm-agent", label: "Agent fee", val: 0,
+        src: "Usually landlord-paid on long lets here. Leave at zero unless told otherwise.", oneOff: true,
+        ver: "2026-07-12", how: "No agent fee on our own Phuket lease. Not universal, but typical" },
+    ],
+  },
+  {
+    group: "Furnishing",
+    weight: "Once",
+    lead: "Assumes an unfurnished let. If the place comes furnished, zero most of this out and watch the total fall off a cliff.",
+    items: [
+      { id: "fn-beds", label: "Beds & mattresses ×3", val: 45000, oneOff: true,
+        src: "Children's rooms plus the main. Don't cheap out on the mattress.",
+        ver: "2026-06-28", how: "Scanned in person at Big C. Promo prices move; treat as a starting point" },
+      { id: "fn-sofa", label: "Sofa & living room", val: 35000, oneOff: true, src: "",
+        ver: "2026-06-28", how: "Scanned in person at Big C" },
+      { id: "fn-dining", label: "Dining set", val: 18000, oneOff: true, src: "",
+        ver: "2026-06-28", how: "Scanned in person at Big C. HomePro for better" },
+      { id: "fn-white", label: "Fridge, washer, aircon top-up", val: 55000, oneOff: true,
+        src: "Often partly present. Check before you buy.",
+        ver: "2026-06-28", how: "Scanned in person at Big C. Often partly supplied with the house" },
+      { id: "fn-kit", label: "Kitchen & soft furnishing", val: 25000, oneOff: true, src: "",
+        ver: "2026-06-28", how: "Estimated from our own landing bill" },
+    ],
+  },
+  {
+    group: "Getting around",
+    weight: "Monthly",
+    lead: "Two school runs a day changes the maths. A scooter does not carry two children and their bags in the rain.",
+    items: [
+      { id: "gt-car", label: "Car hire (monthly)", val: 25000, recurring: true,
+        src: "Family-size, long-term hire with insurance. Larger than the eco class.",
+        ver: "2026-07-12", how: "Long-term hire quotes. Eco runs ~฿15k; family-size is the step up" },
+      { id: "gt-scoot", label: "Second scooter (monthly)", val: 5000, recurring: true,
+        src: "For the errands the car shouldn't do.",
+        ver: "2026-07-12", how: "Local monthly hire, ฿3k–5k. A Click needs no gear licence" },
+    ],
+  },
+  {
+    group: "Living",
+    weight: "Monthly",
+    lead: "Four people, air conditioning, a tropical island. Honest numbers, not brochure numbers.",
+    items: [
+      { id: "lv-food", label: "Groceries & eating out", val: 45000, recurring: true,
+        src: "Four people. Imported goods carry a real premium here.",
+        ver: "2026-07-12", how: "Our own household spend, scaled from two adults to four people" },
+      { id: "lv-util", label: "Power, water, fibre", val: 12000, recurring: true,
+        src: "Aircon is most of this. It runs higher than people expect.",
+        ver: "2026-07-12", how: "Our own bills, scaled for a larger house and two more people" },
+      { id: "lv-health", label: "Family health insurance", val: 18000, recurring: true,
+        src: "Direct-billing cover at the private hospitals. Non-optional with children.",
+        ver: "2026-07-12", how: "Family cover with direct billing. Quote depends on ages and history" },
+      { id: "lv-help", label: "Household help", val: 15000, recurring: true,
+        src: "Part-time. Full-time live-out costs materially more.",
+        ver: "2026-07-12", how: "Local going rate for part-time help" },
+    ],
+  },
+  {
+    group: "The engagement",
+    weight: "Us",
+    lead: "Our fee, for completeness. It should be the least surprising line here.",
+    items: [
+      { id: "en-fee", label: "Concierge fee · " + CLIENT.tier + " tier", val: 0, oneOff: true, isFee: true,
+        src: "Fifty percent on signing, balance on move-in day. No scope creep.",
+        ver: CLIENT.signedDate, how: "Your signed proposal. This one is not an estimate" },
+    ],
+  },
+];
+
+function fmtDest(n) {
+  const v = Math.round(Number(n) || 0);
+  return CLIENT.dest.symbol + v.toLocaleString("en-US");
+}
+function fmtOrigin(destAmt, rate) {
+  const r = Number(rate) || CLIENT.fxDefault;
+  const v = (Number(destAmt) || 0) / r;
+  return CLIENT.origin.symbol + v.toLocaleString("en-US", { maximumFractionDigits: 0 });
+}
+function defaultCosts() {
+  const c = {};
+  COST_GROUPS.forEach(g => g.items.forEach(it => {
+    c[it.id] = it.isFee ? Math.round(TIER_META[CLIENT.tier].fee * CLIENT.fxDefault) : it.val;
+  }));
+  return c;
+}
+
+// ------------------------------------------------------------
+// derived maths — readiness, money, dates
+// ------------------------------------------------------------
+const pct = (a, b) => (b === 0 ? 0 : Math.round((a / b) * 100));
+
+function phaseReadiness(phaseId, done) {
+  const live = SCOPED_TASKS.filter(t => t.phase === phaseId);
+  return { done: live.filter(t => done[t.id]).length, total: live.length };
+}
+function overallReadiness(done) {
+  return { done: SCOPED_TASKS.filter(t => done[t.id]).length, total: SCOPED_TASKS.length };
+}
+function ownerSplit(done) {
+  const out = {};
+  Object.keys(OWNER).forEach(k => {
+    const live = SCOPED_TASKS.filter(t => t.owner === k);
+    out[k] = { done: live.filter(t => done[t.id]).length, total: live.length };
+  });
+  return out;
+}
+function daysUntil(iso) {
+  const d = new Date(iso + "T00:00:00+07:00");
+  return Math.ceil((d - new Date()) / 86400000);
+}
+function fmtDate(iso) {
+  return new Date(iso + "T00:00:00+07:00").toLocaleDateString("en-GB",
+    { day: "numeric", month: "long", year: "numeric", timeZone: TZ });
+}
+function withinHours() {
+  const h = Number(new Date().toLocaleString("en-US", { timeZone: "Asia/Bangkok", hour: "2-digit", hour12: false }));
+  return h >= CLIENT.hours.open && h < CLIENT.hours.close;
+}
+
+const SAVE_KEY = "keyholder-" + CLIENT.engagement;
+
+// Anything that has been through JSON.parse is untrusted, even our own writes:
+// a half-finished save, a schema change between versions, or a client with two
+// tabs open all produce objects that are *almost* right. "Almost" crashes React
+// on the first render and shows the family a white screen. So every field is
+// coerced to its expected shape and bad data is discarded rather than trusted.
+function coerceState(raw) {
+  const e = emptyState();
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return e;
+  const obj = v => (v && typeof v === "object" && !Array.isArray(v)) ? v : {};
+
+  const done = {}, by = {}, at = {};
+  const live = new Set(ALL_TASKS.map(t => t.id));
+  const rd = obj(raw.done), rb = obj(raw.by), ra = obj(raw.at);
+  // drop ticks for tasks that no longer exist — a renamed task id must not
+  // linger as a phantom tick nobody can untick.
+  Object.keys(rd).forEach(k => {
+    if (!live.has(k) || !rd[k]) return;
+    done[k] = true;
+    if (typeof rb[k] === "string" && partyByName(rb[k])) by[k] = rb[k];
+    const ts = Number(ra[k]);
+    at[k] = (isFinite(ts) && ts > 0) ? ts : Date.now();
+  });
+
+  const notes = Array.isArray(raw.notes) ? raw.notes.filter(n =>
+    n && typeof n === "object" && typeof n.text === "string" && isFinite(Number(n.at))
+  ).map(n => ({
+    id: String(n.id || Math.random().toString(36).slice(2, 9)),
+    who: partyByName(n.who) ? n.who : "Unknown",
+    text: String(n.text).slice(0, 4000),
+    at: Number(n.at),
+  })) : [];
+
+  const costs = { ...e.costs };
+  const rc = obj(raw.costs);
+  Object.keys(costs).forEach(k => {
+    const v = Number(rc[k]);
+    if (isFinite(v) && v >= 0) costs[k] = Math.min(50000000, Math.round(v));
+  });
+
+  const fxN = Number(raw.fx);
+  const fx = (isFinite(fxN) && fxN > 0) ? fxN : CLIENT.fxDefault;
+
+  const seen = {};
+  const rs = obj(raw.seen);
+  const now = Date.now();
+  Object.keys(rs).forEach(k => {
+    const v = Number(rs[k]);
+    // clamp future watermarks: a device with a skewed clock would otherwise
+    // park its last-seen in the future and the digest would never fire again,
+    // silently, forever. Better to re-show one digest than to lose them all.
+    if (partyByName(k) && isFinite(v) && v > 0) seen[k] = Math.min(v, now);
+  });
+
+  return { done, by, at, notes, costs, fx, seen };
+}
+
+function loadLocal() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return null;
+    return coerceState(JSON.parse(raw));
+  } catch (e) { return null; }
+}
+// Returns true on a real write. A silent failure here is the exact shape of
+// the bug that ate photos in an earlier project: the UI keeps accepting work,
+// the storage layer quietly drops it, and nobody finds out until reload.
+function saveLocal(s) {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(s));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+function emptyState() {
+  // seen[party] = timestamp of that party's last visit. Drives the digest.
+  return { done: {}, by: {}, at: {}, notes: [], costs: defaultCosts(), fx: CLIENT.fxDefault, seen: {} };
+}
+
+// ============================================================
+// DESIGN SYSTEM
+// Ink navy, brass, bone. A private office after dark, not a
+// holiday app. The brass is the only warm thing in the palette
+// and it is spent exclusively on the one thing that matters:
+// what has actually been done.
+// ============================================================
+const C = {
+  ink:      "#10161f",   // page
+  panel:    "#161e2a",   // raised surface
+  panel2:   "#1c2634",   // raised surface, higher
+  line:     "#28394d",   // hairline
+  brass:    "#c9a227",   // the accent. used sparingly.
+  brassDim: "#a68c2b",
+  bone:     "#e8e3d9",   // primary text
+  bone2:    "#9aa5b4",   // secondary text
+  bone3:    "#7d8a9c",   // tertiary text — lifted to WCAG AA body (4.6:1)
+  sage:     "#7fa88b",   // vendor
+  slate:    "#5b8db8",   // client
+  clay:     "#c98b5a",   // licensed
+};
+const disp = "'Fraunces',Georgia,serif";
+const body = "'Public Sans',system-ui,sans-serif";
+const mono = "'IBM Plex Mono',monospace";
+
+// ---------- inline line-art glyphs ----------
+function Glyph({ name, size = 18, color = C.bone2, sw = 1.5 }) {
+  const p = { fill: "none", stroke: color, strokeWidth: sw, strokeLinecap: "round", strokeLinejoin: "round" };
+  const paths = {
+    key:    <g {...p}><circle cx="7" cy="9" r="4" /><path d="M10 12l7 7M14 16l2-2M17 19l2-2" /></g>,
+    check:  <g {...p}><path d="M4 11l5 5L20 5" /></g>,
+    school: <g {...p}><path d="M3 10l9-5 9 5-9 5-9-5z" /><path d="M7 12v5c0 1 2.2 2.5 5 2.5s5-1.5 5-2.5v-5" /></g>,
+    home:   <g {...p}><path d="M4 11l8-7 8 7" /><path d="M6 10v10h12V10" /><path d="M10 20v-6h4v6" /></g>,
+    paper:  <g {...p}><path d="M6 3h8l4 4v14H6z" /><path d="M14 3v4h4" /><path d="M9 12h6M9 16h6" /></g>,
+    plane:  <g {...p}><path d="M2 13l20-7-7 20-3-8-8-3-2-2z" /></g>,
+    clock:  <g {...p}><circle cx="12" cy="12" r="8" /><path d="M12 7v5l3 2" /></g>,
+    coin:   <g {...p}><circle cx="12" cy="12" r="8" /><path d="M12 8v8M9.5 10h4a1.5 1.5 0 010 3h-3a1.5 1.5 0 000 3h4" /></g>,
+    lock:   <g {...p}><rect x="5" y="10" width="14" height="10" rx="1.5" /><path d="M8 10V7a4 4 0 018 0v3" /></g>,
+    warn:   <g {...p}><path d="M12 4l9 16H3l9-16z" /><path d="M12 10v4M12 17v.5" /></g>,
+    dot:    <g {...p}><circle cx="12" cy="12" r="3.5" /></g>,
+    person: <g {...p}><circle cx="12" cy="8" r="3.5" /><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6" /></g>,
+    note:   <g {...p}><path d="M5 4h14v16l-4-3H5z" /><path d="M9 9h6M9 13h4" /></g>,
+  };
+  return <svg width={size} height={size} viewBox="0 0 24 24" style={{ display: "block", flexShrink: 0 }}>{paths[name] || paths.dot}</svg>;
+}
+const PHASE_ICON = { schools: "school", home: "home", paper: "paper", arrival: "plane", after: "clock" };
+
+// ---------- reusable bits ----------
+function Panel({ children, style, raised }) {
+  return (
+    <div style={{
+      background: raised ? C.panel2 : C.panel,
+      border: "1px solid " + C.line,
+      borderRadius: 4,
+      ...style,
+    }}>{children}</div>
+  );
+}
+
+function Eyebrow({ children, color = C.bone3 }) {
+  return (
+    <h2 style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".22em", fontWeight: 500,
+      textTransform: "uppercase", color, marginBottom: 10, marginTop: 0 }}>{children}</h2>
+  );
+}
+
+function OwnerChip({ owner, small }) {
+  const o = OWNER[owner];
+  if (!o) return null;
+  return (
+    <span style={{
+      fontFamily: mono, fontSize: small ? 8.5 : 9.5, letterSpacing: ".1em", textTransform: "uppercase",
+      color: o.colour, border: "1px solid " + o.colour + "55", background: o.colour + "12",
+      padding: small ? "2px 5px" : "3px 7px", borderRadius: 2, whiteSpace: "nowrap",
+    }}>{small ? o.short : o.label}</span>
+  );
+}
+
+// ---------- the ledger rule ----------
+// A thin brass line that fills as scope completes. This is the
+// signature: the whole product is "you can see it happening", so
+// the one ornament in the design is the thing that proves it.
+function LedgerRule({ p, height = 3 }) {
+  return (
+    <div style={{ height, background: C.line, borderRadius: 1, overflow: "hidden", position: "relative" }}>
+      <div style={{
+        position: "absolute", inset: 0, width: p + "%", background: C.brass,
+        transition: "width .6s cubic-bezier(.2,.7,.2,1)",
+        boxShadow: p > 0 ? "0 0 8px " + C.brass + "66" : "none",
+      }} />
+    </div>
+  );
+}
+
+// ============================================================
+// APP
+// ============================================================
+function App() {
+  const [state, setState] = useState(() => loadLocal() || emptyState());
+  const [who, setWho] = useState("Wei Ming");     // demo: swap seats
+  const [tab, setTab] = useState("board");
+  const [openPhase, setOpenPhase] = useState("schools");
+  const [toast, setToast] = useState(null);
+  const [pulse, setPulse] = useState(null);
+  const toastRef = useRef(null);
+  const skipSave = useRef(false);
+
+  // The digest diffs against the reader's PREVIOUS visit, so the timestamp
+  // must be frozen the moment the seat is taken and never updated while
+  // they sit there. Update it live and the digest diffs against itself and
+  // always shows nothing. Keyed by party so each seat has its own watermark.
+  const [digestFor, setDigestFor] = useState(null);
+  const [saveBroken, setSaveBroken] = useState(false);
+  const seenAtMount = useRef({});
+  const stateRef = useRef(state);   // always-current mirror, avoids stale closures
+
+  // persist on every change — except the one tick right after a wipe, or the
+  // erase would instantly rewrite an empty record and the storage key would
+  // survive. "Erased" must mean the key is gone, not blank.
+  useEffect(() => { stateRef.current = state; });
+
+  useEffect(() => {
+    if (skipSave.current) { skipSave.current = false; return; }
+    const ok = saveLocal(state);
+    if (!ok !== saveBroken) setSaveBroken(!ok);
+  }, [state]);
+
+  // On taking a seat: read that party's previous watermark, build their digest
+  // against it, then stamp the visit — all inside one functional update so we
+  // never diff against a watermark we just moved. Every seat change re-runs it,
+  // which is what makes the demo swap show a real digest.
+  useEffect(() => {
+    const cur = stateRef.current;
+    seenAtMount.current[who] = cur.seen[who] || 0;
+    setDigestFor(buildDigest(cur, who));           // diff against the OLD watermark
+    setState(s2 => ({ ...s2, seen: { ...s2.seen, [who]: Date.now() } }));  // then stamp
+  }, [who]);
+
+  function flash(msg) {
+    setToast(msg);
+    clearTimeout(toastRef.current);
+    toastRef.current = setTimeout(() => setToast(null), 2600);
+  }
+
+  const done = state.done;
+  const overall = overallReadiness(done);
+  const p = pct(overall.done, overall.total);
+  const split = ownerSplit(done);
+  const days = daysUntil(CLIENT.moveInDate);
+  const meIsConcierge = isConcierge(who);
+
+  function toggle(task) {
+    // The accountability rule, enforced in code rather than in a PDF:
+    // a concierge cannot tick a task the client is accountable for,
+    // and vice versa. The board cannot lie about who did what.
+    const o = task.owner;
+    const canTick =
+      (o === "concierge" && meIsConcierge) ||
+      (o === "client" && !meIsConcierge) ||
+      (o === "vendor" && meIsConcierge) ||
+      (o === "licensed" && !meIsConcierge);
+    if (!canTick) {
+      flash(o === "client" || o === "licensed"
+        ? "Only " + CLIENT.familyName + " family can confirm this one."
+        : "Only the concierge can confirm this one.");
+      return;
+    }
+    const now = Date.now();
+    setState(s => {
+      const nd = { ...s.done }, nb = { ...s.by }, na = { ...s.at };
+      if (nd[task.id]) { delete nd[task.id]; delete nb[task.id]; delete na[task.id]; }
+      else { nd[task.id] = true; nb[task.id] = who; na[task.id] = now; }
+      return { ...s, done: nd, by: nb, at: na };
+    });
+    if (!done[task.id]) { setPulse(task.id); setTimeout(() => setPulse(null), 700); }
+  }
+
+  const NOTE_MAX = 2000;
+  function addNote(text) {
+    const t = String(text || "").trim();
+    if (!t) return;   // whitespace-only is not a note
+    setState(s => ({ ...s, notes: [{ id: Math.random().toString(36).slice(2, 9), who,
+      text: t.slice(0, NOTE_MAX), at: Date.now() }, ...s.notes] }));
+  }
+
+  function reset() {
+    if (!confirm("Clear this demo board and start over?")) return;
+    setState(emptyState());
+    flash("Board reset.");
+  }
+
+  // Clause 7 in one button. The client can destroy everything this board
+  // holds about them, themselves, without asking us. Not a setting buried
+  // in a menu: a control they own.
+  function wipe() {
+    if (!confirm("Erase everything this board holds about your family, permanently?\n\nThe board, the notes, the figures. This cannot be undone.")) return;
+    skipSave.current = true;
+    setState(emptyState());
+    try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+    // belt and braces: the effect is async, so sweep the key again after it settles.
+    setTimeout(() => { try { localStorage.removeItem(SAVE_KEY); } catch (e) {} }, 0);
+    flash("Erased. Nothing about your family remains in this browser.");
+  }
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.ink, color: C.bone, fontFamily: body }}>
+      <a href="#main" style={{ position: "absolute", left: -9999, top: 0, zIndex: 99,
+        background: C.brass, color: C.ink, padding: "9px 15px", fontFamily: mono, fontSize: 12,
+        borderRadius: 2, textDecoration: "none" }}
+        onFocus={e => { e.target.style.left = "12px"; e.target.style.top = "12px"; }}
+        onBlur={e => { e.target.style.left = "-9999px"; }}>Skip to the board</a>
+      <SeatSwitcher who={who} setWho={setWho} />
+      <div id="main" style={{ maxWidth: 780, margin: "0 auto", padding: "0 18px 100px" }}>
+        <Masthead who={who} days={days} p={p} />
+        {saveBroken && <SaveWarning />}
+        <Nav tab={tab} setTab={setTab} />
+        {tab === "board" && digestFor && (
+          <Digest digest={digestFor} who={who} onDismiss={() => setDigestFor(null)} />
+        )}
+        {tab === "board" && (
+          <Board done={done} by={state.by} at={state.at} who={who} meIsConcierge={meIsConcierge}
+            openPhase={openPhase} setOpenPhase={setOpenPhase} onToggle={toggle} pulse={pulse}
+            split={split} overall={overall} />
+        )}
+        {tab === "bill" && (
+          <Bill costs={state.costs} fx={state.fx}
+            setCosts={c => setState(s => ({ ...s, costs: c }))}
+            setFx={f => setState(s => ({ ...s, fx: f }))} />
+        )}
+        {tab === "log" && (
+          <LogTab notes={state.notes} by={state.by} at={state.at} who={who}
+            onAdd={addNote} onReset={reset} />
+        )}
+        {tab === "terms" && <Terms overall={overall} costs={state.costs} fx={state.fx} />}
+        {tab === "privacy" && <Privacy state={state} onWipe={wipe} />}
+        <Footer />
+      </div>
+      <Toast msg={toast} />
+    </div>
+  );
+}
+
+// ---------- demo seat switcher ----------
+// Not a product feature. This is the demo rig: it lets one person
+// sit in both chairs so the two-sided board is visible in a pitch.
+// In a real engagement each party sees only their own seat.
+function SeatSwitcher({ who, setWho }) {
+  return (
+    <div style={{ background: "#0b1017", borderBottom: "1px solid " + C.line, padding: "7px 18px" }}>
+      <div style={{ maxWidth: 780, margin: "0 auto", display: "flex", alignItems: "center",
+        gap: 10, flexWrap: "wrap" }}>
+        <span style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".18em",
+          textTransform: "uppercase", color: C.bone3 }}>Demo · sit as</span>
+        {PARTY_LIST.map(pp => (
+          <button key={pp.name} onClick={() => setWho(pp.name)} style={{
+            fontFamily: mono, fontSize: 10, letterSpacing: ".08em", cursor: "pointer",
+            padding: "4px 9px", borderRadius: 2,
+            background: who === pp.name ? pp.colour + "22" : "transparent",
+            border: "1px solid " + (who === pp.name ? pp.colour : C.line),
+            color: who === pp.name ? pp.colour : C.bone3,
+          }}>{pp.name} <span style={{ opacity: .6 }}>· {pp.role}</span></button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------- masthead ----------
+function Masthead({ who, days, p }) {
+  const open = withinHours();
+  return (
+    <header style={{ padding: "34px 0 26px", borderBottom: "1px solid " + C.line, marginBottom: 22 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 13, marginBottom: 20 }}>
+        <div style={{ marginTop: 3 }}><Glyph name="key" size={26} color={C.brass} sw={1.3} /></div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h1 style={{ fontFamily: disp, fontSize: 30, fontWeight: 600, letterSpacing: "-.02em",
+            lineHeight: 1.05, color: C.bone, margin: 0 }}>The Keyholder</h1>
+          <div style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".2em", textTransform: "uppercase",
+            color: C.brass, marginTop: 7 }}>Private relocation concierge · Phuket</div>
+        </div>
+      </div>
+
+      <div style={{ fontFamily: disp, fontSize: 19, fontWeight: 400, color: C.bone2, lineHeight: 1.5,
+        marginBottom: 22, maxWidth: 620 }}>
+        The <span style={{ color: C.bone }}>{CLIENT.familyName} family</span> move to {CLIENT.dest.city} on{" "}
+        <span style={{ color: C.bone }}>{fmtDate(CLIENT.moveInDate)}</span>.
+        {days > 0 && <span> That is <span style={{ color: C.brass }}>{days} days</span> away.</span>}
+      </div>
+
+      <div style={{ marginBottom: 9 }}><LedgerRule p={p} /></div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+        flexWrap: "wrap", gap: 10 }}>
+        <div style={{ fontFamily: mono, fontSize: 10.5, color: C.bone3, letterSpacing: ".04em" }}>
+          Engagement {CLIENT.engagement} · {CLIENT.tier} tier · signed {fmtDate(CLIENT.signedDate)}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 6, height: 6, borderRadius: 3,
+            background: open ? C.sage : C.bone3, flexShrink: 0 }} />
+          <span style={{ fontFamily: mono, fontSize: 10, color: open ? C.sage : C.bone3 }}>
+            {open ? "Concierge desk open" : "Desk closed · emergencies only"}
+          </span>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function Nav({ tab, setTab }) {
+  const items = [["board", "The Board"], ["bill", "Landing Bill"], ["log", "Log"], ["terms", "Terms"], ["privacy", "Privacy"]];
+  return (
+    <nav style={{ display: "flex", gap: 22, marginBottom: 26,
+      borderBottom: "1px solid " + C.line, paddingBottom: 0 }}>
+      {items.map(([k, lab]) => (
+        <button key={k} onClick={() => setTab(k)} style={{
+          background: "none", border: "none", cursor: "pointer", padding: "0 0 11px",
+          fontFamily: mono, fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase",
+          color: tab === k ? C.brass : C.bone3,
+          borderBottom: "2px solid " + (tab === k ? C.brass : "transparent"),
+          marginBottom: -1, transition: "color .2s",
+        }}>{lab}</button>
+      ))}
+    </nav>
+  );
+}
+
+// ============================================================
+// THE PAPERWORK, IN THE PRODUCT.
+// The one-pager and the agreement, transcribed and wired to the
+// board. A clause the client can't find is a clause that doesn't
+// protect either party. Section numbers match the signed document.
+// ============================================================
+
+const TIER_CARDS = [
+  { tier: "Essentials", fee: 2000, best: "Independent movers who want expert guidance, not a full handoff.",
+    lines: ["Curated home shortlist & accompanied viewings", "One airport-to-home private transfer",
+            "Introductions: SIM, bank, utilities", "Neighbourhood & on-the-ground orientation"] },
+  { tier: "Signature", fee: 5000, best: "Families who want the home move-in ready on arrival day.",
+    lines: ["Everything in Essentials", "Full move-in setup & furniture sourcing", "Utilities live before you arrive",
+            "Moving-company coordination for shipped goods", "One pet relocation, fully coordinated"] },
+  { tier: "Bespoke", fee: 10000, best: "White-glove arrivals. You land, and it already feels like home.",
+    lines: ["Everything in Signature", "Fully stocked kitchen & toiletries placed", "On-call driver for the first week",
+            "30-day concierge access post move-in", "Family-specific requests: schools, doctors, staff"] },
+];
+
+const ALA_CARTE = [
+  { label: "Additional pet relocation (per pet, quoted by species/origin)", from: 800 },
+  { label: "Extra driver day", from: 120 },
+  { label: "Extended concierge access (per 30 days)", from: 1500 },
+  { label: "Visa & immigration referral coordination", from: 300 },
+  { label: "Storage arrangement & management", from: null },
+];
+
+// Clauses carry a 'live' hook: the bit of the board that proves the
+// clause is being honoured. That's the whole argument for putting the
+// agreement in the app rather than in a PDF nobody opens twice.
+const CLAUSES = [
+  { n: "1", title: "Scope of engagement", tone: "core",
+    body: "Services are limited to those itemised in the Service Proposal. Any request outside that scope is quoted and agreed in writing before work begins. Concierge acts as an independent coordinator, and is not a licensed real estate agent, immigration consultant, attorney, medical provider, or customs broker.",
+    live: "The Board is the itemised scope. If a task isn't on it, it isn't in the engagement." },
+  { n: "2", title: "Fees & payment", tone: "core",
+    body: "Fifty percent deposit on signing, non-refundable once work begins or vendor bookings are made. Balance due no later than move-in day. Third-party costs (movers, pet shipping, rentals, drivers, government fees) are billed separately and are the Client's responsibility.",
+    live: "The Landing Bill shows every third-party cost up front, in both currencies." },
+  { n: "3", title: "Term & availability", tone: "core",
+    body: "Concierge's standard availability is 8:00 AM to 8:00 PM " + CLIENT.hours.tz + ". Outside these hours, response is limited to genuine emergencies. Bespoke post-move-in access is capped at 30 days from move-in unless extended under a separate retainer.",
+    live: "The desk light in the header is honest. It goes dark at 8pm, so the app never implies we're awake when we aren't." },
+  { n: "4", title: "Third-party vendors", tone: "risk",
+    body: "Concierge selects and coordinates vendors with reasonable care but does not guarantee their performance, timeliness, pricing, or conduct, and is not a party to any contract the Client signs with them directly.",
+    live: "Every vendor task on the board is tagged Vendor. We coordinate it; we don't warrant it." },
+  { n: "5", title: "No legal, immigration, or medical advice", tone: "risk",
+    body: "Concierge does not provide legal, immigration, tax, financial, or medical advice, and will refer the Client to appropriately licensed professionals. The Client is responsible for engaging them, and for their own compliance with Thai immigration, customs, and pet import regulations.",
+    live: "Tasks tagged Referred are handed to someone licensed. We book the meeting. We don't give the advice." },
+  { n: "6", title: "Limitation of liability", tone: "risk",
+    body: "Total liability for any claim is limited to the Total Fee actually paid. Concierge is not liable for indirect or consequential damages, including missed school enrolment dates, nor for events outside its reasonable control including customs delays, flight delays, or changes in law.",
+    live: null },
+  { n: "7", title: "Confidentiality", tone: "core",
+    body: "Both parties keep confidential any personal, financial, or family information shared in this engagement, and use it solely to deliver or receive the Services. This survives termination.",
+    live: "This board holds your children's names and your household budget. It's scoped to this engagement alone." },
+  { n: "8", title: "Termination", tone: "risk",
+    body: "Either party may terminate on 14 days' written notice. Deposits are non-refundable once services have commenced or vendor commitments have been made.",
+    live: null },
+  { n: "9", title: "Retainer services", tone: "core",
+    body: "Where engaged on an ongoing retainer, the fee reserves capacity for the month and is billed in advance. Unused hours do not roll over. Minimum term three months, then monthly with 30 days' notice.",
+    live: "The Log is the record of a month's work. A quiet month still shows what capacity held." },
+  { n: "10", title: "Governing law", tone: "core",
+    body: "Governed by the laws of the Kingdom of Thailand. Disputes go to good-faith negotiation first.",
+    live: null },
+];
+
+function Terms({ overall, costs, fx }) {
+  const [openClause, setOpenClause] = useState(null);
+  const meta = TIER_META[CLIENT.tier];
+  const deposit = Math.round(meta.fee * CLIENT.depositPct / 100);
+  const balance = meta.fee - deposit;
+  const p = pct(overall.done, overall.total);
+  const balanceDue = daysUntil(CLIENT.moveInDate);
+
+  return (
+    <div>
+      {/* ---- what was bought ---- */}
+      <Eyebrow color={C.brass}>The engagement</Eyebrow>
+      <Panel style={{ padding: "20px 20px 22px", marginBottom: 26 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline",
+          flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
+          <div>
+            <h2 style={{ fontFamily: disp, fontSize: 23, fontWeight: 600, color: C.bone, margin: 0 }}>
+              {CLIENT.tier}
+            </h2>
+            <div style={{ fontFamily: body, fontSize: 12.5, color: C.bone3, marginTop: 3 }}>
+              {meta.blurb}
+            </div>
+          </div>
+          <div style={{ fontFamily: mono, fontSize: 21, color: C.brass }}>
+            {CLIENT.origin.symbol}{meta.fee.toLocaleString()}
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 1,
+          background: C.line, border: "1px solid " + C.line, borderRadius: 3, overflow: "hidden" }}>
+          <div style={{ background: C.panel2, padding: "13px 14px" }}>
+            <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".14em", textTransform: "uppercase",
+              color: C.sage, marginBottom: 6 }}>Deposit · paid</div>
+            <div style={{ fontFamily: mono, fontSize: 17, color: C.bone }}>
+              {CLIENT.origin.symbol}{deposit.toLocaleString()}
+            </div>
+            <div style={{ fontFamily: body, fontSize: 10.5, color: C.bone3, marginTop: 5, lineHeight: 1.5 }}>
+              {CLIENT.depositPct}% on signing, {fmtDate(CLIENT.signedDate)}. Non-refundable once work began.
+            </div>
+          </div>
+          <div style={{ background: C.panel2, padding: "13px 14px" }}>
+            <div style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".14em", textTransform: "uppercase",
+              color: C.brass, marginBottom: 6 }}>Balance · due on move-in</div>
+            <div style={{ fontFamily: mono, fontSize: 17, color: C.bone }}>
+              {CLIENT.origin.symbol}{balance.toLocaleString()}
+            </div>
+            <div style={{ fontFamily: body, fontSize: 10.5, color: C.bone3, marginTop: 5, lineHeight: 1.5 }}>
+              {fmtDate(CLIENT.moveInDate)}{balanceDue > 0 ? " · in " + balanceDue + " days" : ""}.
+              Board stands at {p}%.
+            </div>
+          </div>
+        </div>
+      </Panel>
+
+      {/* ---- the tiers ---- */}
+      <Eyebrow>Service tiers</Eyebrow>
+      <div style={{ display: "grid", gap: 12, marginBottom: 12 }}>
+        {TIER_CARDS.map(tc => {
+          const isMine = tc.tier === CLIENT.tier;
+          const held = TIER_RANK[tc.tier] > TIER_RANK[CLIENT.tier];
+          return (
+            <Panel key={tc.tier} raised={isMine} style={{
+              padding: "16px 17px",
+              border: "1px solid " + (isMine ? C.brass + "66" : C.line),
+              opacity: held ? .58 : 1,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline",
+                gap: 10, marginBottom: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontFamily: disp, fontSize: 17, fontWeight: 600,
+                    color: isMine ? C.brass : C.bone2 }}>{tc.tier}</span>
+                  {isMine && <span style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: ".12em",
+                    textTransform: "uppercase", color: C.brass, border: "1px solid " + C.brass + "55",
+                    padding: "2px 6px", borderRadius: 2 }}>Yours</span>}
+                  {held && <Glyph name="lock" size={12} color={C.bone3} />}
+                </div>
+                <span style={{ fontFamily: mono, fontSize: 13, color: isMine ? C.bone : C.bone3 }}>
+                  From {CLIENT.origin.symbol}{tc.fee.toLocaleString()}
+                </span>
+              </div>
+              <div style={{ fontFamily: body, fontSize: 11.5, color: C.bone3, fontStyle: "italic",
+                marginBottom: 11 }}>{tc.best}</div>
+              <div style={{ display: "grid", gap: 5 }}>
+                {tc.lines.map((l, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                    <span style={{ color: isMine ? C.brass : C.bone3, fontSize: 11, lineHeight: 1.6 }}>—</span>
+                    <span style={{ fontFamily: body, fontSize: 12.5, color: isMine ? C.bone2 : C.bone3,
+                      lineHeight: 1.5 }}>{l}</span>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          );
+        })}
+      </div>
+      <div style={{ fontFamily: body, fontSize: 11, color: C.bone3, fontStyle: "italic",
+        lineHeight: 1.6, marginBottom: 28 }}>
+        Pricing is indicative and subject to a written proposal tailored to your move. Tiers above yours
+        are shown so you know what exists, not to nudge you. Ask if you want one scoped.
+      </div>
+
+      {/* ---- a la carte ---- */}
+      <Eyebrow>À la carte additions</Eyebrow>
+      <Panel style={{ padding: "6px 0", marginBottom: 28 }}>
+        {ALA_CARTE.map((a, i) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 14,
+            padding: "11px 17px", borderTop: i ? "1px solid " + C.line : "none", alignItems: "baseline" }}>
+            <span style={{ fontFamily: body, fontSize: 12.5, color: C.bone2, lineHeight: 1.45 }}>{a.label}</span>
+            <span style={{ fontFamily: mono, fontSize: 12, color: C.brass, whiteSpace: "nowrap" }}>
+              {a.from ? "From " + CLIENT.origin.symbol + a.from.toLocaleString() : "Quoted"}
+            </span>
+          </div>
+        ))}
+      </Panel>
+
+      {/* ---- the agreement ---- */}
+      <Eyebrow>Services agreement · signed {fmtDate(CLIENT.signedDate)}</Eyebrow>
+      <div style={{ fontFamily: body, fontSize: 12.5, color: C.bone3, lineHeight: 1.65,
+        marginBottom: 14, maxWidth: 620 }}>
+        The clauses you signed, in the same window as the work they govern. Tap any clause to see
+        the part of this board that proves it's being honoured.
+      </div>
+      <Panel style={{ padding: "4px 0", marginBottom: 22 }}>
+        {CLAUSES.map((cl, i) => {
+          const open = openClause === cl.n;
+          return (
+            <div key={cl.n} style={{ borderTop: i ? "1px solid " + C.line : "none" }}>
+              <button onClick={() => setOpenClause(open ? null : cl.n)}
+                aria-expanded={open} aria-label={"Clause " + cl.n + ": " + cl.title} style={{
+                width: "100%", background: "none", border: "none", cursor: "pointer",
+                padding: "13px 17px", display: "flex", alignItems: "center", gap: 12, textAlign: "left",
+              }}>
+                <span style={{ fontFamily: mono, fontSize: 11, color: cl.tone === "risk" ? C.clay : C.brass,
+                  width: 18, flexShrink: 0 }}>{cl.n}</span>
+                <span style={{ flex: 1, fontFamily: body, fontSize: 13.5, fontWeight: 500,
+                  color: open ? C.bone : C.bone2 }}>{cl.title}</span>
+                {cl.tone === "risk" && !open && <Glyph name="warn" size={13} color={C.clay + "99"} />}
+                <span style={{ fontFamily: mono, fontSize: 12, color: C.bone3,
+                  transform: open ? "rotate(90deg)" : "none", transition: "transform .2s" }}>›</span>
+              </button>
+              {open && (
+                <div style={{ padding: "0 17px 16px 47px" }}>
+                  <div style={{ fontFamily: body, fontSize: 12.5, color: C.bone2, lineHeight: 1.7 }}>
+                    {cl.body}
+                  </div>
+                  {cl.live && (
+                    <div style={{ marginTop: 12, padding: "10px 12px", background: C.brass + "0e",
+                      border: "1px solid " + C.brass + "33", borderRadius: 3,
+                      display: "flex", gap: 9, alignItems: "flex-start" }}>
+                      <div style={{ marginTop: 1 }}><Glyph name="key" size={13} color={C.brass} sw={1.4} /></div>
+                      <div style={{ fontFamily: body, fontSize: 11.5, color: C.brass, lineHeight: 1.55 }}>
+                        {cl.live}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </Panel>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "13px 15px",
+        border: "1px solid " + C.clay + "44", background: C.clay + "0c", borderRadius: 3 }}>
+        <div style={{ marginTop: 1 }}><Glyph name="warn" size={14} color={C.clay} /></div>
+        <div style={{ fontFamily: body, fontSize: 11.5, color: C.bone2, lineHeight: 1.65 }}>
+          <b style={{ color: C.clay }}>Draft template.</b> This is a summary of the signed agreement for
+          reference inside the board, not the agreement itself. The executed document governs. Terms
+          drafted for discussion and reviewed by a Thailand-licensed attorney before use.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// THE BOARD — priority one. The two-sided, accountable scope.
+// ============================================================
+function Board({ done, by, at, who, meIsConcierge, openPhase, setOpenPhase, onToggle, pulse, split, overall }) {
+  return (
+    <div>
+      <SplitStrip split={split} />
+      {PHASES.map(ph => {
+        const live = SCOPED_TASKS.filter(t => t.phase === ph.id);
+        if (!live.length) return <LockedPhase key={ph.id} ph={ph} />;
+        const r = phaseReadiness(ph.id, done);
+        const p = pct(r.done, r.total);
+        const open = openPhase === ph.id;
+        const held = OUT_OF_SCOPE.filter(t => t.phase === ph.id);
+        return (
+          <div key={ph.id} style={{ marginBottom: 12 }}>
+            {ph.id === "schools" && open && <AdmissionsClock />}
+            <Panel raised={open} style={{ overflow: "hidden" }}>
+              <button onClick={() => setOpenPhase(open ? null : ph.id)}
+                aria-expanded={open} aria-label={ph.title + " — " + r.done + " of " + r.total + " confirmed"} style={{
+                width: "100%", background: "none", border: "none", cursor: "pointer",
+                padding: "16px 17px", textAlign: "left", display: "block",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 11 }}>
+                  <Glyph name={PHASE_ICON[ph.id]} size={19} color={p === 100 ? C.brass : C.bone2} sw={1.4} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <h2 style={{ fontFamily: disp, fontSize: 17, fontWeight: 600, margin: 0,
+                      color: p === 100 ? C.brass : C.bone }}>{ph.title}</h2>
+                    <div style={{ fontFamily: body, fontSize: 11.5, color: C.bone3, marginTop: 2 }}>{ph.sub}</div>
+                  </div>
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <div style={{ fontFamily: mono, fontSize: 12.5, color: p === 100 ? C.brass : C.bone2 }}>
+                      {r.done}<span style={{ color: C.bone3 }}>/{r.total}</span>
+                    </div>
+                    {!!held.length && (
+                      <div style={{ fontFamily: mono, fontSize: 8.5, color: C.bone3, marginTop: 3 }}>
+                        +{held.length} held
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <LedgerRule p={p} height={2} />
+              </button>
+
+              {open && (
+                <div style={{ padding: "0 17px 15px" }}>
+                  <div style={{ fontFamily: body, fontSize: 12.5, color: C.bone2, lineHeight: 1.65,
+                    padding: "14px 0 4px", borderTop: "1px solid " + C.line, marginTop: 2 }}>
+                    {ph.lead}
+                  </div>
+                  <div style={{ marginTop: 10 }}>
+                    {live.map(t => (
+                      <TaskRow key={t.id} t={t} done={!!done[t.id]} by={by[t.id]} at={at[t.id]}
+                        who={who} meIsConcierge={meIsConcierge} onToggle={onToggle} pulsing={pulse === t.id} />
+                    ))}
+                  </div>
+                  {!!held.length && <HeldRows held={held} />}
+                </div>
+              )}
+            </Panel>
+          </div>
+        );
+      })}
+      <ScopeFoot overall={overall} />
+    </div>
+  );
+}
+
+
+
+// ============================================================
+// THE DIGEST — what changed while you were away.
+//
+// This is the feature that decides whether the client opens the board
+// or WhatsApps at 9pm asking how it's going. The 8-to-8 in clause 3
+// only holds if the board answers the question before they ask it.
+//
+// Rule: it only counts the OTHER party's work. Being shown your own
+// ticks reflected back is noise, and noise is how a digest dies.
+// ============================================================
+function buildDigest(state, who) {
+  const since = state.seen[who] || 0;
+  if (!since) return null;   // first visit: nothing to diff against
+  const mine = isConcierge(who);
+
+  const ticks = SCOPED_TASKS
+    .filter(t => state.at[t.id] && state.at[t.id] > since && state.by[t.id] !== who)
+    .map(t => ({ kind: "tick", at: state.at[t.id], who: state.by[t.id], t }));
+
+  const notes = (state.notes || [])
+    .filter(n => n && n.at > since && n.who !== who && typeof n.text === "string")
+    .map(n => ({ kind: "note", at: n.at, who: isKnownParty(n.who) ? n.who : "Unknown", text: n.text }));
+
+  const all = ticks.concat(notes).sort((a, b) => b.at - a.at);
+  if (!all.length) return null;
+
+  // what still sits with the reader. the digest should end with a nudge,
+  // not a pat on the back.
+  const yours = SCOPED_TASKS.filter(t => {
+    const owns = mine ? (t.owner === "concierge" || t.owner === "vendor")
+                      : (t.owner === "client" || t.owner === "licensed");
+    return owns && !state.done[t.id];
+  });
+
+  return { items: all, since, yours };
+}
+
+function Digest({ digest, onDismiss, who }) {
+  if (!digest) return null;
+  const gap = Math.max(1, Math.round((Date.now() - digest.since) / 3600000));
+  const gapTxt = gap < 24 ? gap + " hour" + (gap === 1 ? "" : "s")
+                          : Math.round(gap / 24) + " day" + (Math.round(gap / 24) === 1 ? "" : "s");
+  const n = digest.items.length;
+
+  return (
+    <div style={{ marginBottom: 22, border: "1px solid " + C.brass + "55", borderRadius: 3,
+      background: C.brass + "0a", overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 16px",
+        borderBottom: "1px solid " + C.brass + "33" }}>
+        <Glyph name="key" size={14} color={C.brass} sw={1.5} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: body, fontSize: 13, fontWeight: 600, color: C.brass }}>
+            {n} thing{n === 1 ? "" : "s"} moved while you were away
+          </div>
+          <div style={{ fontFamily: mono, fontSize: 9, color: C.bone3, marginTop: 2 }}>
+            Last here {gapTxt} ago
+          </div>
+        </div>
+        <button onClick={onDismiss} aria-label="Dismiss digest" style={{
+          background: "transparent", border: "1px solid " + C.line, borderRadius: 2,
+          color: C.bone3, fontFamily: mono, fontSize: 9, letterSpacing: ".08em",
+          textTransform: "uppercase", padding: "5px 9px", cursor: "pointer" }}>Got it</button>
+      </div>
+
+      <div style={{ padding: "4px 16px 6px" }}>
+        {digest.items.slice(0, 6).map((e, i) => (
+          <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start",
+            padding: "9px 0", borderTop: i ? "1px solid " + C.line : "none" }}>
+            <span style={{ width: 5, height: 5, borderRadius: 3, marginTop: 6, flexShrink: 0,
+              background: partyColour(e.who) }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: body, fontSize: 12.5, color: C.bone2, lineHeight: 1.5,
+                overflowWrap: "anywhere", wordBreak: "break-word" }}>
+                <span style={{ color: partyColour(e.who), fontFamily: mono, fontSize: 10.5 }}>
+                  {e.who}
+                </span>
+                {e.kind === "tick"
+                  ? <span> confirmed <span style={{ color: C.bone }}>{e.t.t}</span></span>
+                  : <span> wrote: <span style={{ color: C.bone }}>{e.text}</span></span>}
+              </div>
+            </div>
+            <span style={{ fontFamily: mono, fontSize: 9, color: C.bone3, whiteSpace: "nowrap",
+              marginTop: 2 }}>
+              {new Date(e.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+            </span>
+          </div>
+        ))}
+        {digest.items.length > 6 && (
+          <div style={{ fontFamily: mono, fontSize: 9.5, color: C.bone3, padding: "8px 0 4px",
+            borderTop: "1px solid " + C.line }}>
+            + {digest.items.length - 6} more in the Log
+          </div>
+        )}
+      </div>
+
+      {digest.yours.length > 0 && (
+        <div style={{ padding: "11px 16px", borderTop: "1px solid " + C.brass + "33",
+          background: C.ink + "88" }}>
+          <div style={{ fontFamily: body, fontSize: 11.5, color: C.bone2, lineHeight: 1.6 }}>
+            <span style={{ color: C.bone, fontWeight: 600 }}>
+              {digest.yours.length} still sit{digest.yours.length === 1 ? "s" : ""} with you:
+            </span>{" "}
+            {digest.yours.slice(0, 3).map(t => t.t).join("; ")}
+            {digest.yours.length > 3 && "; and " + (digest.yours.length - 3) + " more"}.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// THE ADMISSIONS CLOCK
+//
+// Move-in day is the countdown everyone watches. It is the wrong one.
+// The board's job here is to say the uncomfortable thing plainly: this
+// family is moving in August with a Year 7 child, and the main
+// application wave (Oct–Feb) closed months ago. A concierge who lets
+// them discover that in September is not worth five thousand dollars.
+// ============================================================
+function AdmissionsClock() {
+  const wave = waveNow();
+  const tight = tightChildren();
+  const toTerm = daysUntil(ADMISSIONS.termStart);
+  const f = freshness(ADMISSIONS.verified);
+
+  const state = wave === "main" ? "open" : wave === "spring" ? "closing" : "late";
+  const col = state === "open" ? C.sage : state === "closing" ? C.clay : "#e06c5a";
+  const head = {
+    open:    "The main application wave is open",
+    closing: "The main wave has closed. You are in the spring window.",
+    late:    "The main wave closed. You are in late-wave territory.",
+  }[state];
+
+  return (
+    <div style={{ marginBottom: 14, padding: "15px 16px", background: col + "0c",
+      border: "1px solid " + col + "44", borderRadius: 3 }}>
+      <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
+        <div style={{ marginTop: 2 }}>
+          <Glyph name={state === "open" ? "clock" : "warn"} size={15} color={col} sw={1.7} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: body, fontSize: 13.5, fontWeight: 600, color: col,
+            marginBottom: 6 }}>{head}</div>
+
+          <div style={{ fontFamily: body, fontSize: 12, color: C.bone2, lineHeight: 1.7 }}>
+            Phuket schools run an August academic year. The main wave for August entry runs
+            October to February, and the competitive year groups often close by Christmas.
+            {tight.length > 0 && (
+              <span> <span style={{ color: C.bone }}>
+                {tight.map(c => c.name + " is going into " + c.year).join(", and ")}
+                {tight.length === 1 ? ", which is one of the tight ones." : ", both tight groups."}
+              </span></span>
+            )}
+            {state === "late" && " That window is behind us, so both registrations went in as waitlist entries and we work the follow-ups."}
+          </div>
+
+          {/* the two clocks, side by side. the point is which one is smaller. */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))",
+            gap: 1, background: C.line, border: "1px solid " + C.line, borderRadius: 3,
+            overflow: "hidden", marginTop: 13 }}>
+            <div style={{ background: C.panel, padding: "10px 12px" }}>
+              <div style={{ fontFamily: mono, fontSize: 8, letterSpacing: ".12em",
+                textTransform: "uppercase", color: C.bone3, marginBottom: 5 }}>Term starts</div>
+              <div style={{ fontFamily: mono, fontSize: 15, color: toTerm < 45 ? col : C.bone }}>
+                {toTerm > 0 ? toTerm + " days" : "started"}
+              </div>
+              <div style={{ fontFamily: mono, fontSize: 9, color: C.bone3, marginTop: 3 }}>
+                {fmtShort(ADMISSIONS.termStart)}
+              </div>
+            </div>
+            <div style={{ background: C.panel, padding: "10px 12px" }}>
+              <div style={{ fontFamily: mono, fontSize: 8, letterSpacing: ".12em",
+                textTransform: "uppercase", color: C.bone3, marginBottom: 5 }}>You land</div>
+              <div style={{ fontFamily: mono, fontSize: 15, color: C.bone }}>
+                {daysUntil(CLIENT.moveInDate)} days
+              </div>
+              <div style={{ fontFamily: mono, fontSize: 9, color: C.bone3, marginTop: 3 }}>
+                {fmtShort(CLIENT.moveInDate)}
+              </div>
+            </div>
+            <div style={{ background: C.panel, padding: "10px 12px" }}>
+              <div style={{ fontFamily: mono, fontSize: 8, letterSpacing: ".12em",
+                textTransform: "uppercase", color: C.bone3, marginBottom: 5 }}>Main wave</div>
+              <div style={{ fontFamily: mono, fontSize: 15, color: state === "open" ? C.sage : "#e06c5a" }}>
+                {state === "open" ? "open" : "closed"}
+              </div>
+              <div style={{ fontFamily: mono, fontSize: 9, color: C.bone3, marginTop: 3 }}>
+                Oct – Feb
+              </div>
+            </div>
+          </div>
+
+          {/* the gap between landing and term start, which is the real risk */}
+          {toTerm > 0 && daysUntil(CLIENT.moveInDate) > 0 && (
+            <div style={{ fontFamily: body, fontSize: 11.5, color: C.bone2, lineHeight: 1.6,
+              marginTop: 12, paddingLeft: 11, borderLeft: "2px solid " + col + "66" }}>
+              {(() => {
+                const gap = toTerm - daysUntil(CLIENT.moveInDate);
+                if (gap < 0) return "Term starts before you land. The children would miss the opening of the year, so we are pushing for a late-August start date rather than a September one.";
+                if (gap <= 7) return "You land " + gap + " day" + (gap === 1 ? "" : "s") + " before term starts. That is tight but workable. Uniforms and bus routes need to be settled before you arrive, not after.";
+                return "You land " + gap + " days before term starts. Comfortable, provided the places are confirmed by then.";
+              })()}
+            </div>
+          )}
+
+          <div style={{ marginTop: 11 }}>
+            <VerStamp ver={ADMISSIONS.verified} how={ADMISSIONS.src} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- who owes what: the accountability summary ----------
+function SplitStrip({ split }) {
+  const order = ["concierge", "client", "vendor", "licensed"];
+  return (
+    <div style={{ marginBottom: 22 }}>
+      <Eyebrow>Who owes what</Eyebrow>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 1,
+        background: C.line, border: "1px solid " + C.line, borderRadius: 3, overflow: "hidden" }}>
+        {order.map(k => {
+          const o = OWNER[k], s = split[k];
+          if (!s || !s.total) return null;
+          const p = pct(s.done, s.total);
+          return (
+            <div key={k} style={{ background: C.panel, padding: "12px 13px" }}>
+              <div style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: ".12em", textTransform: "uppercase",
+                color: o.colour, marginBottom: 7 }}>{o.label}</div>
+              <div style={{ fontFamily: mono, fontSize: 15, color: C.bone, marginBottom: 8 }}>
+                {s.done}<span style={{ color: C.bone3, fontSize: 11 }}>/{s.total}</span>
+              </div>
+              <div style={{ height: 2, background: C.line, borderRadius: 1, overflow: "hidden" }}>
+                <div style={{ width: p + "%", height: "100%", background: o.colour, transition: "width .5s" }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ---------- a single line of scope ----------
+function TaskRow({ t, done, by, at, who, meIsConcierge, onToggle, pulsing }) {
+  const o = OWNER[t.owner];
+  const mine =
+    (t.owner === "concierge" && meIsConcierge) || (t.owner === "vendor" && meIsConcierge) ||
+    (t.owner === "client" && !meIsConcierge) || (t.owner === "licensed" && !meIsConcierge);
+  const [showNote, setShowNote] = useState(false);
+  return (
+    <div style={{
+      borderTop: "1px solid " + C.line, padding: "12px 0",
+      background: pulsing ? C.brass + "10" : "transparent",
+      transition: "background .7s",
+    }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+        <button onClick={() => onToggle(t)} aria-pressed={done}
+          aria-label={(done ? "Unconfirm: " : "Confirm: ") + t.t + " — " + OWNER[t.owner].label} style={{
+          width: 19, height: 19, flexShrink: 0, marginTop: 1, cursor: "pointer", borderRadius: 2,
+          background: done ? o.colour : "transparent",
+          border: "1.5px solid " + (done ? o.colour : (mine ? o.colour + "88" : C.line)),
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
+          opacity: mine || done ? 1 : .5, transition: "all .2s",
+        }}>
+          {done && <Glyph name="check" size={12} color={C.ink} sw={2.6} />}
+        </button>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+            <span style={{ fontFamily: body, fontSize: 13.5, lineHeight: 1.5, flex: 1, minWidth: 180,
+              color: done ? C.bone3 : C.bone,
+              textDecoration: done ? "line-through" : "none",
+              textDecorationColor: C.bone3 + "77" }}>{t.t}</span>
+            <OwnerChip owner={t.owner} small />
+          </div>
+
+          {done && by && (
+            <div style={{ fontFamily: mono, fontSize: 9.5, color: partyColour(by), marginTop: 6 }}>
+              {by} · {new Date(at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+              {" at "}{new Date(at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+            </div>
+          )}
+
+          {t.note && (
+            <button onClick={() => setShowNote(v => !v)} aria-expanded={showNote}
+              aria-label={(showNote ? "Hide" : "Show") + " detail for " + t.t} style={{
+              background: "none", border: "none", padding: "5px 0 0", cursor: "pointer",
+              fontFamily: mono, fontSize: 9.5, color: C.bone3, letterSpacing: ".06em",
+              display: "flex", alignItems: "center", gap: 5,
+            }}>
+              <Glyph name="note" size={11} color={C.bone3} sw={1.4} />
+              {showNote ? "Hide detail" : "Detail"}
+            </button>
+          )}
+          {showNote && t.note && (
+            <div style={{ fontFamily: body, fontSize: 11.5, color: C.bone2, lineHeight: 1.6,
+              marginTop: 8, paddingLeft: 11, borderLeft: "2px solid " + o.colour + "55" }}>
+              {t.note}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------- scope the tier didn't buy ----------
+function HeldRows({ held }) {
+  return (
+    <div style={{ marginTop: 14, padding: "13px 14px", background: C.ink,
+      border: "1px dashed " + C.line, borderRadius: 3 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
+        <Glyph name="lock" size={12} color={C.bone3} />
+        <span style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".14em", textTransform: "uppercase",
+          color: C.bone3 }}>Not in {CLIENT.tier}</span>
+      </div>
+      {held.map(t => (
+        <div key={t.id} style={{ display: "flex", gap: 9, alignItems: "baseline", padding: "4px 0" }}>
+          <span style={{ fontFamily: body, fontSize: 12, color: C.bone3, flex: 1, lineHeight: 1.45 }}>{t.t}</span>
+          <span style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: ".1em", textTransform: "uppercase",
+            color: C.bone3, border: "1px solid " + C.line, padding: "2px 5px", borderRadius: 2,
+            whiteSpace: "nowrap" }}>{t.tier}</span>
+        </div>
+      ))}
+      <div style={{ fontFamily: body, fontSize: 11, color: C.bone3, lineHeight: 1.6, marginTop: 10,
+        fontStyle: "italic" }}>
+        Shown so nothing is hidden from you. Quoted in writing before any of it starts.
+      </div>
+    </div>
+  );
+}
+
+function LockedPhase({ ph }) {
+  return (
+    <Panel style={{ padding: "15px 17px", marginBottom: 12, opacity: .5,
+      borderStyle: "dashed" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <Glyph name="lock" size={17} color={C.bone3} />
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: disp, fontSize: 16, fontWeight: 600, color: C.bone3 }}>{ph.title}</div>
+          <div style={{ fontFamily: body, fontSize: 11.5, color: C.bone3, marginTop: 2 }}>
+            Bespoke tier. Not in this engagement.
+          </div>
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function ScopeFoot({ overall }) {
+  return (
+    <div style={{ marginTop: 22, padding: "14px 16px", border: "1px solid " + C.line,
+      borderRadius: 3, background: C.panel }}>
+      <div style={{ fontFamily: body, fontSize: 11.5, color: C.bone3, lineHeight: 1.7 }}>
+        These {overall.total} lines are the engagement, in full. They are the Service Proposal
+        referenced in clause 1 of the agreement you signed. Anything not listed here is out of scope
+        and will be quoted in writing before it starts. Nothing is added to this board quietly.
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// THE LANDING BILL — priority two. The sales asset.
+// Clause 2 says third-party costs are the Client's responsibility.
+// This is that clause, shown rather than asserted.
+// ============================================================
+function Bill({ costs, fx, setCosts, setFx }) {
+  const [openGroup, setOpenGroup] = useState("Schools");
+
+  // clamp: no negatives, no junk, and a ceiling so a stray keypress can't
+  // render a nine-figure landing bill and destroy the client's afternoon.
+  const CEIL = 50000000;
+  function set(id, v) {
+    const str = String(v);
+    // a leading minus means the client typed a negative, which is meaningless
+    // for a cost. Zero it rather than silently flipping the sign to positive.
+    const neg = /^\s*-/.test(str);
+    const raw = Math.round(Number(str.replace(/[^0-9]/g, "")) || 0);
+    setCosts({ ...costs, [id]: neg ? 0 : Math.min(CEIL, Math.max(0, raw)) });
+  }
+
+  // one-off = what you pay to land. recurring = what repeats monthly.
+  // annual = school fees, which are neither and catch everyone out.
+  let oneOff = 0, monthly = 0, annual = 0;
+  COST_GROUPS.forEach(g => g.items.forEach(it => {
+    const v = Number(costs[it.id]) || 0;
+    if (it.recurring) monthly += v;
+    else if (it.annual) annual += v;
+    else oneOff += v;
+  }));
+  const landing = oneOff + annual;   // year one, out the door
+  const refundable = (Number(costs["sch-lev-1"]) || 0) + (Number(costs["sch-lev-2"]) || 0) + (Number(costs["hm-dep"]) || 0);
+
+  return (
+    <div>
+      <Eyebrow color={C.brass}>What it costs to land</Eyebrow>
+      <div style={{ fontFamily: disp, fontSize: 17, color: C.bone2, lineHeight: 1.55,
+        marginBottom: 20, maxWidth: 620 }}>
+        Every number here is yours to change. They are starting points from real July 2026 figures,
+        not a brochure. <span style={{ color: C.bone }}>The concierge fee is one line among many,
+        and it is not the biggest one.</span>
+      </div>
+
+      <Panel raised style={{ padding: "20px 20px 22px", marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline",
+          marginBottom: 5, flexWrap: "wrap", gap: 8 }}>
+          <span style={{ fontFamily: mono, fontSize: 9.5, letterSpacing: ".16em",
+            textTransform: "uppercase", color: C.brass }}>Year one, out the door</span>
+        </div>
+        <div style={{ fontFamily: mono, fontSize: 33, color: C.bone, letterSpacing: "-.02em",
+          lineHeight: 1.1 }}>{fmtDest(landing)}</div>
+        <div style={{ fontFamily: mono, fontSize: 14, color: C.bone3, marginTop: 5 }}>
+          {fmtOrigin(landing, fx)}
+        </div>
+        <div style={{ height: 1, background: C.line, margin: "17px 0" }} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 16 }}>
+          {[["One-off setup", oneOff], ["School fees, year 1", annual], ["Monthly, ongoing", monthly]].map(([lab, v]) => (
+            <div key={lab}>
+              <div style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: ".12em",
+                textTransform: "uppercase", color: C.bone3, marginBottom: 5 }}>{lab}</div>
+              <div style={{ fontFamily: mono, fontSize: 15, color: C.bone2 }}>{fmtDest(v)}</div>
+              <div style={{ fontFamily: mono, fontSize: 10, color: C.bone3, marginTop: 2 }}>
+                {fmtOrigin(v, fx)}</div>
+            </div>
+          ))}
+        </div>
+        {refundable > 0 && (
+          <div style={{ marginTop: 17, padding: "10px 12px", background: C.sage + "10",
+            border: "1px solid " + C.sage + "33", borderRadius: 3,
+            fontFamily: body, fontSize: 11.5, color: C.sage, lineHeight: 1.55 }}>
+            <b>{fmtDest(refundable)} of that comes back.</b> Capital levies and the housing deposit are
+            refundable. Not lost money, but it ties up capital for years, so plan the cashflow around it.
+          </div>
+        )}
+      </Panel>
+
+      <FxRow fx={fx} setFx={setFx} />
+
+      {COST_GROUPS.map(g => {
+        const sum = g.items.reduce((a, it) => a + (Number(costs[it.id]) || 0), 0);
+        const open = openGroup === g.group;
+        return (
+          <Panel key={g.group} style={{ marginBottom: 10, overflow: "hidden" }} raised={open}>
+            <button onClick={() => setOpenGroup(open ? null : g.group)} style={{
+              width: "100%", background: "none", border: "none", cursor: "pointer",
+              padding: "14px 16px", display: "flex", alignItems: "center", gap: 12, textAlign: "left",
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <h2 style={{ fontFamily: disp, fontSize: 15.5, fontWeight: 600, color: C.bone, margin: 0 }}>
+                  {g.group}
+                </h2>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 3,
+                  flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: mono, fontSize: 8.5, letterSpacing: ".12em",
+                    textTransform: "uppercase", color: C.bone3 }}>{g.weight}</span>
+                  {(() => {
+                    const st = g.items.map(i => i.ver && freshness(i.ver).state).filter(Boolean);
+                    const worst = st.includes("stale") ? "stale" : st.includes("ageing") ? "ageing" : "fresh";
+                    if (!st.length) return null;
+                    return (
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4,
+                        fontFamily: mono, fontSize: 8, letterSpacing: ".08em", textTransform: "uppercase",
+                        color: FRESH_COLOUR[worst] }}>
+                        <span style={{ width: 4, height: 4, borderRadius: 2,
+                          background: FRESH_COLOUR[worst] }} />
+                        {worst === "fresh" ? "all current" : worst === "ageing" ? "some ageing" : "recheck due"}
+                      </span>
+                    );
+                  })()}
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontFamily: mono, fontSize: 13.5, color: C.brass }}>{fmtDest(sum)}</div>
+                <div style={{ fontFamily: mono, fontSize: 9.5, color: C.bone3, marginTop: 2 }}>
+                  {fmtOrigin(sum, fx)}</div>
+              </div>
+              <span style={{ fontFamily: mono, fontSize: 12, color: C.bone3,
+                transform: open ? "rotate(90deg)" : "none", transition: "transform .2s" }}>›</span>
+            </button>
+            {open && (
+              <div style={{ padding: "0 16px 14px" }}>
+                <div style={{ fontFamily: body, fontSize: 12, color: C.bone2, lineHeight: 1.6,
+                  padding: "13px 0", borderTop: "1px solid " + C.line }}>{g.lead}</div>
+                {g.items.map(it => (
+                  <CostRow key={it.id} it={it} val={costs[it.id]} fx={fx} onSet={v => set(it.id, v)} />
+                ))}
+              </div>
+            )}
+          </Panel>
+        );
+      })}
+
+      <div style={{ marginTop: 18, padding: "13px 15px", border: "1px solid " + C.clay + "44",
+        background: C.clay + "0c", borderRadius: 3, display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <div style={{ marginTop: 1 }}><Glyph name="warn" size={14} color={C.clay} /></div>
+        <div style={{ fontFamily: body, fontSize: 11.5, color: C.bone2, lineHeight: 1.65 }}>
+          <b style={{ color: C.clay }}>These are estimates, not quotes.</b> Every figure carries the day we
+          checked it and where it came from. Tap any stamp to see. School fees change annually and are
+          confirmed only by the school at offer; rents move with the season and the catchment. Anything
+          past {CLIENT.staleAfterDays} days shows amber and we re-check it before you rely on it. Per clause 2,
+          third-party costs are billed to you directly and are your responsibility. Nothing here is a
+          commitment by anyone but you.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FxRow({ fx, setFx }) {
+  return (
+    <Panel style={{ padding: "12px 16px", marginBottom: 16, display: "flex",
+      alignItems: "center", gap: 13, flexWrap: "wrap" }}>
+      <Glyph name="coin" size={15} color={C.bone3} />
+      <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase",
+        color: C.bone3, flex: 1, minWidth: 90 }}>Rate</span>
+      <span style={{ fontFamily: mono, fontSize: 11.5, color: C.bone3 }}>
+        1 {CLIENT.origin.currency} =
+      </span>
+      <input type="number" step="0.1" value={fx}
+        onChange={e => setFx(Math.max(0.1, Number(e.target.value) || CLIENT.fxDefault))}
+        style={{ width: 72, background: C.ink, border: "1px solid " + C.line, borderRadius: 2,
+          color: C.brass, fontFamily: mono, fontSize: 13, padding: "5px 8px", textAlign: "right" }} />
+      <span style={{ fontFamily: mono, fontSize: 11.5, color: C.bone3 }}>{CLIENT.dest.currency}</span>
+    </Panel>
+  );
+}
+
+function CostRow({ it, val, fx, onSet }) {
+  const v = Number(val) || 0;
+  return (
+    <div style={{ borderTop: "1px solid " + C.line, padding: "11px 0" }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 160 }}>
+          <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontFamily: body, fontSize: 12.5, color: v ? C.bone : C.bone3 }}>{it.label}</span>
+            {it.recurring && <Tag>monthly</Tag>}
+            {it.annual && <Tag>per year</Tag>}
+            {it.isFee && <Tag c={C.brass}>our fee</Tag>}
+          </div>
+          {it.src && (
+            <div style={{ fontFamily: body, fontSize: 10.5, color: C.bone3, lineHeight: 1.5,
+              marginTop: 4, maxWidth: 400 }}>{it.src}</div>
+          )}
+          {it.ver && <div style={{ marginTop: 5 }}><VerStamp ver={it.ver} how={it.how} /></div>}
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}>
+            <span style={{ fontFamily: mono, fontSize: 12, color: C.bone3 }}>{CLIENT.dest.symbol}</span>
+            <input type="text" inputMode="numeric" value={v.toLocaleString("en-US")}
+              onChange={e => onSet(e.target.value)}
+              style={{ width: 92, background: C.ink, border: "1px solid " + C.line, borderRadius: 2,
+                color: v ? C.bone : C.bone3, fontFamily: mono, fontSize: 13, padding: "5px 8px",
+                textAlign: "right" }} />
+          </div>
+          <div style={{ fontFamily: mono, fontSize: 9.5, color: C.bone3, marginTop: 3 }}>
+            {fmtOrigin(v, fx)}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// A figure without a date is a guess in a suit. This is the stamp that
+// separates corridor knowledge from a number someone half-remembered.
+function VerStamp({ ver, how, small }) {
+  const [open, setOpen] = useState(false);
+  if (!ver) return null;
+  const f = freshness(ver);
+  const col = FRESH_COLOUR[f.state];
+  const label = f.state === "fresh" ? "Verified" : f.state === "ageing" ? "Ageing" : "Needs recheck";
+  return (
+    <span style={{ position: "relative", display: "inline-flex" }}>
+      <button onClick={() => setOpen(v => !v)} aria-expanded={open}
+        aria-label={label + " " + fmtShort(ver) + ". " + (how || "")}
+        style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer",
+          background: "transparent", border: "none", padding: 0,
+          fontFamily: mono, fontSize: small ? 8 : 8.5, letterSpacing: ".08em",
+          textTransform: "uppercase", color: col }}>
+        <span style={{ width: 5, height: 5, borderRadius: 3, background: col, flexShrink: 0 }} />
+        {label} {fmtShort(ver)}
+      </button>
+      {open && how && (
+        <span style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 20,
+          width: 230, background: C.panel2, border: "1px solid " + col + "66", borderRadius: 3,
+          padding: "9px 11px", fontFamily: body, fontSize: 11, color: C.bone2, lineHeight: 1.55,
+          textTransform: "none", letterSpacing: 0, boxShadow: "0 8px 22px #0009" }}>
+          <b style={{ color: col, fontFamily: mono, fontSize: 9, letterSpacing: ".08em" }}>
+            HOW WE KNOW
+          </b>
+          <br />{how}
+          <br /><span style={{ color: C.bone3, fontStyle: "italic" }}>
+            Checked {f.days} day{f.days === 1 ? "" : "s"} ago.
+            {f.state !== "fresh" && " Worth re-checking before you rely on it."}
+          </span>
+        </span>
+      )}
+    </span>
+  );
+}
+
+function Tag({ children, c = C.bone3 }) {
+  return (
+    <span style={{ fontFamily: mono, fontSize: 8, letterSpacing: ".1em", textTransform: "uppercase",
+      color: c, border: "1px solid " + c + "44", padding: "1px 4px", borderRadius: 2 }}>{children}</span>
+  );
+}
+
+
+// ============================================================
+// PRIVACY — clause 7, shown honestly.
+//
+// The temptation here is to write "your data is safe" and move on.
+// That would be a lie of the most expensive kind: this board holds
+// two children's names, their school year groups, and a household
+// budget. So this panel separates what is TRUE TODAY from what is
+// PROMISED before a real family's details ever go in. A client who
+// can see the gap can trust the rest.
+// ============================================================
+
+// verified by audit against the running page, July 2026:
+// zero fetch calls, zero POST bodies, no cookies, no sessionStorage,
+// no analytics SDK, no third-party script beyond React/Babel/fonts.
+const PRIVACY_TRUE = [
+  { t: "Nothing is sent anywhere",
+    d: "This board makes no network request carrying your data. No account, no server, no upload. Audited: zero outbound POST requests, zero request bodies. The only things fetched are the fonts and the React library that draw the page." },
+  { t: "No analytics, no tracking, no advertising",
+    d: "There is no Google Analytics, no Meta pixel, no session recorder, no heatmap, no third-party SDK of any kind. Nobody is watching you use this. There is nothing to sell and no one to sell it to." },
+  { t: "No cookies",
+    d: "None set, none read. Which is why you were never asked about them." },
+  { t: "It lives on your device",
+    d: "The board, your notes and your figures are stored in this browser and nowhere else. Close the tab and they stay on your machine." },
+  { t: "You can erase it yourself, right now",
+    d: "The button below removes the stored record entirely, immediately, without asking us. You do not need our permission or our cooperation. Reopening the board afterwards starts a blank one: your ticks, notes and figures do not come back." },
+  { t: "The engagement is walled off",
+    d: "Storage is namespaced to " + CLIENT.engagement + " alone. This board cannot see any other family's engagement, and theirs cannot see yours." },
+];
+
+// the honest half. these are gaps, stated as gaps.
+const PRIVACY_GAPS = [
+  { t: "Stored in plain text",
+    d: "Your data sits unencrypted in this browser's local storage. Anyone with your unlocked device can read it. Today that is acceptable because this is a demonstration board holding a fictional family. Before a real family's details go in, this becomes encrypted at rest.",
+    fix: "Encryption at rest" },
+  { t: "No sign-in",
+    d: "There is no password on this board. Whoever opens this page is treated as you. A live engagement requires real authentication per party, so your seat is yours.",
+    fix: "Per-party authentication" },
+  { t: "One device, no sync",
+    d: "Nothing syncs between phones yet, which is privacy by accident rather than by design. The moment two phones share a board, that shared state needs a server, and that server needs to be scoped, encrypted, and located somewhere lawful.",
+    fix: "Scoped, encrypted shared state" },
+  { t: "Cross-border data, unresolved",
+    d: "A synced board means your family's data leaves Thailand and sits on infrastructure elsewhere. Thailand's PDPA governs that, and clause 7 makes it a contractual promise rather than a preference. This needs a lawyer's answer before it needs an engineer's.",
+    fix: "PDPA review before launch" },
+];
+
+function Privacy({ state, onWipe }) {
+  const [showRaw, setShowRaw] = useState(false);
+  const raw = JSON.stringify(state, null, 2);
+  const bytes = new Blob([raw]).size;
+  const kidNames = CLIENT.children.map(c => c.name).join(" and ");
+
+  return (
+    <div>
+      <Eyebrow color={C.brass}>What this board knows about you</Eyebrow>
+      <div style={{ fontFamily: disp, fontSize: 17, color: C.bone2, lineHeight: 1.55,
+        marginBottom: 22, maxWidth: 620 }}>
+        You have handed us {kidNames}'s names, their year groups, and what your family can
+        afford. <span style={{ color: C.bone }}>You are owed a plain account of where that
+        sits and who can reach it.</span> Here it is, including the parts we have not built yet.
+      </div>
+
+      {/* ---- what is true today ---- */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 11 }}>
+        <Glyph name="check" size={14} color={C.sage} sw={2} />
+        <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".16em",
+          textTransform: "uppercase", color: C.sage }}>True of this board, today</span>
+      </div>
+      <Panel style={{ padding: "4px 0", marginBottom: 26 }}>
+        {PRIVACY_TRUE.map((x, i) => (
+          <div key={i} style={{ padding: "13px 16px", borderTop: i ? "1px solid " + C.line : "none",
+            display: "flex", gap: 11, alignItems: "flex-start" }}>
+            <div style={{ marginTop: 3 }}><Glyph name="check" size={13} color={C.sage} sw={2.2} /></div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: body, fontSize: 13.5, fontWeight: 600, color: C.bone,
+                marginBottom: 4 }}>{x.t}</div>
+              <div style={{ fontFamily: body, fontSize: 12, color: C.bone2, lineHeight: 1.65 }}>{x.d}</div>
+            </div>
+          </div>
+        ))}
+      </Panel>
+
+      {/* ---- see it for yourself ---- */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 11 }}>
+        <Glyph name="note" size={14} color={C.bone2} sw={1.6} />
+        <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".16em",
+          textTransform: "uppercase", color: C.bone2 }}>Every byte we hold</span>
+      </div>
+      <Panel style={{ padding: "15px 16px", marginBottom: 26 }}>
+        <div style={{ fontFamily: body, fontSize: 12, color: C.bone2, lineHeight: 1.65,
+          marginBottom: 12 }}>
+          Not a summary. The actual, complete contents. {bytes.toLocaleString()} bytes, all of it
+          on your device. If something here surprises you, that is a fault worth telling us about.
+        </div>
+        <button onClick={() => setShowRaw(v => !v)} aria-expanded={showRaw} style={{
+          fontFamily: mono, fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase",
+          padding: "7px 13px", borderRadius: 2, cursor: "pointer", background: "transparent",
+          border: "1px solid " + C.line, color: C.bone2 }}>
+          {showRaw ? "Hide" : "Show me everything"}
+        </button>
+        {showRaw && (
+          <pre style={{ marginTop: 13, marginBottom: 0, padding: "13px 14px", background: C.ink,
+            border: "1px solid " + C.line, borderRadius: 3, overflow: "auto", maxHeight: 260,
+            fontFamily: mono, fontSize: 10.5, color: C.bone2, lineHeight: 1.6 }}>{raw}</pre>
+        )}
+      </Panel>
+
+      {/* ---- the honest gaps ---- */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 11 }}>
+        <Glyph name="warn" size={14} color={C.clay} sw={1.6} />
+        <span style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".16em",
+          textTransform: "uppercase", color: C.clay }}>Not built yet · before any real family</span>
+      </div>
+      <div style={{ fontFamily: body, fontSize: 12, color: C.bone2, lineHeight: 1.65,
+        marginBottom: 13, maxWidth: 620 }}>
+        A concierge who only tells you the good half is not a concierge, he is a salesman.
+        These are the real gaps in this board as it stands.
+      </div>
+      <Panel style={{ padding: "4px 0", marginBottom: 26, borderColor: C.clay + "44" }}>
+        {PRIVACY_GAPS.map((x, i) => (
+          <div key={i} style={{ padding: "13px 16px", borderTop: i ? "1px solid " + C.line : "none" }}>
+            <div style={{ display: "flex", gap: 11, alignItems: "flex-start" }}>
+              <div style={{ marginTop: 3 }}><Glyph name="warn" size={13} color={C.clay} sw={1.8} /></div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",
+                  marginBottom: 4 }}>
+                  <span style={{ fontFamily: body, fontSize: 13.5, fontWeight: 600, color: C.bone }}>
+                    {x.t}</span>
+                  <Tag c={C.clay}>{x.fix}</Tag>
+                </div>
+                <div style={{ fontFamily: body, fontSize: 12, color: C.bone2, lineHeight: 1.65 }}>
+                  {x.d}</div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </Panel>
+
+      {/* ---- the client's own kill switch ---- */}
+      <Panel raised style={{ padding: "18px 18px 20px", border: "1px solid " + C.brass + "55" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 9 }}>
+          <Glyph name="key" size={15} color={C.brass} sw={1.4} />
+          <span style={{ fontFamily: disp, fontSize: 16, fontWeight: 600, color: C.bone }}>
+            Your key, not ours
+          </span>
+        </div>
+        <div style={{ fontFamily: body, fontSize: 12.5, color: C.bone2, lineHeight: 1.7,
+          marginBottom: 15 }}>
+          Clause 7 says we keep your family's information confidential and use it only to deliver
+          the Services, and that this survives the engagement ending. A promise you cannot enforce
+          is just a sentence. So this button is yours: it erases everything this board holds about
+          your family, permanently, without our involvement.
+        </div>
+        <button onClick={onWipe} style={{
+          fontFamily: mono, fontSize: 10.5, letterSpacing: ".1em", textTransform: "uppercase",
+          padding: "10px 16px", borderRadius: 2, cursor: "pointer", background: "transparent",
+          border: "1px solid " + C.clay, color: C.clay }}>
+          Erase everything about my family
+        </button>
+      </Panel>
+
+      <div style={{ marginTop: 20, fontFamily: body, fontSize: 11, color: C.bone3,
+        lineHeight: 1.7, fontStyle: "italic", maxWidth: 620 }}>
+        Claims on this page were verified by audit against this running page in July 2026: no fetch
+        calls carrying your data, no POST bodies, no cookies, no session storage, no third-party
+        analytics. Re-audit before any change to the data layer. If a future version of this board
+        syncs to a server, this page must change on the same day, not after.
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// THE LOG — the retainer's best argument. Clause 9 says unused
+// hours don't roll over, which is impossible to justify to a
+// client who had a quiet month. A visible record is how you show
+// the month wasn't quiet.
+// ============================================================
+function LogTab({ notes, by, at, who, onAdd, onReset }) {
+  const [draft, setDraft] = useState("");
+
+  // the board's own history, merged with written notes, newest first
+  const events = SCOPED_TASKS
+    .filter(t => at[t.id])
+    .map(t => ({ kind: "tick", id: t.id, at: at[t.id], who: by[t.id], t }))
+    .concat(notes.map(n => ({ kind: "note", id: n.id, at: n.at, who: n.who, text: n.text })))
+    .sort((a, b) => b.at - a.at);
+
+  return (
+    <div>
+      <Eyebrow color={C.brass}>The record</Eyebrow>
+      <div style={{ fontFamily: disp, fontSize: 17, color: C.bone2, lineHeight: 1.55,
+        marginBottom: 20, maxWidth: 620 }}>
+        Everything either side has done, in order, with a name against it.
+        Nobody has to ask how it's going.
+      </div>
+
+      <Panel style={{ padding: "13px 15px", marginBottom: 20 }}>
+        <textarea value={draft} onChange={e => setDraft(e.target.value.slice(0, 2000))}
+          maxLength={2000}
+          aria-label={isConcierge(who) ? "Note for the family" : "Note for the concierge"}
+          placeholder={isConcierge(who)
+            ? "Note for the family. What happened, what's next."
+            : "Question or note for the concierge."}
+          rows={2}
+          style={{ width: "100%", background: C.ink, border: "1px solid " + C.line, borderRadius: 2,
+            color: C.bone, fontFamily: body, fontSize: 13, padding: "9px 11px", resize: "vertical",
+            lineHeight: 1.55 }} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+          marginTop: 9, gap: 10 }}>
+          <span style={{ fontFamily: mono, fontSize: 9.5, color: partyColour(who) }}>
+            posting as {who}
+            {draft.length > 1600 && (
+              <span style={{ color: draft.length >= 2000 ? C.clay : C.bone3 }}>
+                {" · "}{2000 - draft.length} left
+              </span>
+            )}
+          </span>
+          <button onClick={() => { onAdd(draft); setDraft(""); }} disabled={!draft.trim()}
+            style={{ fontFamily: mono, fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase",
+              padding: "7px 14px", borderRadius: 2, cursor: draft.trim() ? "pointer" : "default",
+              background: draft.trim() ? C.brass : "transparent",
+              border: "1px solid " + (draft.trim() ? C.brass : C.line),
+              color: draft.trim() ? C.ink : C.bone3 }}>Post</button>
+        </div>
+      </Panel>
+
+      {!events.length && (
+        <Panel style={{ padding: "34px 20px", textAlign: "center", borderStyle: "dashed" }}>
+          <div style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
+            <Glyph name="key" size={22} color={C.bone3} sw={1.3} />
+          </div>
+          <div style={{ fontFamily: body, fontSize: 12.5, color: C.bone3, lineHeight: 1.6 }}>
+            Nothing logged yet. Tick something on the board, or post a note.
+          </div>
+        </Panel>
+      )}
+
+      {events.map(e => (
+        <div key={e.kind + e.id} style={{ display: "flex", gap: 13, marginBottom: 2 }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+            <div style={{ width: 7, height: 7, borderRadius: 4, marginTop: 15,
+              background: partyColour(e.who) }} />
+            <div style={{ flex: 1, width: 1, background: C.line }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0, padding: "11px 0 15px" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap",
+              marginBottom: 4 }}>
+              <span style={{ fontFamily: mono, fontSize: 10.5, color: partyColour(e.who) }}>{e.who}</span>
+              <span style={{ fontFamily: mono, fontSize: 9.5, color: C.bone3 }}>
+                {new Date(e.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}
+                {" · "}{new Date(e.at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+              </span>
+              {e.kind === "tick" && <OwnerChip owner={e.t.owner} small />}
+            </div>
+            <div style={{ fontFamily: body, fontSize: 13, color: C.bone2, lineHeight: 1.55,
+              overflowWrap: "anywhere", wordBreak: "break-word", whiteSpace: "pre-wrap" }}>
+              {e.kind === "tick"
+                ? <span><span style={{ color: C.bone3 }}>confirmed </span>{e.t.t}</span>
+                : e.text}
+            </div>
+          </div>
+        </div>
+      ))}
+
+      <div style={{ marginTop: 26, paddingTop: 18, borderTop: "1px solid " + C.line,
+        display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
+        flexWrap: "wrap" }}>
+        <span style={{ fontFamily: body, fontSize: 11, color: C.bone3, fontStyle: "italic",
+          lineHeight: 1.6, flex: 1, minWidth: 200 }}>
+          Demo board. State is local to this browser; a live engagement syncs both phones.
+        </span>
+        <button onClick={onReset} style={{ fontFamily: mono, fontSize: 9.5, letterSpacing: ".1em",
+          textTransform: "uppercase", padding: "6px 12px", borderRadius: 2, cursor: "pointer",
+          background: "transparent", border: "1px solid " + C.line, color: C.bone3 }}>Reset demo</button>
+      </div>
+    </div>
+  );
+}
+
+// A board that accepts work it cannot keep is lying to the person using it.
+// Private browsing, a full disk, or a locked-down browser all land here.
+function SaveWarning() {
+  return (
+    <div role="alert" style={{ marginBottom: 18, padding: "13px 15px",
+      border: "1px solid #e06c5a66", background: "#e06c5a10", borderRadius: 3,
+      display: "flex", gap: 10, alignItems: "flex-start" }}>
+      <div style={{ marginTop: 1 }}><Glyph name="warn" size={14} color="#e06c5a" sw={1.7} /></div>
+      <div style={{ fontFamily: body, fontSize: 12, color: C.bone2, lineHeight: 1.65 }}>
+        <b style={{ color: "#e06c5a" }}>This board is not saving.</b> Your browser is refusing to
+        store anything, usually private browsing mode or a full disk. Everything on screen still
+        works, but it will be gone when you close the tab. Tell us before you do anything you would
+        hate to repeat.
+      </div>
+    </div>
+  );
+}
+
+// ---------- toast ----------
+function Toast({ msg }) {
+  if (!msg) return null;
+  return (
+    <div role="status" aria-live="polite" style={{ position: "fixed", left: "50%", bottom: 26, transform: "translateX(-50%)",
+      background: C.panel2, border: "1px solid " + C.brass + "66", borderRadius: 3,
+      padding: "10px 16px", zIndex: 50, maxWidth: "calc(100vw - 36px)",
+      boxShadow: "0 10px 30px #0008", display: "flex", alignItems: "center", gap: 9 }}>
+      <Glyph name="lock" size={13} color={C.brass} />
+      <span style={{ fontFamily: body, fontSize: 12.5, color: C.bone, lineHeight: 1.4 }}>{msg}</span>
+    </div>
+  );
+}
+
+function Footer() {
+  return (
+    <footer style={{ marginTop: 44, paddingTop: 20, borderTop: "1px solid " + C.line }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 9 }}>
+        <Glyph name="key" size={13} color={C.brassDim} sw={1.3} />
+        <span style={{ fontFamily: mono, fontSize: 9, letterSpacing: ".2em", textTransform: "uppercase",
+          color: C.brassDim }}>The Keyholder · {CLIENT.engagement}</span>
+      </div>
+      <div style={{ fontFamily: body, fontSize: 10.5, color: C.bone3, lineHeight: 1.7, maxWidth: 560 }}>
+        Proof of concept. The Tan family is fictional; the figures are real July 2026 starting points.
+        Built on the Mission Phuket engine. Concierge desk {CLIENT.hours.open}:00–{CLIENT.hours.close}:00 {CLIENT.hours.tz}.
+      </div>
+    </footer>
+  );
+}
+</script>
+
+<script>
+(function () {
+  var ROOT = document.getElementById("root");
+  function showError(msg) {
+    ROOT.innerHTML = '<div class="errbox"><b>The Keyholder failed to load.</b>\n\n' +
+      String(msg).replace(/</g, "&lt;") +
+      '\n\nIf you are viewing this inside an app preview, open the real link in your browser instead.</div>';
+  }
+  function loadScript(urls, done, fail) {
+    var i = 0;
+    function tryNext() {
+      if (i >= urls.length) { fail(); return; }
+      var s = document.createElement("script");
+      s.src = urls[i++]; s.crossOrigin = "anonymous";
+      s.onload = function () { done(); };
+      s.onerror = function () { tryNext(); };
+      document.head.appendChild(s);
+    }
+    tryNext();
+  }
+  var REACT = ["https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js","https://unpkg.com/react@18.3.1/umd/react.production.min.js","https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"];
+  var REACTDOM = ["https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js","https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js","https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"];
+  var BABEL = ["https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js","https://unpkg.com/@babel/standalone@7.25.6/babel.min.js","https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.25.6/babel.min.js"];
+  function boot() {
+    try {
+      if (!window.React || !window.ReactDOM) { showError("React did not load from any CDN."); return; }
+      if (!window.Babel) { showError("Babel did not load."); return; }
+      var hooks = "var useState=React.useState,useMemo=React.useMemo,useEffect=React.useEffect,useRef=React.useRef;\n";
+      var mount = "\nReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));";
+      var src = document.getElementById("appsrc").textContent;
+      var compiled = Babel.transform(hooks + src + mount, { presets: ["react"] }).code;
+      (0, eval)(compiled);
+    } catch (err) { showError((err && err.stack) || err); }
+  }
+  loadScript(REACT, function () {
+    loadScript(REACTDOM, function () {
+      loadScript(BABEL, boot, function () { showError("Could not load Babel."); });
+    }, function () { showError("Could not load ReactDOM."); });
+  }, function () { showError("Could not load React."); });
+})();
+</script>
+</body>
+</html>
