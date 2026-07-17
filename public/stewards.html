@@ -566,25 +566,73 @@ function renderLedger(){
   dates.forEach((d,idx)=>{
     const legs=log.filter(b=>b.date===d);
     const model=legs.filter(b=>String(b.ledger).toLowerCase()==="model");
-    const staked=legs.reduce((a,b)=>a+num(b.stake),0);
+    // The day header must not count voided legs in its stake total: a row retired as a
+    // duplicate never cost anything, and leaving it in the headline would contradict the
+    // audit figures sitting one tab away.
+    const live=legs.filter(b=>String(b.ledger||"").toLowerCase()!=="void");
+    const staked=live.reduce((a,b)=>a+num(b.stake),0);
+    const voidCount=legs.length-live.length;
     const body=legs.map(b=>{
       const extra=(b.reason?'<div class="legreason">'+esc(b.reason)+
         (b.notes?'<br><br><span style="color:var(--gold)">'+esc(b.notes)+"</span>":"")+"</div>":"");
-      return '<div class="leg"><div class="legtop">'+
+      const isVoid=String(b.ledger||"").toLowerCase()==="void";
+      // Voiding is a decision, so it lives next to the leg it concerns rather than behind a
+      // console. A voided row stays visible and greyed: the record of a mistake is part of
+      // the record, and hiding it would defeat the point.
+      const voidBits=isVoid
+        ? '<div class="legsub" style="color:var(--red)">VOIDED &mdash; excluded from every model figure'+
+          (b.voidHistory&&b.voidHistory.length?' &middot; '+esc(String(b.voidHistory[b.voidHistory.length-1].reason||"").slice(0,120)):"")+'</div>'
+        : '<div style="margin-top:6px"><button class="qbtn small ghost" type="button" data-void="'+esc(b.xlRow)+'" style="font-size:11px;padding:3px 9px;">Void this leg</button></div>';
+      return '<div class="leg"'+(isVoid?' style="opacity:.55"':'')+'><div class="legtop">'+
         '<span class="legname">R'+esc(b.raceNo)+' &middot; #'+esc(b.horseNo)+' '+esc(b.horseName||"(see SGPools card)")+'</span>'+
         chipFor(b.result)+'</div>'+
         '<div class="legsub">'+esc(b.meet)+' &middot; '+esc(b.betType)+' '+money(b.stake)+
         ' &middot; '+esc(b.confidence||"\u2014")+' &middot; '+esc(b.ledger)+
         (num(b.payout)?(' &middot; paid '+money(b.payout)):"")+'</div>'+
+        voidBits+
         (extra?'<details class="leginfo"><summary>Reason &amp; notes</summary>'+extra+"</details>":"")+
         "</div>";
     }).join("");
     html+='<details class="day"'+(idx===0?" open":"")+'><summary>'+
       '<span class="daydate">'+esc(d)+'</span>'+
-      '<span class="daymeta">'+legs.length+' legs &middot; '+model.length+' model &middot; '+money(staked)+' staked</span>'+
+      '<span class="daymeta">'+live.length+' legs &middot; '+model.length+' model &middot; '+money(staked)+' staked'+
+      (voidCount?' &middot; <span style="color:var(--red)">'+voidCount+' void</span>':'')+'</span>'+
       "</summary>"+body+"</details>";
   });
   $("pane-ledger").innerHTML=html||'<div class="card">The ledger is empty.</div>';
+  // Delegated: the leg rows are rebuilt on every render, so per-button handlers would go
+  // stale. One listener on the pane survives re-renders.
+  const pane=$("pane-ledger");
+  if(pane) pane.onclick=async(e)=>{
+    const btn=e.target.closest("[data-void]");
+    if(!btn) return;
+    const xlRow=parseInt(btn.getAttribute("data-void"),10);
+    const leg=(vault.betlog||[]).find(b=>Number(b.xlRow)===xlRow);
+    if(!leg) return;
+    const label=leg.date+" "+leg.meet+" R"+leg.raceNo+" #"+leg.horseNo+" "+leg.betType+" "+money(leg.stake);
+    // A void changes the P/L of the whole book, so it asks for a reason rather than a
+    // confirmation. Typing WHY is the confirmation, and it is what the audit trail keeps.
+    const why=window.prompt(
+      "Void this leg?\n\n"+label+"\n\n"+
+      "It stays in the book and keeps its history, but stops counting toward P/L, ROI, "+
+      "the confidence bands and the rule-decay audit.\n\n"+
+      "Why is this leg being voided? (required)",""
+    );
+    if(why===null) return;
+    if(!String(why).trim()){ alert("A void needs a reason. Nothing was changed."); return; }
+    btn.disabled=true; btn.textContent="Voiding\u2026";
+    try{
+      const r=await api("action=voidlegs",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({rows:[{xlRow,reason:String(why).trim()}],why:String(why).trim()})});
+      if(r.errors&&r.errors.length) alert("Voided with notes:\n"+r.errors.join("\n"));
+      // loadState() refetches the vault and re-renders every pane, so the Ledger, the
+      // audit lamps and the calibration tables all reflect the void immediately.
+      await runAudit(); await loadState();
+    }catch(err){
+      alert("Void failed: "+(err.message||err));
+      btn.disabled=false; btn.textContent="Void this leg";
+    }
+  };
 }
 
 // ---- days tab (computed vs recorded) ----
@@ -1066,7 +1114,9 @@ function qmsg(id,text,cls){const el=$(id);el.className="qmsg"+(cls?" "+cls:"");e
 
 function renderQuill(){
   const log=vault.betlog||[];
-  const pending=log.filter(b=>normResult(b.result)==="pending");
+  // Voided legs are not live bets: they must not appear in the settle queue, or a row
+  // retired as a duplicate would offer itself for settlement on every visit.
+  const pending=log.filter(b=>normResult(b.result)==="pending"&&String(b.ledger||"").toLowerCase()!=="void");
   let h="";
 
   // --- intake first: at the START of the day, log what was actually placed from receipts ---

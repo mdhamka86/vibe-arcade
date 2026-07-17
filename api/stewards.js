@@ -74,8 +74,9 @@ function computeAudit(betLog) {
   const exotic = by("exotic");
   const misclick = by("misclick");
   const refund = by("refund");
+  const voided = by("void");
   const accounted =
-    model.length + exotic.length + misclick.length + refund.length;
+    model.length + exotic.length + misclick.length + refund.length + voided.length;
   if (accounted !== betLog.length)
     flags.push(
       "OBJECTION: " +
@@ -153,6 +154,10 @@ function computeAudit(betLog) {
       exotic: exotic.length,
       misclick: misclick.length,
       refund: refund.length,
+      // Voided rows are excluded from every model figure above, but they are REPORTED
+      // here rather than silently vanishing. A row that stopped counting should still be
+      // visible: the point of voiding is honesty about a mistake, not concealment of it.
+      void: voided.length,
     },
     model: {
       settled: settled.length,
@@ -448,8 +453,59 @@ function nextRow(arr) {
 }
 
 // ---- leg validation ----
-const LEDGERS = { model: "Model", exotic: "Exotic", misclick: "Misclick", refund: "Refund" };
+// LEDGERS. "void" was added 17/07/2026: the vault could ADD legs and AMEND them, but had
+// no way to say "this row should never have existed". When the Clerk misread a receipt and
+// re-logged four already-settled 15/07 tickets as fresh 16/07 legs, the only options were
+// to leave $67.80 of fiction in the book or hand-edit Redis behind the audit trail. Voiding
+// is the honest third way: the row STAYS, keeps its history, and stops counting. Nothing is
+// ever deleted from this journal — the record of a mistake is part of the record.
+const LEDGERS = { model: "Model", exotic: "Exotic", misclick: "Misclick", refund: "Refund", void: "Void" };
 const RESULTS = { win: "Win", place: "Place", lose: "Lose", refund: "Refund", pending: "Pending" };
+
+// Normalise whatever the vision model returns for a row's transaction date into the
+// journal's DD/MM/YYYY. The prompt asks for DD/MM/YYYY, but the SGPools page prints
+// "15 Jul 2026 08:11 AM", so the model sometimes echoes that shape instead. Accept
+// both rather than discarding a date we can plainly read.
+//
+// Returns null on anything not confidently parseable — a WRONG date is far worse
+// than a missing one, because a missing one falls back to today and warns, while a
+// wrong one files a bet on a day it was never placed and says nothing.
+const MONTHS = { jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12 };
+const normDate = (v) => {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  // DD/MM/YYYY or DD-MM-YYYY
+  let m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/.exec(s);
+  if (m) {
+    const d = +m[1], mo = +m[2], y = +m[3];
+    if (d < 1 || d > 31 || mo < 1 || mo > 12) return null;
+    return String(d).padStart(2, "0") + "/" + String(mo).padStart(2, "0") + "/" + y;
+  }
+  // "15 Jul 2026" / "15 July 2026 08:11 AM"
+  m = /^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/.exec(s);
+  if (m) {
+    const d = +m[1], mo = MONTHS[m[2].slice(0, 3).toLowerCase()], y = +m[3];
+    if (!mo || d < 1 || d > 31) return null;
+    return String(d).padStart(2, "0") + "/" + String(mo).padStart(2, "0") + "/" + y;
+  }
+  // "2026-07-15"
+  m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);
+  if (m) {
+    const y = +m[1], mo = +m[2], d = +m[3];
+    if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+    return String(d).padStart(2, "0") + "/" + String(mo).padStart(2, "0") + "/" + y;
+  }
+  return null;
+};
+
+// SGPools receipts are a fixed 8 characters. A 9-character receipt is the signature
+// of the OCR carrying a prefix down from the row above in a dense column — it looks
+// plausible, matches no ticket, and then falls through to the coordinate matcher.
+// Catch it at the door instead.
+const RECEIPT_LEN = 8;
+const receiptLooksWrong = (r) => !!r && r.length !== RECEIPT_LEN;
+
 const KNOWN_TYPES = ["WIN", "PLA", "TRIO", "FORECAST", "PLACE FORECAST", "TIERCE", "QUARTET"];
 const KNOWN_CONF = ["High", "Medium-High", "Medium", "Low-Med", "None", ""];
 
@@ -771,6 +827,98 @@ module.exports = async (req, res) => {
         rev: meta.rev,
         audit: computeAudit(newLog),
       });
+    }
+
+    if (action === "voidlegs") {
+      // Retire a bet-log row that should never have been written: a duplicate, a misread,
+      // a leg logged against the wrong day. The row is NOT deleted — it moves to the Void
+      // ledger, keeps every field it had, and gains a stamped reason. computeAudit only
+      // counts ledger==="model", so a voided row stops affecting P/L, ROI, bands and the
+      // rule-decay audit the moment it is voided, while remaining fully inspectable.
+      //
+      // Why this exists: on 16/07 the Clerk misread four receipts (an OCR column-bleed
+      // spliced an extra digit into 559894C6 and friends), the receipt match therefore
+      // missed, the coordinate fallback matched already-settled 15/07 legs, and four
+      // phantom legs entered the book carrying $108 of payout that had already been
+      // counted. The vault had no way to remove them. It does now.
+      if (req.method !== "POST")
+        return res.status(405).json({ error: "POST required" });
+      const body = parseBody(req);
+      const rows = Array.isArray(body.rows) ? body.rows : [];
+      const why = String(body.why || "").trim();
+      if (!rows.length)
+        return res.status(400).json({ error: "Provide rows as a non-empty array of { xlRow, reason }" });
+      if (!why)
+        return res.status(422).json({ error: "why is required: voiding a leg is a decision and must carry its reason" });
+
+      const [logRaw] = await redis([["GET", "stw:betlog"]]);
+      const _expBetlog = logRaw == null ? null : sha(logRaw);
+      if (!logRaw) return res.status(404).json({ error: "Vault not seeded yet" });
+      const log = JSON.parse(logRaw);
+      const byRow = {};
+      log.forEach((r) => (byRow[r.xlRow] = r));
+
+      const errors = [];
+      const voided = [];
+      for (const v of rows) {
+        const row = byRow[v.xlRow];
+        if (!row) { errors.push("xlRow " + v.xlRow + " not found"); continue; }
+        if (String(row.ledger || "").trim().toLowerCase() === "void") {
+          errors.push("xlRow " + v.xlRow + " is already void");
+          continue;
+        }
+        row.voidHistory = row.voidHistory || [];
+        row.voidHistory.push({
+          at: new Date().toISOString(),
+          from: { ledger: row.ledger, result: row.result, payout: row.payout, netPL: row.netPL },
+          reason: String(v.reason || why).slice(0, 500),
+        });
+        // keep what it WAS, so a void can be reasoned about (or undone) later
+        if (row.ledgerBeforeVoid == null) row.ledgerBeforeVoid = row.ledger;
+        row.ledger = LEDGERS.void;
+        row.notes = (row.notes ? row.notes + "; " : "") + "VOIDED: " + String(v.reason || why).slice(0, 200);
+        voided.push({ xlRow: v.xlRow, was: row.ledgerBeforeVoid, reason: String(v.reason || why).slice(0, 200) });
+      }
+      if (!voided.length)
+        return res.status(422).json({ error: "Nothing voided", errors });
+
+      const str = JSON.stringify(log);
+      const { verify, allMatch } = await writeVerified(
+        { "stw:betlog": str },
+        { "stw:betlog": _expBetlog }
+      );
+      if (!allMatch)
+        return res.status(409).json({ error: "Write refused: the bet log changed while this void was being prepared. Reload and try again.", verify });
+      const meta = await bumpMeta({ "stw:betlog": sha(str) }, "voidlegs", voided.length + " leg(s) voided");
+
+      // A void is a DECISION about the record, so it belongs in the decision ledger too,
+      // not only stamped on the rows. Written best-effort AFTER the betlog write has been
+      // verified: if this append fails the void still stands, and the row-level
+      // voidHistory remains the primary audit trail.
+      let ledgerSeq = null;
+      try {
+        const [lraw] = await redis([["GET", "stw:ledger"]]);
+        const entries = lraw ? JSON.parse(lraw) : [];
+        const seq = entries.reduce((m, e) => Math.max(m, e.seq || 0), 0) + 1;
+        entries.push({
+          seq,
+          at: new Date().toISOString(),
+          kind: "correction",
+          change: voided.length + " leg(s) voided: " + voided.map((v) => "row " + v.xlRow).join(", "),
+          why,
+          before: "",
+          after: "",
+          author: "you",
+          correctsSeq: null,
+        });
+        const lstr = JSON.stringify(entries.slice(-400));
+        await redis([["SET", "stw:ledger", lstr]]);
+        await bumpMeta({ "stw:ledger": sha(lstr) }, "voidlegs", "ledger note for " + voided.length + " void(s)");
+        ledgerSeq = seq;
+      } catch (e) {
+        // non-fatal: the void itself is already committed and stamped on the rows
+      }
+      return res.status(200).json({ ok: true, voided, errors, verify, rev: meta.rev, ledgerSeq });
     }
 
     if (action === "settle") {
@@ -1152,7 +1300,11 @@ module.exports = async (req, res) => {
         const m = rxRec.exec(String(b.notes || ""));
         return m ? m[1].toUpperCase() : null;
       };
-      const pending = log.filter((b) => normResult(b.result) === "pending");
+      // A voided leg is not a live bet, so it must never be offered for settlement —
+      // otherwise a row retired as a duplicate would keep asking to be settled forever.
+      const pending = log.filter(
+        (b) => normResult(b.result) === "pending" && String(b.ledger || "").trim().toLowerCase() !== "void"
+      );
       const allReceipts = {};
       log.forEach((b) => {
         const r = receiptOf(b);
@@ -1326,9 +1478,24 @@ module.exports = async (req, res) => {
         let row = rec ? byReceipt[rec] : null;
         let matchedReceipt = rec;
         let matchedBy = row ? "receipt" : null;
-        // FALLBACK: no stored receipt (or it didn't match) -> match on coordinates
+        // FALLBACK: no stored receipt (or it didn't match) -> match on coordinates.
+        // GUARDED BY DATE. coordKey is [country|race|horse|type] with no date in it, which
+        // is exactly how four 15/07 receipt rows settled four 16/07 pending legs: same
+        // course, same race, same horse, same bet type, different day, and nothing checked.
+        // A receipt row may only settle a leg placed on the SAME day as its transaction.
         if (!row) {
           const c = rowByCoord(leg);
+          const cDate = c && c.row ? normDate(c.row.txnDate) : null;
+          const dateClash = !!(cDate && leg.date && cDate !== String(leg.date).trim());
+          if (c && dateClash) {
+            untouched.push({
+              xlRow: leg.xlRow, receipt: rec,
+              label: leg.date + " R" + leg.raceNo + " #" + leg.horseNo + " " + leg.betType,
+              note: "a receipt row with the same race/horse was found but it is dated " + cDate +
+                    ", not " + leg.date + ". Left open rather than settling this leg from another day's ticket.",
+            });
+            continue;
+          }
           if (c) {
             row = c.row;
             matchedBy = "coordinate";
@@ -1349,7 +1516,38 @@ module.exports = async (req, res) => {
           continue;
         }
         const status = String(row.status || "").toLowerCase();
-        const pay = num(row.payout);
+
+        // SHARED-TICKET PAYOUT MUST BE SPLIT, NOT REPEATED.
+        // A multi-horse straight bet ("U2 FR8 PLA 2-3-5") is ONE receipt covering THREE
+        // legs, and SGPools reports ONE payout for the ticket: $44.00. The old code did
+        // `pay = num(row.payout)` and handed that whole $44 to every sibling, so a $30
+        // ticket that returned $44 was logged as returning $132. The ledger cannot settle
+        // per-leg from a per-ticket figure without dividing it.
+        //
+        // Only the horses that actually placed share the money — but SGPools does not tell
+        // us WHICH ones from this row alone, so the honest split is equal across the legs
+        // on the ticket, flagged for review. Largest-remainder keeps the parts summing to
+        // the whole: $44/3 = 14.67 + 14.67 + 14.66, never 14.66*3 = $43.98 or 14.67*3 = $44.01.
+        const ticketLegs = matchedReceipt
+          ? pending.filter((l) => receiptOf(l) === rec || (matchedReceipt && receiptOf(l) === matchedReceipt))
+          : [leg];
+        const shareCount = ticketLegs.length > 1 ? ticketLegs.length : 1;
+        let pay = num(row.payout);
+        let splitNote = "";
+        if (shareCount > 1 && pay > 0) {
+          // deterministic order so the extra cent lands in the same place every run
+          const ordered = ticketLegs.slice().sort((a, b) => Number(a.xlRow) - Number(b.xlRow));
+          const idx = ordered.findIndex((l) => l.xlRow === leg.xlRow);
+          const cents = Math.round(pay * 100);
+          const base = Math.floor(cents / shareCount);
+          const extra = cents - base * shareCount; // 0..shareCount-1 legs get one more cent
+          pay = (base + (idx < extra ? 1 : 0)) / 100;
+          splitNote =
+            "receipt " + (matchedReceipt || rec) + " is one ticket covering " + shareCount +
+            " horses; its $" + num(row.payout).toFixed(2) + " payout was split " + shareCount +
+            " ways ($" + pay.toFixed(2) + " here). If only some horses placed, correct the shares before committing.";
+        }
+
         let result, note = "";
         if (/refund|void|cancel/.test(status)) {
           result = "Refund";
@@ -1368,6 +1566,7 @@ module.exports = async (req, res) => {
         }
         if (matchedBy === "coordinate")
           note = (note ? note + "; " : "") + "matched by race/" + (isExoticType(leg.betType) ? "combo" : "horse") + " (no stored receipt); receipt " + (matchedReceipt || "?") + " backfilled";
+        if (splitNote) note = (note ? note + "; " : "") + splitNote;
         proposal.push({
           xlRow: leg.xlRow,
           receipt: matchedReceipt,
@@ -1468,6 +1667,8 @@ module.exports = async (req, res) => {
         const mm = String(p.getUTCMonth() + 1).padStart(2, "0");
         return dd + "/" + mm + "/" + p.getUTCFullYear();
       };
+
+
       const legDate = body.date ? String(body.date).trim() : phuketToday();
 
       // pull any Stable proposal for this date, to cross-check placed vs proposed
@@ -1490,16 +1691,18 @@ module.exports = async (req, res) => {
         "- The LAST token is the horse number (for WIN/PLA) or the combination (for exotics).\n" +
         "WORKED EXAMPLE: 'U3 SA7 PLA 9' means 3 UNITS, meet SA RACE 7, PLA bet, horse 9. So units=3, raceNo=7, betType=PLA, horseNo=9. Do NOT read the 3 from 'U3' as the race; the race is the 7 in 'SA7'.\n" +
         "ANOTHER: 'U5 SA7 TRO 4-5-9/4-5-9/4-5-9' means 5 UNITS, meet SA RACE 7, TRIO, combo 4-5-9/4-5-9/4-5-9. So units=5, raceNo=7, betType=TRIO, combo='4-5-9/4-5-9/4-5-9'.\n\n" +
+        "TRANSACTION DATE — CRITICAL. Every row has a TRANSACTION DATE & TIME in the first column (e.g. '15 Jul 2026 08:11 AM'). A transaction history page routinely spans SEVERAL DAYS. Return that row's own date in txnDate as DD/MM/YYYY exactly as printed on THAT row — never today's date, never the date of the row above. Rows are logged against the day they were actually placed; getting this wrong files last week's bets as today's. If a row's date is genuinely unreadable, set txnDate to null rather than guessing. " +
         "For each horse bet extract: the RECEIPT number (letters and digits only, e.g. 557A0429); " +
         "the full SELECTION text verbatim; the MEET / country and course if shown; the COUPON CODE if shown; " +
         "the RACE number (the digits attached to the meet code, per the grammar above); the BET TYPE; the UNIT count (the number after 'U'); and the total AMOUNT staked in dollars. " +
         "MULTI-HORSE STRAIGHT BETS: it is common to place the SAME bet type on SEVERAL horses in ONE race as a single ticket, e.g. 'U2 FR8 PLA 2-3-5' = 2 units PLACE on horse 2, horse 3 AND horse 5 in France race 8, $30 total. This is NOT an exotic: it is three ordinary place bets sharing one receipt. Tell them apart by BET TYPE, never by the presence of dashes: WIN and PLA are ALWAYS straight bets however many horses are listed. For these put the FULL horse list exactly as printed into horseNo ('2-3-5') and leave combo empty. Only TRIO / FORECAST / PLACE FORECAST / TIERCE / QUARTET are exotics. " +
         "For the HORSE field: a WIN or PLA bet has a single horse number, put it in horseNo. " +
         "An EXOTIC (TRIO, Forecast, Quartet) is a COMBINATION, not one horse: leave horseNo null and put the full combination string (e.g. '4-5-9/4-5-9/4-5-9' or '1-3-7') in the combo field. Never force a single horse number onto an exotic. " +
+        "RECEIPT ACCURACY. Receipt numbers sit in a dense column and adjacent rows often share a long prefix (5598944E, 5598944D, 559894C6). Read EACH receipt from its OWN row, character by character. Do NOT carry a prefix down from the row above — that produces a receipt that looks plausible but belongs to no ticket, and silently corrupts the book. If a receipt is not fully legible, set it to null rather than approximating. " +
         "Read the numbers exactly as printed. If a genuinely single-horse field is unreadable use null; do not guess. " +
         "CRITICAL OUTPUT RULE: your entire reply must be ONE minified JSON object and NOTHING else. Do not explain your reasoning, do not count rows out loud, do not write a preamble or a closing remark, do not use markdown fences. The first character you emit must be { and the last must be }. Any prose outside the JSON breaks the tool. Exactly this shape: " +
         '{"skippedNonHorse":0,' +
-        '"bets":[{"receipt":"","selection":"","meet":"","couponCode":"","raceNo":0,"horseNo":null,"combo":"","betType":"WIN|PLA|TRIO|FORECAST|QUARTET","units":1,"amount":0}]} ' +
+        '"bets":[{"receipt":"","txnDate":"DD/MM/YYYY","selection":"","meet":"","couponCode":"","raceNo":0,"horseNo":null,"combo":"","betType":"WIN|PLA|TRIO|FORECAST|QUARTET","units":1,"amount":0}]} ' +
         "For WIN/PLA set combo to empty string; for exotics set horseNo to null and fill combo. Numbers must be plain numbers without $ signs.";
 
       const content = images.map((im) => ({
@@ -1624,6 +1827,18 @@ module.exports = async (req, res) => {
         const receipt = b.receipt
           ? String(b.receipt).toUpperCase().replace(/[^0-9A-Z]/g, "")
           : "";
+        // A receipt of the wrong length is the fingerprint of the OCR column-bleed that
+        // put four phantom legs in the book on 16/07: 559894C6 was read as 5598944C6, the
+        // prefix carried down from the rows above. It matches no ticket, so dedupe cannot
+        // see it is a duplicate and the coordinate matcher settles it against the wrong
+        // day. Surface it before it is committed rather than after it has poisoned a month
+        // of calibration.
+        if (receiptLooksWrong(receipt))
+          warnings.push(
+            "Receipt " + receipt + " is " + receipt.length + " characters; SGPools receipts are " +
+            RECEIPT_LEN + ". This is usually a misread that carried a digit from the row above — " +
+            "check it against the page before committing, or the leg will not match its ticket."
+          );
         const betType = normType(b.betType);
         const exotic = isExotic(betType);
         const amount = num(b.amount);
@@ -1674,6 +1889,44 @@ module.exports = async (req, res) => {
           );
           continue;
         }
+
+        // COORDINATE DUPLICATE GUARD — the defence that does not trust the receipt.
+        // Receipt-keyed dedupe is only as good as the OCR: when 559894C6 was misread as
+        // 5598944C6 the key matched nothing, the guard passed, and a leg already sitting
+        // in the book was logged a second time. This asks a different question — "is there
+        // already a leg on this exact day, meet, race, horse, type and stake?" — which the
+        // misread cannot dodge, because the coordinates come from the selection text rather
+        // than the receipt column.
+        //
+        // CRITICAL SCOPE: this only fires when the receipt is NOT trustworthy (missing, or
+        // failing the 8-character rule). Hammy really does back the same horse twice in a
+        // day at the same stake — topping up a position — and those are distinct tickets
+        // with distinct, well-formed receipts. Blocking them would trade one silent
+        // corruption for another. A good receipt is the stronger identity and wins; the
+        // coordinate check is the safety net for exactly the case that burned us.
+        const receiptTrustworthy = !!receipt && !receiptLooksWrong(receipt);
+        const coordDupe = receiptTrustworthy ? null : log.find(
+          (x) =>
+            String(x.date).trim() === String(legDateForRow).trim() &&
+            String(x.meet || "").trim().toLowerCase() === String(b.meet || "").trim().toLowerCase() &&
+            String(x.raceNo) === String(raceNo) &&
+            String(x.horseNo == null ? "" : x.horseNo).trim() === String(horseNo == null ? "" : horseNo).trim() &&
+            String(x.betType || "").trim().toUpperCase() === String(betType).trim().toUpperCase() &&
+            Math.abs(num(x.stake) - num(amount)) < 0.01 &&
+            String(x.ledger || "").trim().toLowerCase() !== "void"
+        );
+        if (coordDupe) {
+          warnings.push(
+            "SKIPPED as a probable duplicate: " + legDateForRow + " " + String(b.meet || "").trim() +
+            " R" + raceNo + " #" + horseNo + " " + betType + " $" + amount +
+            " is already in the book at row " + coordDupe.xlRow + " (receipt " +
+            ((String(coordDupe.notes || "").match(/receipt\s+([0-9A-Z]+)/i) || [])[1] || "?") +
+            "). The receipt read here was " + (receipt || "unreadable") +
+            (receipt ? " which is not a valid 8-character receipt" : "") +
+            ", so it could not be matched by receipt. If this really is a second, separate bet, log it by hand."
+          );
+          continue;
+        }
         if (dedupeKey && seen.has(dedupeKey)) {
           warnings.push("Receipt " + receipt + (horseNo ? " (horse " + horseNo + ")" : "") + " appeared twice in the upload, kept once.");
           continue;
@@ -1709,8 +1962,32 @@ module.exports = async (req, res) => {
           ? (combo || String(b.selection || "").trim() || "combo unread")
           : "";
 
+        // THE DATE MUST COME FROM THE ROW, NOT THE CLOCK.
+        // Every leg used to be stamped with legDate (today). A SGPools transaction history
+        // routinely spans several days, so uploading it on the 16th filed the 15th's bets
+        // as fresh 16th legs. Four such phantoms entered the book on 16/07/2026 carrying
+        // $108 of payout that had already been counted the day before, and turned a -$27.70
+        // day into a reported +$40.10 profit. The date was printed on every row the whole
+        // time; the tool simply never read it.
+        //
+        // Trust the row's own txnDate when it parses; fall back to legDate only when the
+        // model could not read one, and say so in the notes rather than pretending.
+        const rowDate = normDate(b.txnDate);
+        const dateFromRow = !!rowDate;
+        const legDateForRow = rowDate || legDate;
+        if (!dateFromRow && b.txnDate)
+          warnings.push(
+            "Receipt " + (receipt || "?") + ": could not read its transaction date (\"" +
+            String(b.txnDate).slice(0, 20) + "\"), so it was filed under " + legDate + ". Check the date before committing."
+          );
+        if (dateFromRow && legDateForRow !== legDate)
+          warnings.push(
+            "Receipt " + (receipt || "?") + " is dated " + legDateForRow +
+            ", not " + legDate + " — filed under its own date, as printed on the receipt."
+          );
+
         legs.push({
-          date: legDate,
+          date: legDateForRow,
           meet: String(b.meet || "").trim(),
           couponCode: String(b.couponCode || "").trim(),
           raceNo,
