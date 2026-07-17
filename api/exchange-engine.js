@@ -356,9 +356,36 @@ async function actIdeas(force) {
   const netLiq = num(s.book.netLiq) ?? num(acc.netLiquidityValue);
   const initialMargin = num(acc.initialMargin);
   const marginUtilPct = (initialMargin != null && netLiq) ? (initialMargin / netLiq) * 100 : null;
+  // BOARD LOTS. "Affordable" is not price-vs-buying-power: it is MINIMUM TICKET vs
+  // buying power, and the minimum ticket depends on the venue's board lot.
+  //
+  // 17/07/2026: the desk proposed Jardine Matheson (J36, SGX) at 62.88 and wrote that it
+  // "fits comfortably within $342 buying power at 1 share". SGX trades in board lots of
+  // 100 units, so the real minimum ticket was $6,288 — eighteen times the buying power.
+  // Hammy took the idea to his platform, found the NewOrder screen locked at 100 shares,
+  // and the trade was impossible. The idea was not merely mis-sized; it was never takeable.
+  //
+  // The rule per venue:
+  //   SGX   board lot 100 units. Minimum ticket = price x 100. (SGX RegCo reduces this to
+  //         10 units for instruments above S$10 from October 2026, starting with 11 stocks
+  //         — until that lands, assume 100.)
+  //   HKEX  board lot varies BY STOCK (100/200/500/1000/2000...). Never assume; if the lot
+  //         is unknown, the name is not proposable as a share.
+  //   US    (NASDAQ/NYSE/NYSE American) 1 share. Minimum ticket = price x 1.
+  //   CFD   not board-lot bound, but leveraged: a different risk decision, not a loophole
+  //         for affording a name that fails as a share.
+  const maxSgxPrice = buyingPower != null ? buyingPower / 100 : null;
   const affordLine = buyingPower != null
-    ? `Your genuine buying power right now is about $${buyingPower.toFixed(0)}${netLiq != null ? ` on net liquidity of $${netLiq.toFixed(0)}` : ''}${marginUtilPct != null ? `, with roughly ${marginUtilPct.toFixed(0)}% of the account already committed as margin` : ''}. EVERY idea you propose must be genuinely affordable inside this buying power at a sensible position size; never recommend something that would need more firepower than he has.`
-    : 'Account buying power is not yet synced, so size ideas conservatively and note that he should confirm affordability on his platform before taking anything.';
+    ? `Your genuine buying power right now is about $${buyingPower.toFixed(0)}${netLiq != null ? ` on net liquidity of $${netLiq.toFixed(0)}` : ''}${marginUtilPct != null ? `, with roughly ${marginUtilPct.toFixed(0)}% of the account already committed as margin` : ''}.
+
+AFFORDABILITY IS DECIDED BY THE MINIMUM TICKET, NOT THE SHARE PRICE. Work it out before you propose anything:
+- SGX shares trade in board lots of 100 units. Minimum ticket = price x 100. With $${buyingPower.toFixed(0)} of buying power, the HIGHEST SGX share price you can actually trade is about $${maxSgxPrice.toFixed(2)}. An SGX name priced above that is NOT AFFORDABLE no matter how good the thesis — do not propose it, and never describe it as fitting "at 1 share", because SGX will not sell you 1 share.
+- HKEX board lots vary by stock (100, 200, 500, 1000, 2000). If you do not know the lot for a specific HK name, do not propose it as a share.
+- US shares (NASDAQ/NYSE/NYSE American) trade in single shares. Minimum ticket = price x 1, so anything under $${buyingPower.toFixed(0)} is reachable.
+- CFDs are not board-lot bound, but leverage is a risk decision and never a way to squeeze in a name that fails the share test.
+
+For EVERY idea, state the minimum ticket in the reason (e.g. "1 SGX lot = 100 x $2.90 = $290, inside your $${buyingPower.toFixed(0)}") and confirm it fits. An idea he cannot physically place on his platform is worse than no idea: it wastes his morning and costs the desk his trust.`
+    : 'Account buying power is not yet synced, so size ideas conservatively and note that he should confirm affordability on his platform before taking anything. Remember SGX shares trade in board lots of 100 units, so the minimum SGX ticket is price x 100, never price x 1.';
 
   const historyLines = recent.map((r) => `- ${r.date}: ${r.idea.name}${r.idea.ticker ? ' (' + r.idea.ticker + ')' : ''} ${r.idea.direction} (${r.status})`).join('\n') || '- none';
   const priorGuidance = (s.guidance || []).map((g) => `- ${g.text}${g.basis ? ' [' + g.basis + ']' : ''}`).join('\n') || '- none yet; not enough resolved history';
@@ -424,16 +451,59 @@ Respond ONLY with JSON, no markdown:
     return bannedList.map((b) => b.toUpperCase()).includes(nm) || unavailable.has(nm) || heldNames.has(nm);
   };
   const badLevels = (i) => !checkLevels(i, realFor(i)).ok;
-  const isBad = (i) => isBanned(i) || badLevels(i);
+  // AFFORDABILITY GATE. The prompt now teaches board lots, but a prompt is guidance and
+  // this is arithmetic: check it in code, against the LIVE price rather than whatever the
+  // model claimed, and reject rather than hope.
+  //
+  // Born 17/07/2026: the desk proposed Jardine Matheson (J36, SGX) at 62.88 with the note
+  // "fits comfortably within $342 buying power at 1 share". SGX board lots are 100 units,
+  // so the true minimum ticket was $6,288 against $342 of buying power. Hammy only found
+  // out when his platform's NewOrder screen refused to let him buy fewer than 100 shares.
+  //
+  // Only SHARE ideas are gated. CFDs are not board-lot bound, and an idea with no price
+  // is left to the existing level checks rather than being failed twice for the same gap.
+  const LOT = { SGX: 100 };            // HKEX lots vary per stock; see hkexUnknownLot below
+  const lotFor = (i) => {
+    const ex = String(i.exchange || '').toUpperCase().trim();
+    if (ex === 'SGX') return LOT.SGX;
+    return 1;                          // US venues trade single shares
+  };
+  const minTicket = (i) => {
+    const px = realFor(i) ?? num(i.current_price);
+    if (px == null) return null;       // unknown price: not this gate's business
+    return px * lotFor(i);
+  };
+  // An HK share whose board lot we cannot know is not proposable as a share: guessing the
+  // lot is exactly the kind of assumption that produced the J36 card.
+  const hkexUnknownLot = (i) =>
+    String(i.instrument || 'SHARE').toUpperCase() === 'SHARE' &&
+    String(i.exchange || '').toUpperCase().trim() === 'HKEX';
+  const unaffordable = (i) => {
+    if (String(i.instrument || 'SHARE').toUpperCase() !== 'SHARE') return false;
+    if (buyingPower == null) return false;   // nothing to measure against
+    if (hkexUnknownLot(i)) return true;
+    const t = minTicket(i);
+    return t != null && t > buyingPower;
+  };
+  const affordWhy = (i) => {
+    if (hkexUnknownLot(i))
+      return `${i.ticker || i.name}: HKEX board lot varies by stock and is unknown here, so the minimum ticket cannot be verified`;
+    const px = realFor(i) ?? num(i.current_price);
+    const lot = lotFor(i);
+    const t = minTicket(i);
+    return `${i.ticker || i.name}: ${lot} x $${px} = $${t.toFixed(0)} minimum ticket, but buying power is only $${buyingPower.toFixed(0)}`;
+  };
+  const isBad = (i) => isBanned(i) || badLevels(i) || unaffordable(i);
 
   if ((ideas.ideas || []).some(isBad)) {
     const dupes = (ideas.ideas || []).filter(isBanned).map((i) => i.ticker || i.name);
     const lvl = (ideas.ideas || []).filter((i) => !isBanned(i) && badLevels(i)).map((i) => `${i.ticker || i.name}: ${checkLevels(i, realFor(i)).reason}`);
+    const afford = (ideas.ideas || []).filter(unaffordable).map(affordWhy);
     // tell the model the true live prices so its retry is anchored to reality
     const priceHints = Object.entries(priceMap).map(([k, v]) => `${k} is really trading at ~$${v}`).join('; ');
     try {
       const second = await claude(prompt +
-        `\n\nREJECTED, fix and resubmit two clean ideas:\n${dupes.length ? 'Duplicate/held/unavailable: ' + dupes.join(', ') + '\n' : ''}${lvl.length ? 'Broken levels: ' + lvl.join('; ') + '\n' : ''}${priceHints ? 'LIVE PRICES (anchor to these exactly): ' + priceHints : ''}`, 2600);
+        `\n\nREJECTED, fix and resubmit two clean ideas:\n${dupes.length ? 'Duplicate/held/unavailable: ' + dupes.join(', ') + '\n' : ''}${lvl.length ? 'Broken levels: ' + lvl.join('; ') + '\n' : ''}${afford.length ? 'NOT AFFORDABLE — the minimum ticket exceeds his buying power. This is arithmetic, not a matter of conviction, and these names cannot be placed at all: ' + afford.join('; ') + '. Replace them with names whose MINIMUM TICKET fits: SGX shares need price x 100' + (maxSgxPrice != null ? ' (so under $' + maxSgxPrice.toFixed(2) + ' a share)' : '') + ', US shares need only price x 1.\n' : ''}${priceHints ? 'LIVE PRICES (anchor to these exactly): ' + priceHints : ''}`, 2600);
       if (second.ideas) {
         // price the fresh names too before accepting
         const secondTickers = second.ideas.map((i) => ({ ticker: i.ticker || i.name, exchange: i.exchange })).filter((x) => x.ticker);
@@ -443,6 +513,15 @@ Respond ONLY with JSON, no markdown:
     } catch { /* fall through to flagging */ }
     (ideas.ideas || []).forEach((i) => {
       if (isBanned(i)) i.reason = ((i.reason || '') + ' [DUPLICATE/HELD WARNING]').trim();
+      // Last line of defence. If the retry failed and an unaffordable name still made it
+      // this far, it must NOT reach the card looking takeable. Say the arithmetic out loud,
+      // drop the conviction to its floor, and make the availability line refuse it — the
+      // "Take position" button is not a suggestion, it is where real money goes.
+      if (unaffordable(i)) {
+        i.reason = ((i.reason || '') + ` [NOT AFFORDABLE — ${affordWhy(i)}. Board lots make this impossible to place, whatever the thesis says.]`).trim();
+        i.conviction = 'LOW';
+        i.availability = 'NOT AFFORDABLE — minimum board lot exceeds your buying power';
+      }
       const real = realFor(i);
       let lc = checkLevels(i, real);
       // only trust the feed price for display when it is NOT flagged as a wrong-instrument hit
@@ -541,47 +620,13 @@ function canonKey(x) {
 }
 // Normalise a company name for comparison: drop punctuation, legal suffixes and the
 // parenthetical asides the NOVA screenshots carry ("Singapore Airlines (SIA)").
-//
-// TRUNCATION IS THE HARD PART. The NOVA app clips long names to fit its column, so the
-// SAME position is OCR'd as "Marvell Technology Group" on one screen and "Marvell
-// Technology G..." on another. Without stripping the clip marker the two canonicalise to
-// MARVELL and MARVELLG — the orphaned "G" of the cut-off word glues itself on — and the
-// book grows a duplicate holding that carries no locked levels, reports "no levels set",
-// and asks to be reviewed again forever. Same for "NetApp Inc" vs "NetApp Inc (USD1 x
-// S..." (NETAPP vs NETAPPUSD1XS) and "Global X AI & Technology" vs "Global X AI &
-// Techno..." (XAI vs XAITECHNO).
-//
-// So: detect the ellipsis FIRST, cut the partial word it left behind, and report the
-// result as a prefix rather than a complete name. A truncated name is a PREFIX of the real
-// one, and must be compared as such — never as an equal.
 function canonName(x) {
   if (!x || !x.name) return null;
   let n = String(x.name).toUpperCase();
-  // The clip marker: "..." or the single-character ellipsis, at the end or mid-string.
-  const truncated = /(\.\.\.|\u2026)/.test(n);
-  n = n.replace(/(\.\.\.|\u2026)/g, ' ');
   n = n.replace(/\([^)]*\)/g, ' ');                    // drop "(SIA)", "(SpaceX)"
-  // "GLOBAL" is a fund-family BRAND when it leads ("Global X AI & Technology"), not a
-  // droppable suffix. Stripping it collapsed the whole Global X range toward 3-character
-  // keys — "Global X AI & Technology" became XAI, which collides head-on with xAI Corp, a
-  // genuinely different company that could plausibly sit in the same book. Protect a
-  // leading GLOBAL X so the family keeps a distinguishing stem.
-  n = n.replace(/^\s*GLOBAL\s+X\b/, ' GLOBALX ');
   n = n.replace(/\b(INC|CORP|CORPORATION|LTD|LIMITED|PLC|CO|COMPANY|GROUP|HOLDINGS?|TECHNOLOGIES|TECHNOLOGY|GLOBAL|ETF|NV|SA|AG)\b/g, ' ');
-  if (truncated) {
-    // The clip almost always lands mid-word ("Techno...", "G..."), leaving a fragment that
-    // is not a real word. Drop the final token so the remainder is a clean prefix: the
-    // fragment is exactly what would otherwise poison the comparison.
-    n = n.trim().replace(/\s+\S*$/, "");
-  }
   n = n.replace(/[^A-Z0-9]/g, '');
   return n || null;
-}
-
-// Is this name a clipped one? Callers need to know, because a truncated name can only ever
-// be a PREFIX match, never an equality match.
-function isTruncatedName(x) {
-  return !!(x && x.name && /(\.\.\.|\u2026)/.test(String(x.name)));
 }
 function sameHolding(a, b) {
   if (!a || !b) return false;
@@ -590,23 +635,13 @@ function sameHolding(a, b) {
   // 2) canonical symbol: the strongest real-world identity we have
   const ak = canonKey(a), bk = canonKey(b);
   if (ak && bk) return ak === bk;
-  // 3) one side has no ticker (OCR missed it): fall back to a name match.
+  // 3) one side has no ticker (OCR missed it): fall back to a STRICT full-name match.
   const an = canonName(a), bn = canonName(b);
   if (an && bn) {
     if (an === bn) return true;
-    const aTrunc = isTruncatedName(a), bTrunc = isTruncatedName(b);
-    const [short, long] = an.length <= bn.length ? [an, bn] : [bn, an];
-    // A KNOWN-TRUNCATED name is a prefix of the real one by construction, so prefix
-    // matching is the correct test rather than a risky heuristic. The >=8 guard below
-    // exists to stop "AMD" swallowing "AMDOCS" when we have two full names and no reason
-    // to think either is clipped — but applying it to a clipped name blocks every genuine
-    // match on a short company: MARVELL is 7 characters and failed by ONE. Require 4 so a
-    // clipped name still cannot collapse onto a 2-3 letter stub.
-    if (aTrunc || bTrunc) {
-      if (short.length >= 4 && long.startsWith(short)) return true;
-    }
     // allow containment only when the shorter name is substantial, so "SPACEEXPLORATION"
     // matches "SPACEEXPLORATIONSPACEX" but "AMD" never swallows "AMDOCS".
+    const [short, long] = an.length <= bn.length ? [an, bn] : [bn, an];
     if (short.length >= 8 && long.startsWith(short)) return true;
   }
   // 4) a name on one side vs a ticker on the other cannot be resolved safely here;
@@ -753,69 +788,6 @@ async function actSync(positionsImgs, historyImg) {
 
   const seen = posParse.holdings || [];
   const report = { closedDetected: [], newAdded: [], updated: 0, netLiq: posParse.netLiq ?? null, shotsRead: imgs.length };
-
-  // 0) HEAL EXISTING DUPLICATES.
-  // The old matcher compared "Marvell Technology Group" against the clipped "Marvell
-  // Technology G..." and saw two different companies, so the book grew a SECOND holding for
-  // a position that already existed. The duplicate carries no locked levels, so the Book
-  // shows "no levels set — run a review to lock them" next to the very same position that
-  // is sitting there fully reviewed, and Reviews offers it as NOT REVIEWED forever. Fixing
-  // canonName() stops new ones appearing but cannot heal the rows already written, so fold
-  // them here.
-  //
-  // Rule: keep the RICHEST row — the one carrying decisions (locked levels, thesis) and a
-  // ticker — and merge the other's decisions into it rather than discarding anything. A
-  // decision the user made is never destroyed to tidy up a list.
-  {
-    const kept = [];
-    const folded = [];
-    for (const h of s.book.holdings || []) {
-      const twin = kept.find((k) => sameHolding(k, h));
-      if (!twin) { kept.push(h); continue; }
-      // Decide which row survives: decisions first, then a real ticker, then a longer name.
-      const score = (x) =>
-        (x.levelsLockedAt ? 8 : 0) + (x.gemThesis ? 4 : 0) + (x.ticker ? 2 : 0) +
-        (isTruncatedName(x) ? 0 : 1);
-      const [win, lose] = score(twin) >= score(h) ? [twin, h] : [h, twin];
-      if (win !== twin) kept[kept.indexOf(twin)] = win;
-      // Fold anything the loser knows that the winner does not. Never overwrite a decision.
-      win.ticker = win.ticker || lose.ticker || null;
-      if (!isTruncatedName(lose) && isTruncatedName(win)) win.name = lose.name; // prefer the full name
-      if (!win.levelsLockedAt && lose.levelsLockedAt) {
-        win.levelsLockedAt = lose.levelsLockedAt;
-        win.lockedTP = win.lockedTP ?? lose.lockedTP;
-        win.lockedSL = win.lockedSL ?? lose.lockedSL;
-        win.lockedGiveUp = win.lockedGiveUp ?? lose.lockedGiveUp;
-        win.lockedRecovery = win.lockedRecovery ?? lose.lockedRecovery;
-        win.levelRegime = win.levelRegime || lose.levelRegime;
-      }
-      win.gemThesis = win.gemThesis || lose.gemThesis;
-      // Review history must stay OLDEST-FIRST: the UI does hist.slice(0,-1).reverse() to
-      // show "earlier reviews", i.e. it treats the LAST entry as the current one. A blind
-      // concat would interleave the loser's older reviews after the winner's newest and
-      // the history would render backwards, with a stale review posing as current.
-      win.reviews = [...(win.reviews || []), ...(lose.reviews || [])]
-        .sort((p, q) => (Date.parse(p && p.at) || 0) - (Date.parse(q && q.at) || 0));
-      // Keep the EARLIER open date: the position started when it started, and the duplicate
-      // row may well be the one that saw it first. Guard the Infinity case — Math.min of
-      // two missing values returns Infinity, which is truthy so a plain || will not rescue
-      // it, and it would persist to Redis as null via JSON.stringify.
-      {
-        const ts = [win.openedAt, lose.openedAt].filter((v) => typeof v === "number" && isFinite(v));
-        if (ts.length) win.openedAt = Math.min(...ts);
-      }
-      win.livePrice = win.livePrice ?? lose.livePrice;
-      folded.push({ kept: win.ticker || win.name, dropped: lose.name });
-    }
-    if (folded.length) {
-      s.book.holdings = kept;
-      report.dedupedHoldings = folded;
-      report.dedupeNote =
-        folded.length + " duplicate holding(s) folded back together — the same position had been " +
-        "logged twice because a clipped screenshot name (\"" + folded[0].dropped + "\") did not match its " +
-        "full form. Locked levels and theses were preserved on the surviving row.";
-    }
-  }
 
   // 1) reconcile: holdings in the book but absent on screen => sold; match to history
   // Sign sanity check: on a normal long, price above cost should mean a POSITIVE unrealised
