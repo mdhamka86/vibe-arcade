@@ -463,17 +463,65 @@ function renderFlags(flags){
   }).join("");
 }
 function renderFigs(a){
+  // THE MORNING WIRE (Electric Boogaloo era, 19/07/2026). The old six lifetime
+  // figures became wallpaper — the same numbers every day until the eye stopped
+  // reading them. The Wire shows only what changes daily and what the era is
+  // actually measured on. Lifetime history lives on in the Calibration tab.
   const m=a.audit.model;
-  const f=[
-    [a.audit.rows,"ledger rows"], [m.settled,"model settled"], [m.pending,"pending legs"],
-    [money(m.staked),"staked (settled)"], [money(m.netPL),"net P/L","pl"], [m.strikeRate+"%","strike (W or P)"]
-  ];
+  wireFigs([
+    ["\u2026","era legs to first verdict"],
+    ["\u2026","era net P/L"],
+    [m.pending,"legs to settle"],
+    ["\u2026","avg cashed PLA div (target $1.70)"],
+    ["\u2026","shadow verdicts (latest book)"],
+    ["\u2026","latest settled day"]
+  ]);
+  if(typeof vault!=="undefined"&&vault&&vault.betlog) upgradeWire();
+}
+function wireFigs(f){
   $("figs").innerHTML=f.map(x=>{
-    let cls="";
-    if(x[2]==="pl") cls=m.netPL<0?" neg":" pos";
-    return '<div class="fig"><div class="v'+cls+'">'+esc(x[0])+'</div><div class="k">'+esc(x[1])+'</div></div>';
+    const cls=x[2]?(" "+x[2]):"";
+    return '<div class="fig"><div class="v'+cls+'">'+esc(String(x[0]))+'</div><div class="k">'+esc(x[1])+'</div></div>';
   }).join("");
   $("figs").style.display="grid";
+}
+let wireProposal=null;
+async function upgradeWire(){
+  if(typeof vault==="undefined"||!vault||!vault.betlog) return;
+  const key=d=>String(d||"").slice(6,10)+String(d||"").slice(3,5)+String(d||"").slice(0,2);
+  const ERA="20260720"; // the Boogaloo epoch — pre-era rows are history, not signal
+  const n=v=>{const x=parseFloat(v);return isFinite(x)?x:0};
+  const rows=vault.betlog.filter(b=>(String(b.ledger||"Model").trim()==="Model"));
+  const isSet=b=>["win","place","lose"].includes(normResult(b.result));
+  const era=rows.filter(b=>key(b.date)>=ERA&&isSet(b));
+  const eraNet=era.reduce((a,b)=>a+n(b.payout)-n(b.stake),0);
+  const plaCash=era.filter(b=>String(b.betType).trim()==="PLA"&&n(b.payout)>0);
+  const avgDiv=plaCash.length?plaCash.reduce((a,b)=>a+n(b.payout)/n(b.stake),0)/plaCash.length:0;
+  const days={};
+  rows.filter(isSet).forEach(b=>{(days[key(b.date)]=days[key(b.date)]||[]).push(b);});
+  const dk=Object.keys(days).sort();
+  const last=dk[dk.length-1];
+  const yNet=last?days[last].reduce((a,b)=>a+n(b.payout)-n(b.stake),0):0;
+  if(!wireProposal){
+    try{ wireProposal=await (await fetch("/api/propose?action=latest")).json(); }
+    catch(e){ wireProposal={}; }
+  }
+  const sp=wireProposal&&wireProposal.shadowPrices?wireProposal.shadowPrices:null;
+  let shadow="run a proposal";
+  if(sp){
+    const c={pass:0,fail:0,nodata:0};
+    (sp.kept||[]).forEach(x=>{c[x.verdict]=(c[x.verdict]||0)+1;});
+    shadow=(c.pass||0)+" pass \u00b7 "+(c.fail||0)+" fail \u00b7 "+(c.nodata||0)+" nodata";
+  }
+  const pending=(typeof lastAudit!=="undefined"&&lastAudit&&lastAudit.audit)?lastAudit.audit.model.pending:0;
+  wireFigs([
+    [era.length+"/100","era legs to first verdict"],
+    [money(eraNet),"era net P/L",era.length?(eraNet<0?"neg":"pos"):""],
+    [pending,"legs to settle"],
+    [plaCash.length?"$"+avgDiv.toFixed(2):"\u2014","avg cashed PLA div (target $1.70)",plaCash.length?(avgDiv>=1.7?"pos":"neg"):""],
+    [shadow,"shadow verdicts (latest book)"],
+    [last?money(yNet):"\u2014","latest settled day",last?(yNet<0?"neg":"pos"):""]
+  ]);
 }
 
 // ---- boot flow ----
@@ -521,6 +569,7 @@ async function loadState(){
   $("tabs").style.display="flex";
   renderLedger(); renderQuill(); renderDays(); renderNotes(); renderCalib(); renderGuide();
   loadMorning();
+  upgradeWire();
 }
 
 // ---- seed (only reachable when the vault is genuinely empty) ----
