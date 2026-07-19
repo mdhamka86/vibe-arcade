@@ -7,9 +7,6 @@
     }
   ],
   "functions": {
-    "api/triage.js": {
-      "maxDuration": 10
-    },
     "api/deep.js": {
       "maxDuration": 10,
       "memory": 1024
@@ -28,6 +25,9 @@
     },
     "api/propose.js": {
       "maxDuration": 120
+    },
+    "api/probe.js": {
+      "maxDuration": 60
     }
   }
 }
