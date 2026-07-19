@@ -56,6 +56,7 @@
     font-size:18px;font-weight:500;color:var(--ink);letter-spacing:-0.02em;}
   .fig .k{font-size:9.5px;color:var(--faint);letter-spacing:.1em;text-transform:uppercase;margin-top:4px;font-weight:500;}
   .fig .v.neg{color:var(--red);} .fig .v.pos{color:var(--green);}
+  .fig .v.small{font-size:13px;letter-spacing:0;line-height:1.55;}
 
   /* buttons */
   button{font-size:15px;font-family:inherit;border-radius:11px;border:1px solid var(--line);
@@ -263,7 +264,7 @@
   <div id="app">
     <div class="mast">
       <h1>The Stewards&rsquo; <b>Room</b> <span style="font-size:13px;font-weight:600;letter-spacing:0.08em;color:var(--brass);vertical-align:middle;">ELECTRIC BOOGALOO</span></h1>
-      <div class="sub">The Outsider Method, digitised. Every leg, every lesson, every cent, held in the vault and audited on demand.</div>
+      <div class="sub">The Outsider Method, digitised. Priced, gated and shadow-tested \u2014 every leg argued under the Fourth Charter, every cent audited on demand.</div>
     </div>
 
     <div class="lamps" id="lamps">
@@ -519,7 +520,7 @@ async function upgradeWire(){
     [money(eraNet),"era net P/L",era.length?(eraNet<0?"neg":"pos"):""],
     [pending,"legs to settle"],
     [plaCash.length?"$"+avgDiv.toFixed(2):"\u2014","avg cashed PLA div (target $1.70)",plaCash.length?(avgDiv>=1.7?"pos":"neg"):""],
-    [shadow,"shadow verdicts (latest book)"],
+    [shadow,"shadow verdicts (latest book)","small"],
     [last?money(yNet):"\u2014","latest settled day",last?(yNet<0?"neg":"pos"):""]
   ]);
 }
@@ -1077,7 +1078,7 @@ function renderCalib(){
   for(const t of ["WIN","PLA"]){const s=a.split[t]||{bets:0,staked:0,netPL:0,cashed:0};
     h+="<tr><td>"+t+"</td><td>"+s.bets+"</td><td>"+money(s.staked)+'</td><td class="'+(s.netPL<0?"neg":"pos")+'">'+money(s.netPL)+"</td>"+roiTd(s.netPL,s.staked)+"<td>"+s.cashed+"/"+s.bets+"</td></tr>";}
   h+="</table></div>";
-  h+='<div class="card"><h3>Confidence calibration (normalised tiers)</h3><table><tr><th>Tier</th><th>Bets</th><th>Staked</th><th>Net</th><th>ROI</th></tr>';
+  h+='<div class="card"><h3>Conviction calibration (historic bands \u00b7 era binary from 20/07)</h3><table><tr><th>Tier</th><th>Bets</th><th>Staked</th><th>Net</th><th>ROI</th></tr>';
   const order=["High","Medium-High","Medium","Low-Med","(no label)","None"];
   const tiers=Object.keys(a.calibration).sort((x,y)=>{
     const i=order.indexOf(x),j=order.indexOf(y);return (i<0?99:i)-(j<0?99:j);});
@@ -1758,13 +1759,13 @@ function renderMorning(msg){
       const logged=(vault.betlog||[]).some(b=>b.date===today);
       if(!logged){
         h+='<div class="legreason" style="border:1px solid var(--amber);margin-bottom:12px"><b style="color:var(--amber)">Reminder \u00b7 '+esc(today)+'</b><br>'+
-          'A betlist was proposed for today but no legs are in the book yet. Once you have placed your bets on SGPools, upload the confirmation screenshots to the Intake Clerk in the Quill so they log as pending and receipt-backed. Until then, today is unrecorded.</div>';
+          'A betlist was proposed for today but nothing is logged yet. Place on SGPools, then upload the confirmations to the Intake Clerk so the legs enter the book as pending. Until then, today is unrecorded.</div>';
       }
     }
   }catch(e){}
 
   h+='<div class="card quill"><h3>'+IC.tout+'The Tout'+tip("The morning trawl. Runs automatically around 7:15am Phuket, once SGPools has published the day\u2019s cards, or by hand here. It triages meets with the data-edge gate, deep-reads SGPools PDFs, gathers regional pundits, and pulls track weather, caching the whole pack so the room opens instantly.")+'</h3>'+
-    '<div class="lesson">The morning trawl: triage with the data-edge gate applied in code, SGPools tipster PDFs deep-read, the scout manifest\u2019s pundit sources harvested per region, and weather pulled at every track. Runs by cron at 7:15am Phuket, once the day\u2019s cards are up, or by hand right here. The pack below feeds our convergence session.</div>'+
+    '<div class="lesson">Meets triaged, PDFs deep-read, pundits harvested, weather pulled. Cron fires 7:15am Phuket; run it by hand here any time.</div>'+
     '<button class="qbtn" id="toutRun">Run the morning trawl now (60-120s)</button>'+
     '<div class="qmsg" id="toutMsg">'+(msg?esc(msg):"")+'</div></div>';
 
@@ -1990,7 +1991,7 @@ function renderGuide(){
   h+='<div class="lead">Welcome to the Stewards\u2019 Room, the digital home of The Outsider Method. '+
     'The whole day runs as one gentle loop: the room gathers the intelligence and drafts the bets in the morning, '+
     'you place them at Singapore Pools yourself and then log the placed slip into the book as pending, '+
-    'and at night, or by a 7:30am backstop, the room reads your receipts and settles the book. '+
+    'and after the races the Results Wire taps the host totes for finals and drafts the settlements for your signature, with the receipt-reading clerk as the manual road. '+
     'Here is the full rhythm, hour by hour, with a note on where to tap and, more importantly, why each step is there.</div>';
 
   h+='<div class="lore">A small point of orientation before we begin. Nothing in this room ever places a bet or moves money on '+
@@ -2006,8 +2007,8 @@ function renderGuide(){
     "Open the room and the Morning tab greets you with the pack already built. Each surviving meet shows its score, its weather, source-health chips (green when a pundit answered, red when one did not), and an expandable Read the intel section with the actual tipster and pundit text.",
     "the gate deselects meets where we have no edge. Seeing which meets survived, and why the others did not, is the first honest read of the day.");
   h+=step("The Stable proposes",["Propose the betlist"],
-    "In the Stable panel, one tap sends the pack through the Charter, the ten locked laws distilled from a month of your own hard-won lessons. Back comes a betlist in your exact slip shape: flat stakes, a WIN-leg only on the cleanest convergence, a place-led book, a Trio only on a genuine frame. Every horse number is checked against the SGPools card, and anything it cannot verify is flagged UNCONFIRMED in red.",
-    "the model\u2019s proven edge is patience and selection, not chasing winners. The Charter makes sure the brain never forgets the flat-stake rule or the WIN-pool leak, even on a tempting morning.");
+    "One tap sends the pack through the Fourth Charter\u2019s eleven laws and the code gates behind them. Back comes a short book in your exact slip shape: flat stakes, every leg from the value tier (the consensus anchor is WIN-only, with a case), no places on tiny fields or unsourced meets, ten legs the hard ceiling, exotics suspended. Each leg is labelled Standard or Speculative, priced in shadow, and checked against the SGPools card \u2014 anything unverifiable is flagged UNCONFIRMED in red. The Veto Book beneath shows every leg the law cut and why.",
+    "in a tote, the crowd\u2019s pick is the overbet pick. The Charter\u2019s edge is price and restraint: a short book of value-tier legs beats a confident book of consensus favourites, and the veto record keeps the law honest.");
   h+=step("Review the proposed betslip",["read the gold enforcement box"],
     "Read the proposal carefully, especially the gold enforcement box that shows every correction the law made to the brain\u2019s draft, and note any UNCONFIRMED legs. This is your considered read of the day\u2019s book before a single dollar is committed anywhere.",
     "the room proposes but you dispose. Reviewing before you place is the moment your own judgement sits on top of the model\u2019s, exactly as a trainer signs off on the stable\u2019s runners.");
@@ -2028,7 +2029,10 @@ function renderGuide(){
     "the two routes are a choice between speed and certainty. On an ordinary day either is fine; on a busy or error-prone morning, the receipt route is the one that protects you.");
 
   h+='<h2>'+IC.scales+'The night, or the morning after</h2>';
-  h+='<div class="clock">nighttime \u00b7 or early morning \u00b7 7:30am backstop</div>';
+  h+='<div class="clock">after the races \u00b7 one tap first</div>';
+  h+=step("Tap the Results Wire",["Morning tab","Tap the wire for results"],
+    "For priced regions (Australia via TAB, France and Germany via PMU) the wire fetches final arrival orders and declared host-tote dividends for every pending leg and drafts the settlements: result, position, dividends, field size, and an estimated payout. Glance the table, verify the payouts against your SGPools slip \u2014 SGPools commingles into most host pools, so they should match to rounding \u2014 and confirm. Legs on unpriced regions are listed as skipped and settle by the clerk below.",
+    "the wire retires the results screenshot for most of the book. Positions and results come straight from the source totes; only the wallet truth still needs your slip\u2019s word.");
   h+=step("Submit the settled races for recon",["Quill tab","Clerk of the Scales","Read & reconcile uploads"],
     "Once the races have run, open your SGPools transaction history and screenshot the pages, plus the account overview if you like. You can do this at night, early the next morning, or by your 7:30am backstop if you have missed both earlier windows. In the Quill, the Clerk of the Scales reads every horse-wagering row, matches each by receipt number to your open pending legs, and fills in the results and payouts for you.",
     "matching on receipt numbers means no guesswork and no wrong-race errors, which is precisely why the legs were logged against those receipts when you placed. The 7:30am backstop matters because a process is only as good as its fallback for the days life gets in the way. The clerk reads the official scales; you never type a dividend by hand again.");
@@ -2047,12 +2051,12 @@ function renderGuide(){
 
   h+='<h2>'+IC.book+'The tabs at a glance</h2>';
   h+='<div class="step">'+
-    '<p><b>Morning</b> \u2014 the pack and the Stable, where each day begins.</p>'+
+    '<p><b>Morning</b> \u2014 the pack, the Stable, the Results Wire and the Veto Book: where each day begins and ends.</p>'+
     '<p><b>Ledger</b> \u2014 every leg ever placed, grouped by day, with reasons and receipts preserved.</p>'+
     '<p><b>Quill</b> \u2014 the writing desk: settle results, log new legs, run the Clerk, wrap the day.</p>'+
     '<p><b>Days</b> \u2014 each day\u2019s computed figures beside your recorded lessons.</p>'+
     '<p><b>Notes</b> \u2014 the Model Notes, the living constitution, newest first.</p>'+
-    '<p><b>Calibration</b> \u2014 the WIN vs PLA split, confidence bands, and the exotic ledger.</p>'+
+    '<p><b>Calibration</b> \u2014 the WIN vs PLA split, conviction bands, price-band evidence, and the suspended exotic ledger.</p>'+
     '<p><b>Guide</b> \u2014 this page, here whenever the morning fog needs lifting.</p>'+
     '</div>';
 
@@ -2117,7 +2121,7 @@ $("exportBtn").addEventListener("click",async()=>{
         ["Strike Rate (W or P) (%)",m.strikeRate],[],
         ["WIN vs PLA SPLIT (settled)"],["Type","Bets","Staked","Payout","Net P/L"]);
       for(const t of ["WIN","PLA"]){const s=a.split[t];rt.push([t,s.bets,r2(s.staked),r2(s.payout),r2(s.netPL)]);}
-      rt.push([],["CONFIDENCE CALIBRATION (normalised)"],["Tier","Bets","Staked","Payout","Net P/L","ROI %"]);
+      rt.push([],["CONVICTION CALIBRATION (historic bands + era binary)"],["Tier","Bets","Staked","Payout","Net P/L","ROI %"]);
       for(const t in a.calibration){const c=a.calibration[t];rt.push([t,c.bets,r2(c.staked),r2(c.payout),r2(c.netPL),c.roi]);}
       rt.push([],["EXOTIC LEDGER"],["Placed",a.exotic.placed],["Settled",a.exotic.settled],
         ["Staked (settled)",r2(a.exotic.staked)],["Net P/L",r2(a.exotic.netPL)]);
