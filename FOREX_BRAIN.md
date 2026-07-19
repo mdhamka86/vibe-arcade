@@ -4,8 +4,10 @@ Design spec for the automated forex breakout system: a reasoning **brain** (serv
 that trawls, converges, and originates breakout ideas, feeding a dumb **hands** layer
 (MT5 Expert Advisor) that executes them under hard local guardrails.
 
-Status: DESIGN. Nothing in this document is live. Build order and gates are defined
-in Section 9 and are binding. Betting real money is the LAST switch, not the first.
+Status: PHASE 1 DEPLOYED (19/07/2026). Engine live at api/forex-brain.js with 15-test
+suite green, session-weighted crons armed, monitor at public/forex-brain.html.
+Phase 2 (shadow week) begins with the first weekday cron. Build order and gates in
+Section 9 remain binding. Betting real money is the LAST switch, not the first.
 
 Owner: Hammy (hammyLabs). Repo: mdhamka86/vibe-arcade.
 
@@ -44,10 +46,17 @@ These are the rules the whole system is designed around. They override convenien
 1. **The brain must not fail silently.** A trawl that half-works and emits a verdict
    from partial data is worse than no verdict. Every verdict declares which sources
    it actually reached (Section 5). Missing sources shrink conviction or force FLAT.
-2. **FLAT is a first-class, common answer.** Doing nothing is the default, not a
-   failure. Forcing a trade every cycle is how the account bleeds. This is the
-   deliberate opposite of the Outsider Method "never stand down" idea rule, because
-   that is a journal for scoring and this is real auto-execution.
+2. **FLAT is a first-class, common answer.** Doing nothing is a legitimate and expected
+   output, never a failure. This is the deliberate opposite of the Outsider Method
+   "never stand down" idea rule, because that is a journal for scoring and this is real
+   auto-execution. POSTURE DECISION (19/07/2026, Hammy): within this rule the brain is
+   an OPPORTUNISTIC HUNTER, not a perfectionist. The converge prompt instructs it to
+   commit with a directional call when box, momentum and news align reasonably, and to
+   reserve FLAT for genuine counter-evidence (dead liquidity, imminent binary event,
+   contradictory signals), not mere uncertainty. Aggression lives in SELECTION only;
+   risk aggression stays capped by the hands' guardrails. Reviewed against the journal
+   after the shadow week: if it swings at good pitches it stays, if it calls breakouts
+   in chop the dial comes back.
 3. **The hands never trust a raw lot size.** The verdict sends `riskPercent`; the EA
    computes the lot from its own live balance and the actual SL distance, then caps
    it locally. Size by the stop, never by a number handed down. (The Spread week-one
@@ -304,13 +313,28 @@ optimism.
 
 ---
 
-## 10. Open questions (to resolve before Phase 1)
+## 10. Open questions and decisions
 
+RESOLVED (19/07/2026, Phase 1 build night):
+- Reasoning model: claude-fable-5, called once per pair per cycle with a pre-digested
+  pack. Fetch/parse stays deterministic in code.
+- Convergence floor: minSources = 3 (price snapshot counts as one source; the news
+  manifest carries the rest; roster expected = 5 news + 1 price = 6).
+- News roster v1 (Darwinism-tested with the brain's honest User-Agent): ff-calendar
+  JSON, ForexLive, Investing.com, Babypips, Fed press RSS. FXStreet, DailyFX,
+  MarketWatch, Reuters all 403 and are OUT. The manifest re-runs the exam every cycle.
+- Price layer: Twelve Data free tier (800 credits/day, ~98 used); note free-tier data
+  can lag minutes, acceptable for paper/H1, revisit before live phases.
+- Credit guard: BRAIN_KEY env var required on manual runs; Vercel cron (x-vercel-cron
+  header) always trusted. Read-only actions open.
+- Cadence implemented as four crons (UTC): 0 23 * * 0-4, 0 0-4 * * 1-5,
+  0 8-11 * * 1-5, 0 12-17 * * 1-5. Sixteen weekday firings, weekend silent.
+- Monitor shipped: public/forex-brain.html (session ribbon, verdict cards, journal).
+- Redis env: engine accepts UPSTASH_REDIS_REST_* or KV_REST_API_* names.
+
+STILL OPEN (resolve before Phase 3):
 - Confirm exact PhillipNova broker symbol spelling for all seven majors (suffixes?).
 - Confirm the broker server GMT offset (blocked on a weekday market-open reading; the
-  `CheckBrokerOffset` script is ready). Needed so the brain and EA agree on session
-  timing.
-- Decide the convergence floor number (minimum independent sources per pair).
-- Decide `EA_minConviction` starting value.
+  CheckBrokerOffset script is ready in the terminal).
+- Decide EA_minConviction starting value.
 - Decide the daily-loss circuit-breaker figure for the demo and micro phases.
-- Finalise the source manifest per pair/session from the locked forex roster.
