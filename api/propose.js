@@ -747,6 +747,29 @@ module.exports = async (req, res) => {
         '"sourcesChecked":{"MeetName":["source ids used"]},' +
         '"skipped":[{"meet":"","why":"why no or few legs here"}]}';
 
+      // ---- PHASE 3.1/3.3 (OVERHAUL.md): refresh prices at PROPOSE time ----
+      // The 8am trawl runs at 03:00 Paris — pools shut, no odds exist yet. So the
+      // price sweep happens here, when the book is actually being built. Shadow
+      // mode: prices are logged and verdicted but NEVER gate the book this week.
+      // A failed sweep must never block a proposal, hence the swallow-and-continue.
+      const PRICES_BASE =
+        "https://" +
+        (process.env.VERCEL_PROJECT_PRODUCTION_URL ||
+          process.env.VERCEL_URL ||
+          "vibe-arcade-omega.vercel.app");
+      let pricedPack = null;
+      try {
+        const pctrl = new AbortController();
+        const pt = setTimeout(() => pctrl.abort(), 70000);
+        await fetch(
+          PRICES_BASE + "/api/trawl?action=prices&date=" + encodeURIComponent(pack.date),
+          { signal: pctrl.signal }
+        );
+        clearTimeout(pt);
+        const [praw] = await redis([["GET", "stw:pack:" + pack.date.replace(/\//g, "")]]);
+        pricedPack = praw ? JSON.parse(praw) : null;
+      } catch (e) { /* shadow only — a missing price sweep never blocks the book */ }
+
       const cr = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -943,6 +966,54 @@ module.exports = async (req, res) => {
       const trioCount = gated.filter((l) => l.betType === "TRIO").length;
       const staked = gated.reduce((a, l) => a + l.stake, 0);
 
+      // ---- PHASE 3.3 SHADOW MODE (OVERHAUL.md): price verdicts, logged only ----
+      // Floors: PLA projected div >= $1.60, WIN >= $2.50. During the shadow week
+      // these verdicts DO NOT gate anything — the point is a clean week of
+      // shadow-book vs actual-book evidence before a single dollar obeys a price.
+      const priceIndex = {};
+      if (pricedPack)
+        (pricedPack.meets || []).forEach((m) =>
+          (m.raceMap || []).forEach((r) =>
+            (r.runners || []).forEach((h) => {
+              if (h.price) priceIndex[m.venue + "|" + r.raceNo + "|" + h.no] = h.price;
+            })
+          )
+        );
+      const shadowOf = (leg) => {
+        const p = priceIndex[leg.meet + "|" + leg.raceNo + "|" + leg.horseNo];
+        if (!p) return { verdict: "nodata" };
+        if (leg.betType === "PLA")
+          return { price: p, verdict: p.pla == null ? "nodata" : p.pla >= 1.6 ? "pass" : "fail" };
+        if (leg.betType === "WIN")
+          return { price: p, verdict: p.win == null ? "nodata" : p.win >= 2.5 ? "pass" : "fail" };
+        return { price: p, verdict: "n/a" };
+      };
+      const shadowPrices = {
+        mode: "shadow",
+        note: "Price floors LOGGED ONLY this week (PLA >= $1.60, WIN >= $2.50); they do not gate the book.",
+        pricesFetched: !!(pricedPack && pricedPack.prices),
+        stats: pricedPack && pricedPack.prices
+          ? {
+              at: pricedPack.prices.at,
+              matchedRaces: pricedPack.prices.matchedRaces,
+              pricedRunners: pricedPack.prices.pricedRunners,
+              errors: pricedPack.prices.errors,
+            }
+          : null,
+        kept: gated.map((l) =>
+          Object.assign(
+            { meet: l.meet, raceNo: l.raceNo, horseNo: l.horseNo, horseName: l.horseName, betType: l.betType },
+            shadowOf(l)
+          )
+        ),
+        vetoed: vetoes.map((v) =>
+          Object.assign(
+            { meet: v.meet, raceNo: v.raceNo, horseNo: v.horseNo, horseName: v.horseName, betType: v.betType, rule: v.rule },
+            shadowOf(v)
+          )
+        ),
+      };
+
       // build the vault-ready JSON the Quill's paste lane accepts
       const quillPayload = {
         date: pack.date,
@@ -972,6 +1043,7 @@ module.exports = async (req, res) => {
         skipped: parsed.skipped || [],
         corrections,
         vetoes,
+        shadowPrices,
         quillPayload,
         generatedAt: new Date().toISOString(),
       };

@@ -278,6 +278,201 @@ const ADAPTERS = {
   ],
 };
 
+// ---- PHASE 3.1: THE PRICE LAYER (OVERHAUL.md; endpoints scouted live 19/07/2026) ----
+//
+// Two adapters, both proven from syd1 with the probe:
+//   TAB  (api.beta.tab.com.au)  — AU meets. iPhone UA mandatory (desktop UA = Akamai
+//        "Access Denied"; geo unlocked by the syd1 region pin). Fixed odds + tote
+//        approximates per runner.
+//   PMU  (online.turfinfo.api.pmu.fr) — FR + DE meets (PMU carries German and some
+//        Irish cards with French tote odds). rapportReference = opening line,
+//        rapportDirect = latest tote. Pools open mid-morning Paris time, so this
+//        stage runs at PROPOSE time, never inside the 8am trawl (03:00 in Paris).
+//
+// MATCHING LAW: meets are matched to source races by RUNNER NAMES, never by venue
+// label or race number. SGPools labels are coupon containers ("Australia (Perth)"
+// held Grafton + Tasmania on 19/07) and every source numbers races its own way.
+// A race is matched only when >=50% of the card's runners appear in the source
+// race by normalised name. Prices are then written per runner BY NAME.
+// Dead ends, probed and buried: RAS/Hollywoodbets/Racenet-family (Cloudflare),
+// TAB SA (JS shell), TAB AU on a desktop UA (Akamai).
+
+function normName(s) {
+  return String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+function nameOverlap(cardRunners, srcNames) {
+  const src = new Set(srcNames.map(normName).filter(Boolean));
+  const names = (cardRunners || []).map((h) => normName(h.name)).filter(Boolean);
+  if (!names.length || !src.size) return 0;
+  let hit = 0;
+  for (const n of names) if (src.has(n)) hit++;
+  return hit / names.length;
+}
+function parseDistM(d) {
+  const m = /(\d{3,4})/.exec(String(d || ""));
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+// TAB: AU meets. One meetings call, then lazy race fetches gated by distance and
+// capped, with a learned venue+offset shortcut (SGPools integrates venues in
+// contiguous renumbered blocks, so once R5=venue X race 2, R6 is very likely
+// venue X race 3 — try that first and save a scan).
+async function tabPrices(pack, stats) {
+  const auMeets = (pack.meets || []).filter((m) => m.region === "AU" && (m.raceMap || []).length);
+  if (!auMeets.length) return;
+  const d = pack.date.split("/"); // DD/MM/YYYY -> YYYY-MM-DD
+  const tabDate = d[2] + "-" + d[1] + "-" + d[0];
+  const listUrl = "https://api.beta.tab.com.au/v1/tab-info-service/racing/dates/" + tabDate + "/meetings?jurisdiction=NSW";
+  const list = await fetchWithTimeout(listUrl, 15000, true, { ua: "iphone" });
+  if (!list.ok) { stats.errors.push("tab meetings: " + list.error); return; }
+  const meetings = (list.body.meetings || []).filter((m) => m.raceType === "R" && m.venueMnemonic);
+  const raceCache = {};
+  let fetches = 0;
+  const FETCH_CAP = 50;
+  async function getRace(venue, n) {
+    const key = venue + "|" + n;
+    if (raceCache[key] !== undefined) return raceCache[key];
+    if (fetches >= FETCH_CAP) return (raceCache[key] = null);
+    fetches++;
+    const u = "https://api.beta.tab.com.au/v1/tab-info-service/racing/dates/" + tabDate +
+      "/meetings/R/" + encodeURIComponent(venue) + "/races/" + n + "?jurisdiction=NSW";
+    const r = await fetchWithTimeout(u, 12000, true, { ua: "iphone" });
+    return (raceCache[key] = r.ok ? r.body : null);
+  }
+  function runnerPrice(rn) {
+    const fo = rn.fixedOdds || {};
+    const pm = rn.parimutuel || {};
+    // tote approximates first (this IS a tote operation), fixed as fallback
+    const win = num(pm.returnWin) || num(fo.returnWin) || 0;
+    const pla = num(pm.returnPlace) || num(fo.returnPlace) || 0;
+    if (String(fo.bettingStatus || "").toLowerCase() === "scratched") return null;
+    if (!win && !pla) return null;
+    return { win: win || null, pla: pla || null, ref: num(fo.returnWin) || null, src: "tab" };
+  }
+  function num(v) { const n = parseFloat(v); return isFinite(n) ? n : 0; }
+  for (const m of auMeets) {
+    let last = null; // { venue, offset }
+    for (const race of m.raceMap || []) {
+      const dist = parseDistM(race.dist);
+      let matched = null;
+      // 1. learned-offset shortcut
+      if (last) {
+        const rb = await getRace(last.venue, race.raceNo + last.offset);
+        if (rb && nameOverlap(race.runners, (rb.runners || []).map((x) => x.runnerName)) >= 0.5)
+          matched = { venue: last.venue, body: rb };
+      }
+      // 2. distance-gated scan
+      if (!matched) {
+        for (const mt of meetings) {
+          const cand = (mt.races || []).filter((r) =>
+            !r.raceDistance || !dist || Math.abs(parseDistM(r.raceDistance) - dist) <= 40);
+          for (const c of cand) {
+            const rb = await getRace(mt.venueMnemonic, c.raceNumber);
+            if (rb && nameOverlap(race.runners, (rb.runners || []).map((x) => x.runnerName)) >= 0.5) {
+              matched = { venue: mt.venueMnemonic, body: rb };
+              break;
+            }
+          }
+          if (matched) break;
+        }
+      }
+      if (!matched) { stats.misses.push(m.venue + " R" + race.raceNo + " (tab)"); last = null; continue; }
+      last = { venue: matched.venue, offset: (matched.body.raceNumber || 0) - race.raceNo };
+      const byName = {};
+      (matched.body.runners || []).forEach((rn) => { byName[normName(rn.runnerName)] = rn; });
+      for (const h of race.runners || []) {
+        const rn = byName[normName(h.name)];
+        const p = rn && runnerPrice(rn);
+        if (p) { h.price = p; stats.pricedRunners++; }
+      }
+      stats.matchedRaces++;
+    }
+  }
+}
+
+// PMU: FR + DE meets. One programme call, participants per distance-matched
+// course to verify names, then win + place rapports for matched courses.
+async function pmuPrices(pack, stats) {
+  const frde = (pack.meets || []).filter((m) => (m.region === "FR" || m.region === "DE") && (m.raceMap || []).length);
+  if (!frde.length) return;
+  const d = pack.date.split("/"); // DD/MM/YYYY -> DDMMYYYY
+  const pmuDate = d[0] + d[1] + d[2];
+  const base = "https://online.turfinfo.api.pmu.fr/rest/client/61/programme/" + pmuDate;
+  const prog = await fetchWithTimeout(base, 15000, true);
+  if (!prog.ok) { stats.errors.push("pmu programme: " + prog.error); return; }
+  const courses = [];
+  for (const r of (prog.body.programme || {}).reunions || [])
+    for (const c of r.courses || [])
+      courses.push({ R: r.numOfficiel, C: c.numOrdre, dist: c.distance || 0, n: c.nombreDeclaresPartants || 0 });
+  const partCache = {};
+  let fetches = 0;
+  const FETCH_CAP = 40;
+  async function getParts(R, C) {
+    const key = R + "|" + C;
+    if (partCache[key] !== undefined) return partCache[key];
+    if (fetches >= FETCH_CAP) return (partCache[key] = null);
+    fetches++;
+    const r = await fetchWithTimeout(base + "/R" + R + "/C" + C + "/participants", 12000, true);
+    return (partCache[key] = r.ok ? (r.body.participants || []) : null);
+  }
+  async function getRapports(R, C, type) {
+    const r = await fetchWithTimeout(base + "/R" + R + "/C" + C + "/rapports/" + type, 12000, true);
+    if (!r.ok || !r.body) return {};
+    const arr = Array.isArray(r.body) ? r.body : [r.body];
+    const map = {};
+    for (const t of arr)
+      for (const x of t.rapportsParticipant || [])
+        map[x.numPmu] = { direct: x.rapportDirect, ref: x.rapportReference };
+    return map;
+  }
+  for (const m of frde) {
+    for (const race of m.raceMap || []) {
+      const dist = parseDistM(race.dist);
+      const fs = (race.runners || []).length;
+      let matched = null;
+      const cand = courses.filter((c) =>
+        (!dist || !c.dist || Math.abs(c.dist - dist) <= 60) &&
+        (!fs || !c.n || Math.abs(c.n - fs) <= 4));
+      for (const c of cand) {
+        const parts = await getParts(c.R, c.C);
+        if (parts && nameOverlap(race.runners, parts.map((p) => p.nom)) >= 0.5) {
+          matched = { c, parts };
+          break;
+        }
+      }
+      if (!matched) { stats.misses.push(m.venue + " R" + race.raceNo + " (pmu)"); continue; }
+      const win = await getRapports(matched.c.R, matched.c.C, "E_SIMPLE_GAGNANT");
+      const pla = await getRapports(matched.c.R, matched.c.C, "E_SIMPLE_PLACE");
+      const numByName = {};
+      matched.parts.forEach((p) => { numByName[normName(p.nom)] = p.numPmu; });
+      for (const h of race.runners || []) {
+        const np = numByName[normName(h.name)];
+        if (np == null) continue;
+        const w = win[np] || {};
+        const p = pla[np] || {};
+        if (w.direct == null && p.direct == null && w.ref == null) continue;
+        h.price = {
+          win: w.direct != null ? w.direct : null,
+          pla: p.direct != null ? p.direct : null,
+          ref: w.ref != null ? w.ref : null,
+          src: "pmu",
+        };
+        stats.pricedRunners++;
+      }
+      stats.matchedRaces++;
+    }
+  }
+}
+
+async function stagePrices(pack) {
+  const stats = { at: new Date().toISOString(), matchedRaces: 0, pricedRunners: 0, misses: [], errors: [] };
+  try { await tabPrices(pack, stats); } catch (e) { stats.errors.push("tab: " + String(e.message || e)); }
+  try { await pmuPrices(pack, stats); } catch (e) { stats.errors.push("pmu: " + String(e.message || e)); }
+  stats.misses = stats.misses.slice(0, 60);
+  pack.prices = stats;
+  return stats;
+}
+
 // ---- pack storage ----
 function packKey(dateStr) {
   return "stw:pack:" + String(dateStr || "").replace(/\//g, "");
@@ -725,6 +920,35 @@ module.exports = async (req, res) => {
         })),
         deselected: pack.deselected,
         sourceHealth: pack.sourceHealth || [],
+      });
+    }
+
+    if (action === "prices") {
+      // PHASE 3.1: fetch/refresh prices onto the pack. Runs at PROPOSE time (pools
+      // are shut at the 8am trawl — 03:00 in Paris). 10-minute freshness cache so
+      // repeat opens cost nothing; &force=1 busts it.
+      const dateParam = req.query.date ? String(req.query.date) : phuketToday();
+      const pack = await loadPack(dateParam);
+      if (!pack)
+        return res.status(409).json({ error: "No pack for " + dateParam + ". Run the trawl first." });
+      const fresh =
+        pack.prices && pack.prices.at &&
+        Date.now() - Date.parse(pack.prices.at) < 10 * 60 * 1000;
+      let cached = true;
+      if (!fresh || req.query.force) {
+        await stagePrices(pack);
+        await savePack(pack);
+        cached = false;
+      }
+      return res.status(200).json({
+        ok: true, date: pack.date, cached,
+        prices: {
+          at: pack.prices.at,
+          matchedRaces: pack.prices.matchedRaces,
+          pricedRunners: pack.prices.pricedRunners,
+          misses: pack.prices.misses,
+          errors: pack.prices.errors,
+        },
       });
     }
 
