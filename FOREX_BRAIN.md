@@ -331,9 +331,15 @@ RESOLVED (19/07/2026, Phase 1 build night):
   0 8-11 * * 1-5, 0 12-17 * * 1-5. Sixteen weekday firings, weekend silent.
 - Monitor shipped: public/forex-brain.html (session ribbon, verdict cards, journal).
 - Redis env: engine accepts UPSTASH_REDIS_REST_* or KV_REST_API_* names.
+- Broker symbols CONFIRMED (19/07/2026, MT5 Ctrl+U): all seven majors are plain
+  EURUSD/USDJPY/GBPUSD/USDCHF/AUDUSD/USDCAD/NZDUSD, no suffixes, Forex > Classic.
+  Bonus specs for Phase 3+: min volume 0.01, step 0.01 (micro-lot guardrail
+  confirmed possible), stops level 0 (no broker min stop distance), digits 5
+  (USDJPY = 3), contract size 100k. WARNING for the EA order code: GBPUSD filling
+  policy is Immediate-or-Cancel ONLY; set filling mode explicitly per symbol or
+  cable orders will bounce while the other six fill.
 
 STILL OPEN (resolve before Phase 3):
-- Confirm exact PhillipNova broker symbol spelling for all seven majors (suffixes?).
 - Confirm the broker server GMT offset (blocked on a weekday market-open reading; the
   CheckBrokerOffset script is ready in the terminal).
 - Decide EA_minConviction starting value.
