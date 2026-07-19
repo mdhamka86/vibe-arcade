@@ -1,5 +1,29 @@
 # THE OUTSIDER METHOD — OVERHAUL SPEC
-**Date:** 19/07/2026 · **Status:** Betting suspended pending overhaul · **Journal ref:** v52 seed, rev 67
+**Date:** 19/07/2026 · **Status:** SHADOW WEEK (betting suspended; all buildable phases LIVE as of 19/07 evening) · **Journal ref:** v52 seed, rev 67
+
+## STATUS BOARD (updated 19/07/2026, end of build day)
+
+| Phase | Item | Status |
+|---|---|---|
+| 0 | trawl.js country-first routing (Perth Scotland bug) | ✅ LIVE, verified in production pack (region=AU) |
+| 1 | propose.js evidence grouper + short codes; triage.js removed | ✅ LIVE (build-breaker in vercel.json found and fixed en route) |
+| 2 | Five gates + veto log | ✅ LIVE — first real proposal: 3× pla-consensus-top, 1× meet-cap vetoed |
+| 3.1 | Price layer: TAB (syd1, iPhone UA) + PMU adapters, name-matched | ✅ LIVE — 49 races / 443 runners priced, 0 misses, 0 errors |
+| 3.2/3.3 | Floors in SHADOW mode (PLA $1.60 / WIN $2.50, logged only) | ✅ LIVE — shadow week begins 20/07 |
+| 4 | Convergence inversion (anchor/value tiers, raceReads) | ✅ LIVE — first proposal fully obeyed it (anchor=WIN-only, value=PLA) |
+| 5.1 | Settle capture: legDiv, favDiv, fieldSize auto-backfill, tote cross-check | ✅ LIVE |
+| 5.2 | Evidence: ROI by price band + field size | ✅ LIVE (renders "(none recorded yet)" until priced legs settle) |
+| 6 | Pace scoring (loneSpeed/paceShape) | ⏳ NOT BUILT — own session, lowest priority |
+| — | Region move to syd1; probe endpoint | ✅ LIVE / probe retained temporarily (SA price hunt), then delete |
+
+**Known gaps, accepted:** South Africa has no price source (RAS/Hollywoodbets/TAB SA all probed dead); SA is protected by structural rules only. Korea/Malaysia/Turkey unpriced. FR prices exist only once Paris pools open (~mid-morning France), hence: run propose in the AFTERNOON Phuket time.
+
+## SHADOW WEEK PROTOCOL (starts 20/07/2026)
+
+Hammy's part, daily: open the Stewards' Room and run ONE proposal, preferably afternoon Phuket (Paris pools open → FR legs get real verdicts). Place nothing. Settle nothing. That is all.
+
+The system's part: each proposal fetches live prices, verdicts every kept AND vetoed leg against the floors, and stores it all. After ~7 days, say "shadow review": the review tallies paper results of the gated book vs the shadow-passed book from stored proposals + results trawls, and decides whether the floors flip from logged to enforced.
+
 
 ---
 
