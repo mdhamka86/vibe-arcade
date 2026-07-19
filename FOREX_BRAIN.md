@@ -338,9 +338,10 @@ RESOLVED (19/07/2026, Phase 1 build night):
   (USDJPY = 3), contract size 100k. WARNING for the EA order code: GBPUSD filling
   policy is Immediate-or-Cancel ONLY; set filling mode explicitly per symbol or
   cable orders will bounce while the other six fill.
+- Broker GMT offset CONFIRMED (20/07/2026, live market): PhillipNova server = GMT+3.
+  DST caveat: likely flips to GMT+2 in early November (US DST); re-run
+  CheckBrokerOffset then. Universal Breakout EA GMT input = "GMT +3".
 
 STILL OPEN (resolve before Phase 3):
-- Confirm the broker server GMT offset (blocked on a weekday market-open reading; the
-  CheckBrokerOffset script is ready in the terminal).
 - Decide EA_minConviction starting value.
 - Decide the daily-loss circuit-breaker figure for the demo and micro phases.
