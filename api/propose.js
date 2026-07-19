@@ -733,9 +733,16 @@ module.exports = async (req, res) => {
         "restraint: " + ch.outputContract.restraint +
         (lessons.length ? "\n\nRECENT LESSONS (learn from the graded record):\n- " + lessons.join("\n- ") : "") +
         "\n\nMORNING PACK:\n" + packBrief(pack) +
+        "\n\nPHASE 2 OVERHAUL LAW (19/07/2026, OVERHAUL.md \u2014 ENFORCED IN CODE, not requests):\n" +
+        "1. ZERO legs from any meet with zero verified external sources. SGPools internal docs alone are SGPools agreeing with itself, not convergence. Any such leg will be vetoed.\n" +
+        "2. NEVER propose a PLA leg on the consensus #1 pick of a race. The unanimous top pick is where the $1.10-1.30 place dividends live (60% of all historical PLA collects, book-killing). Declare consensusTop honestly on every leg; a PLA leg with consensusTop=true will be vetoed. If you love a race that strongly, the allowed shapes are: the #2-ranked convergence horse PLA, or the consensus pick WIN-only.\n" +
+        "3. NO PLA legs in fields of 8 or fewer runners. Three places in a tiny field breeds odds-on dividends. Vetoed in code.\n" +
+        "4. Medium and Low-Med confidence legs are vetoed outright. Propose only legs you would honestly rate Medium-High or High \u2014 and remember the label carries NO privileges (flat stakes, no volume rights); it is a calibration gauge being audited for label creep (share jumped 36%\u219260% and inverted to -17.6%).\n" +
+        "5. PER-MEET LEG CAPS tied to verified external source count: 0 sources = 0 legs, 1 source = 2 legs max, 2+ sources = 4 legs max. Order each meet's legs BEST FIRST \u2014 the cap keeps the first N and vetoes the rest.\n" +
+        "A short book is the honest outcome. Every vetoed leg is logged and shown; proposing legs that will be vetoed is worse than not proposing them.\n" +
         "\n\nNow produce the betlist. Respond with ONLY minified JSON, no markdown fences, exactly:\n" +
         '{"dayShape":"2-3 sentence summary: meets in play, WIN vs PLA lean, any Trio, overall stance",' +
-        '"legs":[{"meet":"","region":"","raceNo":0,"horseNo":0,"horseName":"","betType":"WIN|PLA|TRIO","stake":10,"confidence":"High|Medium-High|Medium|Low-Med","reason":"convergence read: which sources agree and why","unconfirmed":false}],' +
+        '"legs":[{"meet":"","region":"","raceNo":0,"horseNo":0,"horseName":"","betType":"WIN|PLA|TRIO","stake":10,"confidence":"High|Medium-High|Medium|Low-Med","reason":"convergence read: which sources agree and why","consensusTop":false,"unconfirmed":false}],' +
         '"trioNote":"if a Trio is proposed, the frame and why; else empty",' +
         '"sourcesChecked":{"MeetName":["source ids used"]},' +
         '"skipped":[{"meet":"","why":"why no or few legs here"}]}';
@@ -797,6 +804,7 @@ module.exports = async (req, res) => {
           betType: String(raw.betType || "").trim().toUpperCase(),
           confidence: String(raw.confidence || "").trim(),
           reason: String(raw.reason || "").trim(),
+          consensusTop: !!raw.consensusTop,
           unconfirmed: !!raw.unconfirmed,
         };
         // LAW: flat stake, enforced regardless of what the model said
@@ -860,15 +868,85 @@ module.exports = async (req, res) => {
         clean.push(leg);
       }
 
-      const winCount = clean.filter((l) => l.betType === "WIN").length;
-      const plaCount = clean.filter((l) => l.betType === "PLA").length;
-      const trioCount = clean.filter((l) => l.betType === "TRIO").length;
-      const staked = clean.reduce((a, l) => a + l.stake, 0);
+      // ---- PHASE 2 OVERHAUL GATES (OVERHAUL.md, 19/07/2026) ----
+      // The brain proposes, the law disposes \u2014 and after the Med-High label-creep
+      // lesson (36%\u219260% share, band inverted to -17.6% over 199 legs), the law no
+      // longer lives in the prompt alone. Prompt instructions are requests; these are
+      // gates. Every rejection is logged to `vetoes` so the morning reader sees
+      // exactly what the law cut and why. A short book is the honest outcome.
+      const vetoes = [];
+      // verified external sources per meet: fetched OK and passed SSOT verification.
+      // SGPools internal analysis docs (m.docs) deliberately do NOT count \u2014 internal
+      // docs corroborating internal docs is SGPools agreeing with itself.
+      const extCount = {};
+      pack.meets.forEach((m) => {
+        extCount[m.venue] = (m.sources || []).filter((s) => s.ok && !s.ssotFail).length;
+      });
+      const fieldSizeOf = {};
+      pack.meets.forEach((m) =>
+        (m.raceMap || []).forEach((r) => {
+          fieldSizeOf[m.venue + "|" + r.raceNo] = r.fieldSize || (r.runners || []).length || 0;
+        })
+      );
+      // caps: 0 sources = 0 legs, 1 source = 2 legs, 2+ sources = 4 legs (OVERHAUL 2.5)
+      const capFor = (n) => (n <= 0 ? 0 : n === 1 ? 2 : 4);
+      const perMeetKept = {};
+      const gated = [];
+      for (const leg of clean) {
+        const ext = extCount[leg.meet] || 0;
+        const veto = (rule, why) =>
+          vetoes.push({
+            meet: leg.meet, raceNo: leg.raceNo, horseNo: leg.horseNo,
+            horseName: leg.horseName, betType: leg.betType, rule, why,
+          });
+        // 2.1 stand-down: no verified external convergence = no bet, any bet type
+        if (ext === 0) {
+          veto("no-external-source",
+            "meet has zero verified external sources \u2014 internal-only convergence is SGPools agreeing with itself");
+          continue;
+        }
+        // 2.4 confidence bands: Medium and Low-Med are cut entirely
+        const conf = leg.confidence.toLowerCase();
+        if (conf === "medium" || conf === "low-med" || conf === "low") {
+          veto("confidence-band-cut",
+            "Medium/Low-Med band vetoed (Medium ran -32.9% over the last window; band cut per OVERHAUL 2.4)");
+          continue;
+        }
+        if (leg.betType === "PLA") {
+          // 2.3 field-size floor: no places in fields of 8 or fewer
+          const fs = fieldSizeOf[leg.meet + "|" + leg.raceNo] || 0;
+          if (fs > 0 && fs <= 8) {
+            veto("pla-small-field",
+              "PLA in a " + fs + "-runner field \u2014 three places in tiny fields breeds odds-on dividends (floor is 9+)");
+            continue;
+          }
+          // 2.2 anti-consensus: never place-bet the crowd's top pick
+          if (leg.consensusTop) {
+            veto("pla-consensus-top",
+              "PLA on the consensus #1 pick \u2014 the $1.10-1.30 dividend generator (60% of historical PLA collects). Allowed shapes: #2 convergence horse PLA, or this horse WIN-only");
+            continue;
+          }
+        }
+        // 2.5 per-meet cap by source depth (volume follows sources, not card size)
+        const kept = perMeetKept[leg.meet] || 0;
+        if (kept >= capFor(ext)) {
+          veto("meet-cap",
+            "meet cap reached (" + capFor(ext) + " legs for " + ext + " verified source" + (ext === 1 ? "" : "s") + ")");
+          continue;
+        }
+        perMeetKept[leg.meet] = kept + 1;
+        gated.push(leg);
+      }
+
+      const winCount = gated.filter((l) => l.betType === "WIN").length;
+      const plaCount = gated.filter((l) => l.betType === "PLA").length;
+      const trioCount = gated.filter((l) => l.betType === "TRIO").length;
+      const staked = gated.reduce((a, l) => a + l.stake, 0);
 
       // build the vault-ready JSON the Quill's paste lane accepts
       const quillPayload = {
         date: pack.date,
-        legs: clean.map((l) => ({
+        legs: gated.map((l) => ({
           date: pack.date,
           meet: l.meet,
           raceNo: l.raceNo,
@@ -888,11 +966,12 @@ module.exports = async (req, res) => {
         date: pack.date,
         dayShape: parsed.dayShape || "",
         counts: { win: winCount, pla: plaCount, trio: trioCount, staked },
-        legs: clean,
+        legs: gated,
         trioNote: parsed.trioNote || "",
         sourcesChecked: parsed.sourcesChecked || {},
         skipped: parsed.skipped || [],
         corrections,
+        vetoes,
         quillPayload,
         generatedAt: new Date().toISOString(),
       };
