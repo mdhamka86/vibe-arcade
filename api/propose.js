@@ -492,7 +492,15 @@ module.exports = async (req, res) => {
         if (s.includes("japan")) return "Japan";
         if (s.includes("singapore")) return "Singapore";
         if (s.includes("korea")) return "Korea";
+        if (s.includes("malaysia") || s.includes("selangor")) return "Malaysia";
+        if (s.includes("turkey") || s.includes("t\u00fcrkiye")) return "Turkey";
+        if (s.includes("germany")) return "Germany";
         if (s.includes("united states") || s.includes("usa")) return "USA";
+        // Ledger short codes: the betlog stores meets as SA/FR/UK/MB/AU/PE/SK/JP/TK/MY/DE,
+        // not full venue strings. Without this map every settled leg fell into "Other"
+        // and the evidence block fed the model a by-region table that was mostly blind.
+        const codes = { sa:"South Africa", fr:"France", uk:"UK/IRE", mb:"Australia", au:"Australia", pe:"Australia", sk:"Korea", jp:"Japan", tk:"Turkey", my:"Malaysia", de:"Germany", hk:"Hong Kong" };
+        if (codes[s]) return codes[s];
         return "Other";
       };
 
