@@ -764,7 +764,7 @@ module.exports = async (req, res) => {
         "1. ZERO legs from any meet with zero verified external sources. SGPools internal docs alone are SGPools agreeing with itself, not convergence. Any such leg will be vetoed.\n" +
         "2. NEVER propose a PLA leg on the consensus #1 pick of a race. The unanimous top pick is where the $1.10-1.30 place dividends live (60% of all historical PLA collects, book-killing). Declare consensusTop honestly on every leg; a PLA leg with consensusTop=true will be vetoed. If you love a race that strongly, the allowed shapes are: the #2-ranked convergence horse PLA, or the consensus pick WIN-only.\n" +
         "3. NO PLA legs in fields of 8 or fewer runners. Three places in a tiny field breeds odds-on dividends. Vetoed in code.\n" +
-        "4. Medium and Low-Med confidence legs are vetoed outright. Propose only legs you would honestly rate Medium-High or High \u2014 and remember the label carries NO privileges (flat stakes, no volume rights); it is a calibration gauge being audited for label creep (share jumped 36%\u219260% and inverted to -17.6%).\n" +
+        "4. Confidence labels are BINARY from the era's start: Standard (normal-conviction read) or Speculative (reasoned long shot). The four-band system is retired \u2014 across 479 settled legs its cash rates were 53/52/54/42, flat noise. The label is a pure gauge: no stake, no volume rights. Legacy labels (Medium, Low-Med) are still vetoed in code if emitted.\n" +
         "5. PER-MEET LEG CAPS tied to verified external source count: 0 sources = 0 legs, 1 source = 2 legs max, 2+ sources = 4 legs max. Order each meet's legs BEST FIRST \u2014 the cap keeps the first N and vetoes the rest.\n" +
         "A short book is the honest outcome. Every vetoed leg is logged and shown; proposing legs that will be vetoed is worse than not proposing them.\n" +
         "\nPHASE 4 CONVERGENCE INVERSION (OVERHAUL.md):\n" +
@@ -773,7 +773,7 @@ module.exports = async (req, res) => {
         "Declare your read per race in raceReads, and tag every leg with tier: anchor | value | lone.\n" +
         "\n\nNow produce the betlist. Respond with ONLY minified JSON, no markdown fences, exactly:\n" +
         '{"dayShape":"2-3 sentence summary: meets in play, WIN vs PLA lean, any Trio, overall stance",' +
-        '"legs":[{"meet":"","region":"","raceNo":0,"horseNo":0,"horseName":"","betType":"WIN|PLA|TRIO","stake":10,"confidence":"High|Medium-High|Medium|Low-Med","reason":"convergence read: which sources agree and why","tier":"anchor|value|lone","consensusTop":false,"unconfirmed":false}],' +
+        '"legs":[{"meet":"","region":"","raceNo":0,"horseNo":0,"horseName":"","betType":"WIN|PLA|TRIO","stake":10,"confidence":"Standard|Speculative","reason":"convergence read: which sources agree and why","tier":"anchor|value|lone","consensusTop":false,"unconfirmed":false}],' +
         '"raceReads":[{"meet":"","raceNo":0,"anchor":"consensus #1 horse name","valueTier":["horse names ranked 2nd-3rd by quality sources"],"note":"one-line read of the race shape"}],' +
         '"trioNote":"if a Trio is proposed, the frame and why; else empty",' +
         '"sourcesChecked":{"MeetName":["source ids used"]},' +
@@ -984,6 +984,14 @@ module.exports = async (req, res) => {
               "PLA on the consensus #1 pick \u2014 the $1.10-1.30 dividend generator (60% of historical PLA collects). Allowed shapes: #2 convergence horse PLA, or this horse WIN-only");
             continue;
           }
+        }
+        // daily-cap (Charter law, 19/07/2026): ten legs across all meets, full stop.
+        // Enacted on the chasing fingerprint (19.1 legs after red days vs 17.2 after
+        // green) and plain arithmetic: a negative-edge book bleeds with volume.
+        if (gated.length >= 10) {
+          veto("daily-cap",
+            "the ten-leg daily ceiling is reached (Charter: daily-cap) \u2014 depth beats volume");
+          continue;
         }
         // 2.5 per-meet cap by source depth (volume follows sources, not card size)
         const kept = perMeetKept[leg.meet] || 0;
