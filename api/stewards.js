@@ -1010,12 +1010,58 @@ module.exports = async (req, res) => {
           errors.push("xlRow " + s.xlRow + ": result must be Win/Place/Lose/Refund");
           continue;
         }
+        // PHASE 5.1 (OVERHAUL.md): optional price-aware fields must be sane if present
+        if (s.legDiv != null && String(s.legDiv).trim() !== "" && !(num(s.legDiv) >= 0)) {
+          errors.push("xlRow " + s.xlRow + ": legDiv must be a number >= 0 (dividend per $1)");
+          continue;
+        }
+        if (s.favDiv != null && String(s.favDiv).trim() !== "" && !(num(s.favDiv) >= 0)) {
+          errors.push("xlRow " + s.xlRow + ": favDiv must be a number >= 0 (favourite's dividend per $1)");
+          continue;
+        }
+        if (s.fieldSize != null && String(s.fieldSize).trim() !== "" &&
+            !(parseInt(s.fieldSize, 10) >= 2)) {
+          errors.push("xlRow " + s.xlRow + ": fieldSize must be an integer >= 2");
+          continue;
+        }
         applied.push({ row, s, resKey });
       }
       if (errors.length)
         return res
           .status(422)
           .json({ error: "Validation failed, nothing written", errors });
+
+      // ---- PHASE 5.1 (OVERHAUL.md): auto-backfill fieldSize from the day's pack ----
+      // The trawl already stores every race's field size in Redis (stw:pack:DDMMYYYY),
+      // so settlement should never require typing it. The betlog stores meets as short
+      // codes (SA/FR/PE...) while the pack stores full venue labels, hence the map.
+      const VENUE_CODE = {
+        "South Africa": "SA", "France": "FR", "United Kingdom": "UK",
+        "Australia": "AU", "Australia (Melbourne)": "MB", "Australia (Perth)": "PE",
+        "Korea": "SK", "Japan": "JP", "Turkey": "TK", "Malaysia (Selangor)": "MY",
+        "Malaysia": "MY", "Germany": "DE", "Hong Kong": "HK", "Singapore": "SG",
+      };
+      const settleDates = [...new Set(applied.map(({ row }) => String(row.date || "")))].filter(Boolean);
+      const packFieldSize = {};
+      if (settleDates.length) {
+        try {
+          const packs = await redis(
+            settleDates.map((d) => ["GET", "stw:pack:" + d.replace(/\//g, "")])
+          );
+          packs.forEach((raw) => {
+            if (!raw) return;
+            let pk; try { pk = JSON.parse(raw); } catch { return; }
+            (pk.meets || []).forEach((m) => {
+              const code = VENUE_CODE[m.venue] || m.venue;
+              (m.raceMap || []).forEach((r) => {
+                const fs = r.fieldSize || (r.runners || []).length || 0;
+                if (fs) packFieldSize[pk.date + "|" + code + "|" + r.raceNo] = fs;
+              });
+            });
+          });
+        } catch (e) { /* pack lookup is best-effort; manual fieldSize still works */ }
+      }
+      const settleWarnings = [];
 
       for (const { row, s, resKey } of applied) {
         // AUDIT TRAIL: an already-settled leg can only be changed via amend:true (guarded
@@ -1050,6 +1096,30 @@ module.exports = async (req, res) => {
           row.position = isFinite(parseInt(s.position, 10))
             ? parseInt(s.position, 10)
             : String(s.position).trim();
+        // ---- PHASE 5.1 (OVERHAUL.md): price-aware settlement capture ----
+        // Why: 96 of 128 losing PLA legs had position "NONE" and no leg ever recorded
+        // the dividend it paid, so the journal could not distinguish "picked wrong
+        // horses" from "picked right horses at unbettable prices". These fields are
+        // what lets the evidence block compute ROI by price band and field size.
+        if (s.legDiv != null && String(s.legDiv).trim() !== "")
+          row.legDiv = r2(num(s.legDiv));
+        if (s.favDiv != null && String(s.favDiv).trim() !== "")
+          row.favDiv = r2(num(s.favDiv));
+        const fsIn = s.fieldSize != null && String(s.fieldSize).trim() !== ""
+          ? parseInt(s.fieldSize, 10) : 0;
+        const fsPack = packFieldSize[String(row.date) + "|" + String(row.meet) + "|" + row.raceNo] || 0;
+        if (fsIn >= 2) row.fieldSize = fsIn;
+        else if (!row.fieldSize && fsPack) row.fieldSize = fsPack;
+        // cross-check: a cashed leg's payout should equal stake x legDiv (tote maths).
+        // A mismatch is not fatal (rounding, breakage) but is worth a warning.
+        if (row.legDiv != null && num(row.payout) > 0) {
+          const expect = r2(num(row.stake) * num(row.legDiv));
+          if (Math.abs(expect - num(row.payout)) > 0.11)
+            settleWarnings.push(
+              "xlRow " + row.xlRow + ": payout $" + row.payout + " vs stake x legDiv = $" +
+              expect + " \u2014 check the dividend or the payout"
+            );
+        }
         if (resKey === "refund") {
           row.payout = r2(row.stake);
           row.netPL = 0;
@@ -1096,7 +1166,12 @@ module.exports = async (req, res) => {
           xlRow: row.xlRow, date: row.date, meet: row.meet, raceNo: row.raceNo,
           horseNo: row.horseNo, betType: row.betType, result: row.result,
           payout: row.payout, netPL: row.netPL,
+          position: row.position != null ? row.position : null,
+          legDiv: row.legDiv != null ? row.legDiv : null,
+          favDiv: row.favDiv != null ? row.favDiv : null,
+          fieldSize: row.fieldSize != null ? row.fieldSize : null,
         })),
+        warnings: settleWarnings,
         verify,
         rev: meta.rev,
         audit: computeAudit(log),
