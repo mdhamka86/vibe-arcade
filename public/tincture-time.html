@@ -143,6 +143,50 @@
   .saleDel:active{background:var(--line);}
   .saleActions{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px;}
 
+  /* sales/leads section toggle */
+  .sectionSeg{margin-bottom:16px;}
+  .segBadge{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 4px;margin-left:6px;background:var(--danger);color:#fff;border-radius:10px;font-size:10px;font-weight:700;}
+  .segBtn.on .segBadge{background:#fff;color:var(--sageDeep);}
+
+  /* sample chips in lead form */
+  .sampleChips{display:flex;flex-wrap:wrap;gap:7px;}
+  .sampleChip{background:var(--surface2);border:1px solid var(--line2);border-radius:20px;padding:6px 12px;font-size:12.5px;font-weight:600;color:var(--muted);}
+  .sampleChip.on{background:#e4efe0;border-color:var(--sage);color:var(--sageDeep);}
+  .sampleChip:active{transform:scale(.97);}
+  .followNote{display:flex;gap:6px;align-items:flex-start;line-height:1.4;}
+  .followNote .ic{flex-shrink:0;margin-top:1px;color:var(--sage);}
+
+  /* lead rows */
+  .leadRow{display:flex;flex-direction:column;gap:10px;position:relative;}
+  .leadRow.due{border-color:#e6cfa0;background:#fdfaf3;}
+  .leadTop{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding-right:22px;}
+  .leadHead{flex:1;min-width:0;display:flex;flex-direction:column;gap:5px;}
+  .leadShop{font-weight:700;font-size:16px;color:var(--sageDeep);display:flex;align-items:center;gap:8px;flex-wrap:wrap;text-decoration:none;}
+  .leadShopLink .leadMapIc{color:var(--sageSoft);}
+  .leadShopLink:active{opacity:.7;}
+  .leadLoc{font-size:12px;font-weight:500;}
+  .leadStatus{align-self:flex-start;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;white-space:nowrap;}
+  .ls-sampled{background:#eceadd;color:#6a6a3a;}
+  .ls-messaged{background:#e0eaf0;color:#3a5a72;}
+  .ls-interested{background:#fbf0dc;color:#9a6a2a;}
+  .ls-ordered{background:#e4efe0;color:#3f7a43;}
+  .ls-passed{background:#f0e4e2;color:#96574a;}
+  .leadContact{display:flex;gap:14px;font-size:12.5px;flex-wrap:wrap;}
+  .leadContact span{display:inline-flex;align-items:center;gap:4px;}
+  .leadSamples{display:flex;flex-wrap:wrap;gap:6px;}
+  .sampleTag{font-size:11px;font-weight:600;background:var(--surface2);border:1px solid var(--line);border-radius:6px;padding:3px 8px;color:var(--sageDeep);}
+  .leadDates{display:flex;gap:14px;flex-wrap:wrap;}
+  .followDue{color:#a6432f;font-weight:700;}
+  .leadStatusRow{display:flex;flex-wrap:wrap;gap:6px;}
+  .statusPick{background:var(--surface2);border:1px solid var(--line2);border-radius:20px;padding:4px 10px;font-size:11px;font-weight:600;color:var(--muted);opacity:.75;}
+  .statusPick.on{opacity:1;border-width:1.5px;}
+  .statusPick.ls-sampled.on{background:#eceadd;color:#6a6a3a;border-color:#c5c290;}
+  .statusPick.ls-messaged.on{background:#e0eaf0;color:#3a5a72;border-color:#a0bcd0;}
+  .statusPick.ls-interested.on{background:#fbf0dc;color:#9a6a2a;border-color:#e6cfa0;}
+  .statusPick.ls-ordered.on{background:#e4efe0;color:#3f7a43;border-color:#a8cca0;}
+  .statusPick.ls-passed.on{background:#f0e4e2;color:#96574a;border-color:#d8b8b0;}
+  .leadEdit{background:var(--surface2);border-radius:var(--rs);padding:13px;display:flex;flex-direction:column;gap:12px;}
+
   /* sale form */
   .saleForm{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:16px;display:flex;flex-direction:column;gap:13px;}
   .formField{display:flex;flex-direction:column;gap:5px;}
@@ -440,7 +484,7 @@
   .kitBody{flex:1;min-width:0;}
   .checkBox{width:22px;height:22px;flex-shrink:0;border:1.5px solid var(--line2);border-radius:6px;background:var(--surface);color:var(--sage);display:flex;align-items:center;justify-content:center;margin-top:1px;transition:border-color .15s;}
   .checkBox.on{border-color:var(--sage);background:#eef3ec;}
-  .kitRow.got .kitName{color:var(--muted);text-decoration:line-through;}
+  .kitRow.got .kitName{color:var(--muted);}
   .urg{font-size:10px;font-weight:600;letter-spacing:.4px;text-transform:uppercase;padding:2px 8px;border-radius:20px;}
   .urg.now{background:var(--amberSoft);color:#8a5a1f;}
   .urg.later{background:var(--surface2);color:var(--muted);}
@@ -453,9 +497,9 @@
 
   /* bottom tab bar */
   .tabbar{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:520px;display:flex;background:var(--surface);border-top:1px solid var(--line);padding:8px 4px calc(8px + env(safe-area-inset-bottom));z-index:30;}
-  .tab{flex:1;background:transparent;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0;color:var(--muted);font-size:10.5px;font-weight:500;transition:color .15s;}
+  .tab{flex:1;min-width:0;background:transparent;border:none;display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0;color:var(--muted);font-size:10.5px;font-weight:500;transition:color .15s;}
   .tab.on{color:var(--sage);}
-  .tab span{letter-spacing:.1px;white-space:nowrap;}
+  .tab span{letter-spacing:.1px;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;font-size:clamp(9px, 2.6vw, 10.5px);}
 
   /* sous weed topic cards */
   .testBanner{display:flex;align-items:center;gap:7px;background:#faf1ee;border:1px solid #e2c4bb;color:#a6543f;border-radius:var(--rs);padding:9px 13px;font-size:12.5px;font-weight:500;margin-bottom:14px;}
@@ -678,6 +722,42 @@ function batchStock(e) {
   var made = numOr0(e.bottles);
   var sold = numOr0(e.bottlesSold);
   return { made: made, sold: sold, left: Math.max(0, made - sold) };
+}
+
+/* add N working days (skip Sat/Sun) to a timestamp, for follow-up nudges */
+function addWorkingDays(ts, n) {
+  var d = new Date(ts);
+  var added = 0;
+  while (added < n) {
+    d.setDate(d.getDate() + 1);
+    var day = d.getDay();
+    if (day !== 0 && day !== 6) added++;
+  }
+  return d.getTime();
+}
+/* lead statuses: the outreach pipeline */
+var LEAD_STATUSES = [
+  { id: "sampled", label: "Sampled", cls: "ls-sampled" },
+  { id: "messaged", label: "Messaged", cls: "ls-messaged" },
+  { id: "interested", label: "Interested", cls: "ls-interested" },
+  { id: "ordered", label: "Ordered", cls: "ls-ordered" },
+  { id: "passed", label: "Not keen", cls: "ls-passed" }
+];
+function leadStatusMeta(id) {
+  for (var i = 0; i < LEAD_STATUSES.length; i++) { if (LEAD_STATUSES[i].id === id) return LEAD_STATUSES[i]; }
+  return LEAD_STATUSES[0];
+}
+/* a lead needs following up if it's not closed and its follow-up date has passed */
+function leadDue(lead) {
+  if (lead.status === "ordered" || lead.status === "passed") return false;
+  if (!lead.followUp) return false;
+  return Date.now() >= lead.followUp;
+}
+/* Google Maps search link from a shop name (+ optional area). Opens Maps
+   with the search ready; ambiguous names just show options, never break. */
+function mapsSearchUrl(shop, loc) {
+  var q = shop + (loc ? " " + loc : "");
+  return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(q);
 }
 
 /* ============================================================
@@ -1240,6 +1320,7 @@ function App() {
   var lg = useState(function () { return load("tt_log", []); }); var logbook = lg[0]; var setLogbook = lg[1];
   var kt = useState(function () { return load("tt_kit", {}); }); var kitChecks = kt[0]; var setKitChecks = kt[1];
   var sl = useState(function () { return load("tt_sales", []); }); var sales = sl[0]; var setSales = sl[1];
+  var ld = useState(function () { return load("tt_leads", []); }); var leads = ld[0]; var setLeads = ld[1];
   var cfg = useState(function () { return load("tt_cfg", { lowStock: 3 }); }); var settings = cfg[0]; var setSettings = cfg[1];
   var tk = useState(0); var setTick = tk[1];
 
@@ -1251,6 +1332,7 @@ function App() {
   useEffect(function () { store("tt_log", logbook); }, [logbook]);
   useEffect(function () { store("tt_kit", kitChecks); }, [kitChecks]);
   useEffect(function () { store("tt_sales", sales); }, [sales]);
+  useEffect(function () { store("tt_leads", leads); }, [leads]);
   useEffect(function () { store("tt_cfg", settings); }, [settings]);
 
   /* edit a stored batch field (fill date, strain, bottles, expiry, cost) */
@@ -1326,6 +1408,76 @@ function App() {
       }
       return s;
     }));
+  }
+
+  /* leads / outreach. Samples decrement stock (via bottlesSold) but are
+     logged here, never as sales, so they touch inventory not revenue.
+     Follow-up is always derived from the drop-in date, not when added. */
+  function addLead(lead) {
+    var l = {}; for (var k in lead) l[k] = lead[k];
+    l.followUp = addWorkingDays(l.droppedAt || Date.now(), 3);
+    setLeads([l].concat(leads));
+    /* each sample bottle comes off its batch */
+    if (l.samples && l.samples.length) {
+      setLogbook(logbook.map(function (e) {
+        var give = 0;
+        for (var i = 0; i < l.samples.length; i++) { if (l.samples[i].batchId === e.id) give += 1; }
+        if (give > 0) { var c = {}; for (var k2 in e) c[k2] = e[k2]; c.bottlesSold = (c.bottlesSold || 0) + give; return c; }
+        return e;
+      }));
+    }
+  }
+  function editLead(id, field, value) {
+    setLeads(leads.map(function (l) {
+      if (l.id === id) {
+        var c = {}; for (var k in l) c[k] = l[k];
+        c[field] = value;
+        /* moving the drop-in date recomputes the follow-up off it */
+        if (field === "droppedAt") c.followUp = addWorkingDays(value || Date.now(), 3);
+        return c;
+      }
+      return l;
+    }));
+  }
+  /* toggle a sample on an existing lead, adjusting that batch's stock either way */
+  function toggleLeadSample(leadId, batchId, strain) {
+    var had = false;
+    setLeads(leads.map(function (l) {
+      if (l.id === leadId) {
+        var c = {}; for (var k in l) c[k] = l[k];
+        var arr = (c.samples || []).slice();
+        var idx = -1;
+        for (var i = 0; i < arr.length; i++) { if (arr[i].batchId === batchId) idx = i; }
+        if (idx >= 0) { had = true; arr.splice(idx, 1); }
+        else { arr.push({ batchId: batchId, strain: strain }); }
+        c.samples = arr;
+        return c;
+      }
+      return l;
+    }));
+    /* add sample removes one from stock; remove sample returns one to stock */
+    setLogbook(logbook.map(function (e) {
+      if (e.id === batchId) {
+        var c = {}; for (var k in e) c[k] = e[k];
+        c.bottlesSold = had ? Math.max(0, (c.bottlesSold || 0) - 1) : ((c.bottlesSold || 0) + 1);
+        return c;
+      }
+      return e;
+    }));
+  }
+  function deleteLead(id) {
+    var lead = null;
+    for (var i = 0; i < leads.length; i++) { if (leads[i].id === id) lead = leads[i]; }
+    setLeads(leads.filter(function (l) { return l.id !== id; }));
+    /* return the sample bottles to stock */
+    if (lead && lead.samples && lead.samples.length) {
+      setLogbook(logbook.map(function (e) {
+        var back = 0;
+        for (var j = 0; j < lead.samples.length; j++) { if (lead.samples[j].batchId === e.id) back += 1; }
+        if (back > 0) { var c = {}; for (var k in e) c[k] = e[k]; c.bottlesSold = Math.max(0, (c.bottlesSold || 0) - back); return c; }
+        return e;
+      }));
+    }
   }
 
   function startBatch(batch) {
@@ -1466,7 +1618,7 @@ function App() {
       view === "new" ? React.createElement(Wizard, { start: startBatch, cancel: function () { setView("bench"); } }) : null,
       view === "log" ? React.createElement(Logbook, { logbook: logbook, toggleProven: toggleProven, rateBatch: rateBatch, noteBatch: noteBatch, removeNote: removeNote, deleteBatch: deleteBatch, repeatBatch: repeatBatch, photoBatch: photoBatch, removePhoto: removePhoto, captionPhoto: captionPhoto, editBatch: editBatch }) : null,
       view === "stock" ? React.createElement(Stock, { logbook: logbook, settings: settings, setSettings: setSettings, setView: setView }) : null,
-      view === "sales" ? React.createElement(Sales, { logbook: logbook, sales: sales, addSale: addSale, deleteSale: deleteSale, photoSale: photoSale, removeSalePhoto: removeSalePhoto, captionSalePhoto: captionSalePhoto }) : null,
+      view === "sales" ? React.createElement(Sales, { logbook: logbook, sales: sales, addSale: addSale, deleteSale: deleteSale, photoSale: photoSale, removeSalePhoto: removeSalePhoto, captionSalePhoto: captionSalePhoto, leads: leads, addLead: addLead, editLead: editLead, deleteLead: deleteLead, toggleLeadSample: toggleLeadSample }) : null,
       view === "more" ? React.createElement(MoreMenu, { setView: setView }) : null,
       view === "guides" ? React.createElement(Guides, null) : null,
       view === "sousweed" ? React.createElement(SousWeed, null) : null,
@@ -1510,7 +1662,7 @@ function TabBar(props) {
     { id: "bench", label: "Bench", icon: "flame" },
     { id: "log", label: "Cellar", icon: "jar" },
     { id: "stock", label: "Stock", icon: "box" },
-    { id: "sales", label: "Sales", icon: "cart" },
+    { id: "sales", label: "Sales/Leads", icon: "cart" },
     { id: "more", label: "More", icon: "menu" }
   ];
   return React.createElement("nav", { className: "tabbar" },
@@ -2216,7 +2368,10 @@ function fmtDay(ts) {
 function Sales(props) {
   var log = props.logbook;
   var sales = props.sales;
+  var leads = props.leads || [];
   var op = useState(false); var open = op[0]; var setOpen = op[1];
+  var lo = useState(false); var leadOpen = lo[0]; var setLeadOpen = lo[1];
+  var sec = useState("sales"); var section = sec[0]; var setSection = sec[1];
 
   /* sellable batches (have bottles left) */
   var sellable = [];
@@ -2226,12 +2381,17 @@ function Sales(props) {
     var s = batchStock(e);
     if (s.left > 0) sellable.push({ e: e, left: s.left });
   }
+  /* simplified list for editing lead samples: any batch that has bottles */
+  var sellableForEdit = [];
+  for (var si = 0; si < log.length; si++) {
+    var se = log[si];
+    if (!se.bottles) continue;
+    sellableForEdit.push({ id: se.id, name: se.strain || se.name || se.botanicalName });
+  }
 
   /* finance rollup */
   var revenue = 0, bottlesSold = 0;
   for (var j = 0; j < sales.length; j++) { revenue += (sales[j].price || 0); bottlesSold += (sales[j].qty || 0); }
-
-  /* cost of goods: sum each batch cost spread across bottles made, for bottles actually sold */
   var cogs = 0;
   for (var k = 0; k < log.length; k++) {
     var b = log[k];
@@ -2243,42 +2403,73 @@ function Sales(props) {
   }
   var profit = revenue - cogs;
 
+  /* leads due a follow-up */
+  var dueCount = 0;
+  for (var m = 0; m < leads.length; m++) { if (leadDue(leads[m])) dueCount++; }
+
   return React.createElement("section", { className: "screen" },
-    React.createElement("div", { className: "screenHead" }, React.createElement("h1", null, "Sales")),
+    React.createElement("div", { className: "screenHead" }, React.createElement("h1", null, "Sales & Leads")),
 
-    React.createElement("div", { className: "statGrid" },
-      React.createElement("div", { className: "statCard wide" },
-        React.createElement("div", { className: "statNum" }, fmtBaht(revenue)),
-        React.createElement("div", { className: "statLbl muted" }, "revenue")),
-      React.createElement("div", { className: "statCard" },
-        React.createElement("div", { className: "statNum" }, bottlesSold),
-        React.createElement("div", { className: "statLbl muted" }, "bottles sold"))),
-    React.createElement("div", { className: "statGrid" },
-      React.createElement("div", { className: "statCard" },
-        React.createElement("div", { className: "statNum small" }, fmtBaht(cogs)),
-        React.createElement("div", { className: "statLbl muted" }, "cost of goods")),
-      React.createElement("div", { className: "statCard" },
-        React.createElement("div", { className: "statNum small " + (profit >= 0 ? "pos" : "neg") }, fmtBaht(profit)),
-        React.createElement("div", { className: "statLbl muted" }, "profit"))),
+    React.createElement("div", { className: "seg sectionSeg" },
+      React.createElement("button", { className: "segBtn" + (section === "sales" ? " on" : ""), onClick: function () { setSection("sales"); } }, "Sales"),
+      React.createElement("button", { className: "segBtn" + (section === "leads" ? " on" : ""), onClick: function () { setSection("leads"); } },
+        "Leads", dueCount > 0 ? React.createElement("span", { className: "segBadge" }, dueCount) : null)),
 
-    React.createElement(ActionButton, { className: "btn primary wide", onAct: function () { setOpen(true); } },
-      React.createElement(Icon, { name: "plus", size: 16, weight: 2 }), "Record a sale"),
+    section === "sales" ? React.createElement("div", null,
+      React.createElement("div", { className: "statGrid" },
+        React.createElement("div", { className: "statCard wide" },
+          React.createElement("div", { className: "statNum" }, fmtBaht(revenue)),
+          React.createElement("div", { className: "statLbl muted" }, "revenue")),
+        React.createElement("div", { className: "statCard" },
+          React.createElement("div", { className: "statNum" }, bottlesSold),
+          React.createElement("div", { className: "statLbl muted" }, "bottles sold"))),
+      React.createElement("div", { className: "statGrid" },
+        React.createElement("div", { className: "statCard" },
+          React.createElement("div", { className: "statNum small" }, fmtBaht(cogs)),
+          React.createElement("div", { className: "statLbl muted" }, "cost of goods")),
+        React.createElement("div", { className: "statCard" },
+          React.createElement("div", { className: "statNum small " + (profit >= 0 ? "pos" : "neg") }, fmtBaht(profit)),
+          React.createElement("div", { className: "statLbl muted" }, "profit"))),
 
-    open ? React.createElement(SaleForm, { sellable: sellable, onSave: function (sale) { props.addSale(sale); setOpen(false); }, onCancel: function () { setOpen(false); } }) : null,
+      React.createElement(ActionButton, { className: "btn primary wide", onAct: function () { setOpen(true); } },
+        React.createElement(Icon, { name: "plus", size: 16, weight: 2 }), "Record a sale"),
 
-    sales.length === 0 ?
-      React.createElement("div", null,
-        React.createElement(SmartImg, { src: IMG.sales, alt: "Amber oil", h: 150, icon: "cart", label: "Sales ledger", sublabel: "Every bottle out the door" }),
+      open ? React.createElement(SaleForm, { sellable: sellable, onSave: function (sale) { props.addSale(sale); setOpen(false); }, onCancel: function () { setOpen(false); } }) : null,
+
+      sales.length === 0 ?
+        React.createElement("div", null,
+          React.createElement(SmartImg, { src: IMG.sales, alt: "Amber oil", h: 150, icon: "cart", label: "Sales ledger", sublabel: "Every bottle out the door" }),
+          React.createElement("div", { className: "empty" },
+            React.createElement(Icon, { name: "cart", size: 34, weight: 1.3, className: "emptyIc" }),
+            React.createElement("p", null, "No sales logged yet."))) :
+        React.createElement("div", { className: "list salesList" },
+          sales.map(function (sale) {
+            return React.createElement(SaleRow, {
+              key: sale.id, sale: sale, deleteSale: props.deleteSale,
+              photoSale: props.photoSale, removeSalePhoto: props.removeSalePhoto, captionSalePhoto: props.captionSalePhoto
+            });
+          }))) : null,
+
+    section === "leads" ? React.createElement("div", null,
+      dueCount > 0 ? React.createElement("div", { className: "lowBanner" },
+        React.createElement(Icon, { name: "warn", size: 15, weight: 1.7 }),
+        React.createElement("span", null, dueCount === 1 ? "1 shop is due a follow-up." : dueCount + " shops are due a follow-up.")) : null,
+
+      React.createElement(ActionButton, { className: "btn primary wide", onAct: function () { setLeadOpen(true); } },
+        React.createElement(Icon, { name: "plus", size: 16, weight: 2 }), "Add a lead"),
+
+      leadOpen ? React.createElement(LeadForm, { sellable: sellable, onSave: function (lead) { props.addLead(lead); setLeadOpen(false); }, onCancel: function () { setLeadOpen(false); } }) : null,
+
+      leads.length === 0 ?
         React.createElement("div", { className: "empty" },
-          React.createElement(Icon, { name: "cart", size: 34, weight: 1.3, className: "emptyIc" }),
-          React.createElement("p", null, "No sales logged yet."))) :
-      React.createElement("div", { className: "list salesList" },
-        sales.map(function (sale) {
-          return React.createElement(SaleRow, {
-            key: sale.id, sale: sale, deleteSale: props.deleteSale,
-            photoSale: props.photoSale, removeSalePhoto: props.removeSalePhoto, captionSalePhoto: props.captionSalePhoto
-          });
-        })));
+          React.createElement(Icon, { name: "box", size: 34, weight: 1.3, className: "emptyIc" }),
+          React.createElement("p", null, "No leads yet."),
+          React.createElement("p", { className: "muted" }, "Log shops you've dropped samples to and chase them up.")) :
+        React.createElement("div", { className: "list" },
+          leads.map(function (lead) {
+            return React.createElement(LeadRow, { key: lead.id, lead: lead, editLead: props.editLead, deleteLead: props.deleteLead, sellableForEdit: sellableForEdit, toggleLeadSample: props.toggleLeadSample });
+          }))) : null
+  );
 }
 
 /* one sale, with the same photo gallery pattern as the cellar for familiarity */
@@ -2396,6 +2587,184 @@ function SaleForm(props) {
     React.createElement("div", { className: "formActions" },
       React.createElement(ActionButton, { className: "btn ghost sm", onAct: props.onCancel }, "Cancel"),
       React.createElement(ActionButton, { className: "btn primary sm", onAct: save }, "Save sale")));
+}
+
+/* ---------- Lead form + row (outreach tracker) ---------- */
+function LeadForm(props) {
+  var sellable = props.sellable;
+  var sh = useState(""); var shop = sh[0]; var setShop = sh[1];
+  var lc = useState(""); var loc = lc[0]; var setLoc = lc[1];
+  var pn = useState(""); var person = pn[0]; var setPerson = pn[1];
+  var ct = useState(""); var contact = ct[0]; var setContact = ct[1];
+  var dt = useState(toDateInput(Date.now())); var dropped = dt[0]; var setDropped = dt[1];
+  var sm = useState({}); var samples = sm[0]; var setSamples = sm[1];
+
+  function toggleSample(batchId) {
+    var c = {}; for (var k in samples) c[k] = samples[k];
+    if (c[batchId]) { delete c[batchId]; } else { c[batchId] = true; }
+    setSamples(c);
+  }
+  function save() {
+    if (!shop) return;
+    var picked = [];
+    for (var i = 0; i < sellable.length; i++) {
+      var id = sellable[i].e.id;
+      if (samples[id]) picked.push({ batchId: id, strain: sellable[i].e.strain || sellable[i].e.name || sellable[i].e.botanicalName });
+    }
+    props.onSave({
+      id: "l" + Date.now(), shop: shop, loc: loc, person: person, contact: contact,
+      droppedAt: fromDateInput(dropped) || Date.now(), samples: picked, status: "sampled",
+      notes: [], createdAt: Date.now()
+    });
+  }
+
+  return React.createElement("div", { className: "saleForm" },
+    React.createElement("div", { className: "formField" },
+      React.createElement("label", null, "Shop name"),
+      React.createElement("input", { className: "inp", type: "text", value: shop, placeholder: "e.g. Clouds", onChange: function (ev) { setShop(ev.target.value); } })),
+    React.createElement("div", { className: "formRow2" },
+      React.createElement("div", { className: "formField" },
+        React.createElement("label", null, "Location"),
+        React.createElement("input", { className: "inp", type: "text", value: loc, placeholder: "Old Town", onChange: function (ev) { setLoc(ev.target.value); } })),
+      React.createElement("div", { className: "formField" },
+        React.createElement("label", null, "Person"),
+        React.createElement("input", { className: "inp", type: "text", value: person, placeholder: "e.g. Jim", onChange: function (ev) { setPerson(ev.target.value); } }))),
+    React.createElement("div", { className: "formRow2" },
+      React.createElement("div", { className: "formField" },
+        React.createElement("label", null, "Contact (LINE/WhatsApp)"),
+        React.createElement("input", { className: "inp", type: "text", value: contact, placeholder: "@handle or number", onChange: function (ev) { setContact(ev.target.value); } })),
+      React.createElement("div", { className: "formField" },
+        React.createElement("label", null, "Date dropped in"),
+        React.createElement("input", { className: "inp", type: "date", value: dropped, onChange: function (ev) { setDropped(ev.target.value); } }))),
+    React.createElement("div", { className: "formField" },
+      React.createElement("label", null, "Samples given (1 bottle each)"),
+      sellable.length === 0 ?
+        React.createElement("div", { className: "muted small" }, "No bottles in stock to sample.") :
+        React.createElement("div", { className: "sampleChips" },
+          sellable.map(function (x) {
+            var nm = x.e.strain || x.e.name || x.e.botanicalName;
+            return React.createElement("button", {
+              key: x.e.id, type: "button",
+              className: "sampleChip" + (samples[x.e.id] ? " on" : ""),
+              onClick: function () { toggleSample(x.e.id); }
+            }, nm + " (" + x.left + ")");
+          }))),
+    React.createElement("div", { className: "followNote muted small" },
+      React.createElement(Icon, { name: "info", size: 12, weight: 1.6 }),
+      React.createElement("span", null, "Follow-up reminder set 3 working days after the drop-in date.")),
+    React.createElement("div", { className: "formActions" },
+      React.createElement(ActionButton, { className: "btn ghost sm", onAct: props.onCancel }, "Cancel"),
+      React.createElement(ActionButton, { className: "btn primary sm", onAct: save }, "Save lead")));
+}
+
+function LeadRow(props) {
+  var lead = props.lead;
+  var no = useState(false); var noteOpen = no[0]; var setNoteOpen = no[1];
+  var nv = useState(""); var noteVal = nv[0]; var setNoteVal = nv[1];
+  var cf = useState(false); var confirmDel = cf[0]; var setConfirmDel = cf[1];
+  var ed = useState(false); var editOpen = ed[0]; var setEditOpen = ed[1];
+
+  var meta = leadStatusMeta(lead.status);
+  var due = leadDue(lead);
+  var notes = (lead.notes && lead.notes.length) ? lead.notes : [];
+  var samples = lead.samples || [];
+
+  function saveNote() { if (noteVal) { var arr = notes.slice(); arr.push({ text: noteVal, at: Date.now() }); props.editLead(lead.id, "notes", arr); setNoteVal(""); } setNoteOpen(false); }
+  function delNote(i) { var arr = notes.slice(); arr.splice(i, 1); props.editLead(lead.id, "notes", arr); }
+
+  return React.createElement("div", { className: "card leadRow" + (due ? " due" : "") },
+    React.createElement("div", { className: "leadTop" },
+      React.createElement("div", { className: "leadHead" },
+        React.createElement("a", { className: "leadShop leadShopLink", href: mapsSearchUrl(lead.shop, lead.loc), target: "_blank", rel: "noopener" }, lead.shop,
+          lead.loc ? React.createElement("span", { className: "leadLoc muted" }, lead.loc) : null,
+          React.createElement(Icon, { name: "arrow", size: 13, weight: 1.7, className: "leadMapIc" })),
+        React.createElement("span", { className: "leadStatus " + meta.cls }, meta.label)),
+      React.createElement(ActionButton, { className: "saleDel", onAct: function () { setConfirmDel(true); } },
+        React.createElement(Icon, { name: "close", size: 13, weight: 2 }))),
+
+    (lead.person || lead.contact) ? React.createElement("div", { className: "leadContact muted" },
+      lead.person ? React.createElement("span", null, lead.person) : null,
+      lead.contact ? React.createElement("span", null, React.createElement(Icon, { name: "book", size: 11, weight: 1.6 }), lead.contact) : null) : null,
+
+    samples.length ? React.createElement("div", { className: "leadSamples" },
+      samples.map(function (sm, i) {
+        return React.createElement("span", { key: i, className: "sampleTag" }, sm.strain);
+      })) : null,
+
+    React.createElement("div", { className: "leadDates muted small" },
+      React.createElement("span", null, "Dropped " + fmtDay(lead.droppedAt)),
+      lead.followUp ? React.createElement("span", { className: due ? "followDue" : "" },
+        due ? "Follow up now" : "Follow up " + fmtDay(lead.followUp)) : null),
+
+    React.createElement("div", { className: "leadStatusRow" },
+      LEAD_STATUSES.map(function (st) {
+        return React.createElement("button", {
+          key: st.id, type: "button",
+          className: "statusPick " + st.cls + (lead.status === st.id ? " on" : ""),
+          onClick: function () { props.editLead(lead.id, "status", st.id); }
+        }, st.label);
+      })),
+
+    notes.length ? React.createElement("div", { className: "noteList" },
+      notes.map(function (n, i) {
+        return React.createElement("div", { key: i, className: "noteItem" },
+          React.createElement(Icon, { name: "book", size: 12, weight: 1.6, className: "noteIcon" }),
+          React.createElement("div", { className: "noteBody" },
+            React.createElement("div", { className: "noteText" }, n.text),
+            n.at ? React.createElement("div", { className: "noteStamp muted" }, fmtDate(n.at)) : null),
+          React.createElement("button", { className: "noteDel", type: "button", onClick: function () { delNote(i); } },
+            React.createElement(Icon, { name: "close", size: 12, weight: 2 })));
+      })) : null,
+
+    noteOpen ? React.createElement("div", { className: "noteEditor" },
+      React.createElement("input", { className: "inp", type: "text", value: noteVal, placeholder: "spoke to..., seemed keen...", onChange: function (ev) { setNoteVal(ev.target.value); } }),
+      React.createElement(ActionButton, { className: "btn primary sm", onAct: saveNote }, "Add")) : null,
+
+    editOpen ? React.createElement("div", { className: "leadEdit" },
+      React.createElement("div", { className: "formField" },
+        React.createElement("label", null, "Shop name"),
+        React.createElement("input", { className: "inp", type: "text", value: lead.shop || "", onChange: function (ev) { props.editLead(lead.id, "shop", ev.target.value); } })),
+      React.createElement("div", { className: "formRow2" },
+        React.createElement("div", { className: "formField" },
+          React.createElement("label", null, "Location"),
+          React.createElement("input", { className: "inp", type: "text", value: lead.loc || "", onChange: function (ev) { props.editLead(lead.id, "loc", ev.target.value); } })),
+        React.createElement("div", { className: "formField" },
+          React.createElement("label", null, "Person"),
+          React.createElement("input", { className: "inp", type: "text", value: lead.person || "", onChange: function (ev) { props.editLead(lead.id, "person", ev.target.value); } }))),
+      React.createElement("div", { className: "formRow2" },
+        React.createElement("div", { className: "formField" },
+          React.createElement("label", null, "Contact"),
+          React.createElement("input", { className: "inp", type: "text", value: lead.contact || "", onChange: function (ev) { props.editLead(lead.id, "contact", ev.target.value); } })),
+        React.createElement("div", { className: "formField" },
+          React.createElement("label", null, "Date dropped in (resets follow-up)"),
+          React.createElement("input", { className: "inp", type: "date", value: toDateInput(lead.droppedAt), onChange: function (ev) { props.editLead(lead.id, "droppedAt", fromDateInput(ev.target.value)); } }))),
+      React.createElement("div", { className: "formField" },
+        React.createElement("label", null, "Samples given (adjusts stock)"),
+        props.sellableForEdit && props.sellableForEdit.length ?
+          React.createElement("div", { className: "sampleChips" },
+            props.sellableForEdit.map(function (x) {
+              var picked = false;
+              for (var si = 0; si < samples.length; si++) { if (samples[si].batchId === x.id) picked = true; }
+              return React.createElement("button", {
+                key: x.id, type: "button",
+                className: "sampleChip" + (picked ? " on" : ""),
+                onClick: function () { props.toggleLeadSample(lead.id, x.id, x.name); }
+              }, x.name);
+            })) :
+          React.createElement("div", { className: "muted small" }, samples.length ? samples.map(function (s) { return s.strain; }).join(", ") : "none"))) : null,
+
+    React.createElement("div", { className: "rowActions" },
+      !noteOpen ? React.createElement(ActionButton, { className: "miniBtn", onAct: function () { setNoteOpen(true); } },
+        React.createElement(Icon, { name: "book", size: 14, weight: 1.6 }), "Add note") : null,
+      React.createElement(ActionButton, { className: "miniBtn", onAct: function () { setEditOpen(!editOpen); } },
+        React.createElement(Icon, { name: "box", size: 14, weight: 1.6 }), editOpen ? "Done" : "Edit")),
+
+    confirmDel ? React.createElement("div", { className: "delConfirm" },
+      React.createElement("span", null, "Delete this lead? Samples return to stock."),
+      React.createElement("div", { className: "delBtns" },
+        React.createElement(ActionButton, { className: "btn ghost sm", onAct: function () { setConfirmDel(false); } }, "Keep"),
+        React.createElement(ActionButton, { className: "btn primary sm danger", onAct: function () { props.deleteLead(lead.id); } }, "Delete"))) : null
+  );
 }
 
 /* ---------- Guides ---------- */
