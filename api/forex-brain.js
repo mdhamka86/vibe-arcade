@@ -46,15 +46,16 @@ export const CONFIG = {
   newsSources: [
     { id: "ff-calendar", kind: "json", url: "https://nfs.faireconomy.media/ff_calendar_thisweek.json" },
     { id: "forexlive",   kind: "rss",  url: "https://www.forexlive.com/feed/news" },
-    { id: "fxstreet",    kind: "rss",  url: "https://www.fxstreet.com/rss/news" },
-    { id: "dailyfx",     kind: "rss",  url: "https://www.dailyfx.com/feeds/market-news" },
+    { id: "investing",   kind: "rss",  url: "https://www.investing.com/rss/news_1.rss" },
+    { id: "babypips",    kind: "rss",  url: "https://www.babypips.com/feed.rss" },
+    { id: "fed-press",   kind: "rss",  url: "https://www.federalreserve.gov/feeds/press_all.xml" },
   ],
 };
 
 // ----------------------------------------------------------------- REDIS ----
 
-const R_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
-const R_TOK = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+const R_URL = process.env.UPSTASH_REDIS_REST_URL;
+const R_TOK = process.env.UPSTASH_REDIS_REST_TOKEN;
 
 async function redis(cmd) {
   const res = await fetch(`${R_URL}/${cmd.map(encodeURIComponent).join("/")}`, {
@@ -364,7 +365,16 @@ async function stageConverge() {
 export default async function handler(req, res) {
   try {
     const q = req.query || {};
-    const action = q.action || "health";
+    const isCron = !!req.headers["x-vercel-cron"];
+    // A Vercel cron hit with no explicit action means: run the full pipeline.
+    const action = q.action || (isCron ? "run" : "health");
+    const stage = q.stage || "all";
+
+    // Credit guard: if BRAIN_KEY is set, manual runs must present it. Cron is
+    // always trusted (the header only exists on Vercel's own invocations).
+    if (action === "run" && process.env.BRAIN_KEY && !isCron && q.key !== process.env.BRAIN_KEY) {
+      return res.status(401).json({ ok: false, error: "run requires key" });
+    }
 
     if (action === "health") {
       return res.status(200).json({
@@ -379,7 +389,6 @@ export default async function handler(req, res) {
     }
 
     if (action === "run") {
-      const stage = q.stage || "all";
       const out = {};
       if (stage === "prices" || stage === "all") out.prices = await stagePrices();
       if (stage === "news" || stage === "all") out.news = await stageNews();
