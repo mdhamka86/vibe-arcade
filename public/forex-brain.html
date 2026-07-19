@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>The Forex Brain — hammyLabs</title>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  :root {
+    --bg: #101418; --surface: #1a2026; --surface2: #212932;
+    --text: #e8eaed; --muted: #8b949e; --line: #2b333d;
+    --buy: #4ade80; --sell: #f87171; --flat: #9ca3af; --warn: #f0b429;
+    --mono: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
+  header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 6px; }
+  h1 { font-size: 17px; letter-spacing: 0.14em; font-weight: 600; text-transform: uppercase; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  .meta { display: flex; align-items: center; gap: 14px; font-size: 12px; color: var(--muted); font-family: var(--mono); }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: 1px; }
+  .ok { background: var(--buy); } .bad { background: var(--sell); }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 22px; }
+
+  .ribbon { position: relative; height: 44px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; margin-bottom: 26px; overflow: hidden; }
+  .sess { position: absolute; top: 0; bottom: 0; opacity: 0.35; }
+  .sess.asia { background: #2d4a5e; } .sess.ldn { background: #3d4a2d; } .sess.ny { background: #5e3d2d; }
+  .sesslabel { position: absolute; top: 5px; font-size: 10px; letter-spacing: 0.08em; color: var(--text); opacity: 0.85; text-transform: uppercase; }
+  .hourmark { position: absolute; bottom: 3px; font-size: 9px; color: var(--muted); font-family: var(--mono); transform: translateX(-50%); }
+  .now { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--warn); }
+  .now::after { content: "now"; position: absolute; top: -1px; left: 5px; font-size: 9px; color: var(--warn); font-family: var(--mono); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 14px; margin-bottom: 34px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  .cardtop { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+  .pair { font-family: var(--mono); font-size: 16px; font-weight: 600; letter-spacing: 0.04em; }
+  .dir { font-family: var(--mono); font-size: 12px; font-weight: 700; letter-spacing: 0.12em; padding: 3px 10px; border-radius: 5px; border: 1px solid; }
+  .dir.BUY { color: var(--buy); border-color: var(--buy); }
+  .dir.SELL { color: var(--sell); border-color: var(--sell); }
+  .dir.FLAT { color: var(--flat); border-color: var(--line); }
+  .convrow { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .convbar { flex: 1; height: 4px; background: var(--surface2); border-radius: 2px; overflow: hidden; }
+  .convfill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
+  .convnum { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 58px; text-align: right; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .chip { font-family: var(--mono); font-size: 11px; color: var(--muted); background: var(--surface2); border-radius: 5px; padding: 3px 8px; }
+  .chip.warnchip { color: var(--warn); }
+  .geo { font-family: var(--mono); font-size: 11.5px; color: var(--muted); line-height: 1.7; margin-bottom: 8px; }
+  .geo b { color: var(--text); font-weight: 500; }
+  details summary { cursor: pointer; font-size: 12px; color: var(--muted); list-style: none; user-select: none; }
+  details summary::before { content: "› "; }
+  details[open] summary::before { content: "⌄ "; }
+  details p { font-size: 12.5px; line-height: 1.65; color: var(--text); opacity: 0.9; margin-top: 8px; }
+
+  h2 { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+  td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td.mono { font-family: var(--mono); white-space: nowrap; color: var(--muted); }
+  td .dir { font-size: 10.5px; padding: 2px 7px; }
+  .rat { color: var(--muted); line-height: 1.55; }
+  .empty { color: var(--muted); font-size: 13px; padding: 30px 0; text-align: center; }
+  button.refresh { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 6px; padding: 5px 12px; font-size: 12px; font-family: var(--mono); cursor: pointer; }
+  button.refresh:hover { color: var(--text); border-color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { .convfill { transition: none; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+const API = "/api/forex-brain";
+const PAIRS = ["EURUSD","USDJPY","GBPUSD","USDCHF","AUDUSD","USDCAD","NZDUSD"];
+
+// Session windows in Phuket hours (UTC+7), matching FOREX_BRAIN.md Section 6.
+const SESSIONS = [
+  { id: "asia", label: "Asia", from: 6, to: 12 },
+  { id: "ldn",  label: "London", from: 15, to: 19 },
+  { id: "ny",   label: "New York + overlap", from: 19, to: 24 },
+];
+
+function phuketNow() {
+  const now = new Date();
+  const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+  return new Date(utc + 7 * 3600000);
+}
+
+function dirColor(d) { return d === "BUY" ? "var(--buy)" : d === "SELL" ? "var(--sell)" : "var(--flat)"; }
+
+function timeLeft(iso) {
+  if (!iso) return "—";
+  const ms = new Date(iso) - new Date();
+  if (ms <= 0) return "expired";
+  const m = Math.floor(ms / 60000);
+  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m left` : `${m}m left`;
+}
+
+function Ribbon() {
+  const [, tick] = useState(0);
+  useEffect(() => { const t = setInterval(() => tick(x => x + 1), 30000); return () => clearInterval(t); }, []);
+  const now = phuketNow();
+  const frac = (now.getHours() + now.getMinutes() / 60) / 24;
+  return (
+    <div className="ribbon" title="Trading sessions in Phuket time (UTC+7)">
+      {SESSIONS.map(s => (
+        <div key={s.id}>
+          <div className={`sess ${s.id}`} style={{ left: `${(s.from/24)*100}%`, width: `${((s.to-s.from)/24)*100}%` }} />
+          <div className="sesslabel" style={{ left: `calc(${(s.from/24)*100}% + 6px)` }}>{s.label}</div>
+        </div>
+      ))}
+      {[0,6,12,18].map(h => <div key={h} className="hourmark" style={{ left: `${(h/24)*100}%`, marginLeft: h===0?8:0 }}>{String(h).padStart(2,"0")}:00</div>)}
+      <div className="now" style={{ left: `${frac*100}%` }} />
+    </div>
+  );
+}
+
+function Card({ v, symbol }) {
+  if (!v) return (
+    <div className="card">
+      <div className="cardtop"><span className="pair">{symbol}</span><span className="dir FLAT">NO DATA</span></div>
+      <div className="geo">No verdict in the store yet. It appears after the next converge run.</div>
+    </div>
+  );
+  const sr = v.sourcesReached || {};
+  const missing = (sr.missing || []).map(m => m.id || m).join(", ");
+  return (
+    <div className="card">
+      <div className="cardtop">
+        <span className="pair">{v.symbol}</span>
+        <span className={`dir ${v.direction}`}>{v.direction}</span>
+      </div>
+      <div className="convrow">
+        <div className="convbar"><div className="convfill" style={{ width: `${v.conviction}%`, background: dirColor(v.direction) }} /></div>
+        <span className="convnum">{v.conviction}/100</span>
+      </div>
+      <div className="chips">
+        <span className={`chip ${sr.hit < sr.expected ? "warnchip" : ""}`} title={missing ? `missing: ${missing}` : "all sources reached"}>src {sr.hit ?? "?"}/{sr.expected ?? "?"}</span>
+        <span className="chip">{timeLeft(v.expiresAt)}</span>
+      </div>
+      {v.direction !== "FLAT" && v.entryZone && (
+        <div className="geo">
+          trigger <b>{v.entryZone.trigger}</b> · chase&nbsp;to <b>{v.entryZone.maxChase}</b><br/>
+          SL <b>{v.slPrice}</b> · TP <b>{v.tpPrice}</b> · risk <b>{v.riskPercent}%</b>
+        </div>
+      )}
+      <details><summary>rationale</summary><p>{v.rationale}</p></details>
+    </div>
+  );
+}
+
+function App() {
+  const [verdicts, setVerdicts] = useState({});
+  const [journal, setJournal] = useState([]);
+  const [health, setHealth] = useState(null);
+  const [stamp, setStamp] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const [hv, vv, jv] = await Promise.all([
+        fetch(`${API}?action=health`).then(r => r.json()),
+        fetch(`${API}?action=verdicts`).then(r => r.json()),
+        fetch(`${API}?action=journal&n=40`).then(r => r.json()),
+      ]);
+      setHealth(hv); setVerdicts(vv.verdicts || {}); setJournal(jv.journal || []);
+      setStamp(new Date());
+    } catch (e) { /* keep last good state; the stamp going stale is the signal */ }
+  }, []);
+
+  useEffect(() => { load(); const t = setInterval(load, 60000); return () => clearInterval(t); }, [load]);
+
+  const env = health && health.env ? health.env : {};
+  return (
+    <div className="wrap">
+      <header>
+        <h1>The Forex Brain <span>/ hammyLabs</span></h1>
+        <div className="meta">
+          <span><span className={`dot ${env.redis ? "ok" : "bad"}`}></span>redis</span>
+          <span><span className={`dot ${env.anthropic ? "ok" : "bad"}`}></span>model</span>
+          <span><span className={`dot ${env.twelvedata ? "ok" : "bad"}`}></span>prices</span>
+          <span>{stamp ? `synced ${stamp.toLocaleTimeString()}` : "loading…"}</span>
+          <button className="refresh" onClick={load}>refresh</button>
+        </div>
+      </header>
+      <div className="sub">Phase 1 · paper only · no orders exist · {health ? health.model : ""}</div>
+      <Ribbon />
+      <div className="grid">
+        {PAIRS.map(s => <Card key={s} symbol={s} v={verdicts[s]} />)}
+      </div>
+      <h2>Decision journal</h2>
+      {journal.length === 0 ? <div className="empty">No decisions logged yet. The journal fills as converge runs.</div> : (
+        <table>
+          <thead><tr><th>Time (UTC)</th><th>Pair</th><th>Call</th><th>Conv</th><th>Src</th><th>Why</th></tr></thead>
+          <tbody>
+            {journal.map((j, i) => (
+              <tr key={i}>
+                <td className="mono">{(j.at || "").replace("T", " ").slice(5, 16)}</td>
+                <td className="mono" style={{ color: "var(--text)" }}>{j.symbol}</td>
+                <td><span className={`dir ${j.direction}`}>{j.direction}</span></td>
+                <td className="mono">{j.conviction}</td>
+                <td className="mono">{j.sources}</td>
+                <td className="rat">{j.rationale}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
