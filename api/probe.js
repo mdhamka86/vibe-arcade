@@ -38,6 +38,7 @@ module.exports = async (req, res) => {
     if (!target || !/^https?:\/\//.test(target))
       return res.status(400).json({ error: "Pass ?url=https://..." });
     const ua = u.searchParams.get("ua") || "chrome";
+    const maxSnip = Math.min(parseInt(u.searchParams.get("max") || "600", 10) || 600, 8000);
     const ms = Math.min(parseInt(u.searchParams.get("ms") || "15000", 10) || 15000, 30000);
 
     const ctrl = new AbortController();
@@ -74,7 +75,7 @@ module.exports = async (req, res) => {
         looksJson,
         jsonTopKeys,
         jsonArrayLen,
-        snippet: (looksJson ? text : stripped).slice(0, 600),
+        snippet: (looksJson ? text : stripped).slice(0, maxSnip),
         elapsedMs: Date.now() - started,
       };
     } catch (e) {

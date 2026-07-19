@@ -1661,10 +1661,85 @@ async function trawlApi(action, timeoutMs){
 
 async function loadMorning(){
   try{
+    if(!proposal){
+      try{ const pr=await fetch("/api/propose?action=latest"); if(pr.ok) proposal=await pr.json(); }catch(e){}
+    }
     const p=await trawlApi("action=pack",25000);
     if(p.error){ morningPack=null; renderMorning(p.error); return; }
     morningPack=p; renderMorning();
   }catch(e){ morningPack=null; renderMorning(e.message); }
+}
+// ---- THE RESULTS WIRE + THE VETO BOOK (enhancements #1 and #2, 19/07/2026) ----
+let wireSettlements=null;
+function renderResultsWireCard(){
+  return '<div class="card quill"><h3>'+IC.chart+'The Results Wire'+tip("For priced regions (AU via TAB, FR/DE via PMU) the wire fetches final arrival orders and declared host-tote dividends for every pending leg, and drafts the settlements. Positions and results are gospel; payouts are host-tote estimates you confirm against the SGPools slip. The wire taps, the stewards sign.")+'</h3>'+
+    '<div class="lesson">Taps the host totes for finals on today\u2019s pending legs and drafts settlements: result, position, legDiv, favDiv, field size, and an estimated payout to confirm against your slip. Unpriced regions (SA press-priced legs included) still settle by hand.</div>'+
+    '<button class="qbtn" id="wireFetch">Tap the wire for results</button>'+
+    '<div id="wireOut"></div>'+
+    '<div class="qmsg" id="wireMsg"></div></div>';
+}
+function renderVetoBookCard(){
+  if(!proposal||!proposal.date) return '<div class="card"><h3>'+IC.book+'The Veto Book</h3><div class="lesson">No proposal yet today. Once the Stable proposes, the law\u2019s cuts, the anchor/value reads and the shadow verdicts appear here.</div></div>';
+  let h='<div class="card"><h3>'+IC.book+'The Veto Book \u00b7 '+esc(proposal.date)+tip("Every leg the law cut and the rule that cut it, the model\u2019s anchor-vs-value read per race, and the shadow price verdict on every kept leg. The proposal as a readable argument, not just a slip.")+'</h3>';
+  const sp=(proposal.shadowPrices&&proposal.shadowPrices.kept)||[];
+  const spIx={}; sp.forEach(x=>{spIx[x.meet+"|"+x.raceNo+"|"+x.horseNo]=x;});
+  (proposal.legs||[]).forEach(l=>{
+    const s=spIx[l.meet+"|"+l.raceNo+"|"+l.horseNo]||{};
+    const v=s.verdict||"\u2014";
+    const cls=v==="pass"?"win":(v==="fail"?"lose":"");
+    h+='<div class="kv">KEPT \u00b7 '+esc(l.meet)+' R'+esc(l.raceNo)+' #'+esc(l.horseNo)+' <b>'+esc(l.horseName)+'</b> '+esc(l.betType)+' ['+esc(l.tier||"?")+'] <span class="chip '+cls+'">shadow: '+esc(v)+(s.price&&s.price.win?(" W"+s.price.win):"")+(s.price&&s.price.pla?(" P"+s.price.pla):"")+'</span></div>';
+  });
+  (proposal.vetoes||[]).forEach(v=>{
+    h+='<div class="kv" style="opacity:0.75">VETOED \u00b7 '+esc(v.meet)+' R'+esc(v.raceNo)+' <b>'+esc(v.horseName||"")+'</b> '+esc(v.betType)+' <span class="chip lose">'+esc(v.rule)+'</span></div>';
+  });
+  const reads=(proposal.raceReads||[]).slice(0,24);
+  if(reads.length){
+    h+='<div class="lesson" style="margin-top:8px"><b>Anchor / value reads</b></div>';
+    reads.forEach(r=>{
+      h+='<div class="kv" style="font-size:12px">'+esc(r.meet)+' R'+esc(r.raceNo)+': anchor <b>'+esc(r.anchor||"?")+'</b> \u00b7 value '+esc((r.valueTier||[]).join(", ")||"\u2014")+'</div>';
+    });
+  }
+  return h+'</div>';
+}
+async function runResultsWire(){
+  const b=$("wireFetch"); if(b) b.disabled=true;
+  qmsg("wireMsg","Tapping the wire\u2026 arrival orders and declared dividends.");
+  try{
+    const r=await trawlApi("action=results",90000);
+    if(r.error){ qmsg("wireMsg",r.error,"err"); return; }
+    wireSettlements=r.settlements||[];
+    let h="";
+    if(wireSettlements.length){
+      h+='<table><tr><th>Leg</th><th>Result</th><th>Pos</th><th>Div</th><th>Est. payout</th></tr>';
+      wireSettlements.forEach(s=>{
+        h+='<tr><td>'+esc(s.meet)+' R'+esc(s.raceNo)+' #'+esc(s.horseNo)+' '+esc(s.horseName)+' '+esc(s.betType)+'</td>'+
+          '<td>'+esc(s.result)+'</td><td>'+esc(s.position!=null?s.position:"\u2014")+'</td>'+
+          '<td>'+esc(s.legDiv!=null?("$"+s.legDiv):"\u2014")+'</td>'+
+          '<td>'+esc(s.payout!=null?("$"+s.payout):"confirm manually")+'</td></tr>';
+      });
+      h+='</table><button class="qbtn" id="wireConfirm">Confirm & settle '+wireSettlements.length+' legs (verify payouts vs slip first)</button>';
+    }
+    (r.skipped||[]).forEach(s=>{ h+='<div class="lesson">skipped: '+esc(s.leg)+' \u2014 '+esc(s.why)+'</div>'; });
+    if(!wireSettlements.length&&!(r.skipped||[]).length) h+='<div class="lesson">No pending legs for today.</div>';
+    $("wireOut").innerHTML=h;
+    qmsg("wireMsg",wireSettlements.length+" settlements drafted, "+(r.skipped||[]).length+" skipped.","ok");
+    const c=$("wireConfirm");
+    if(c) c.addEventListener("click",confirmResultsWire);
+  }catch(e){ qmsg("wireMsg","Wire failed: "+e.message,"err"); }
+  finally{ if(b) b.disabled=false; }
+}
+async function confirmResultsWire(){
+  const c=$("wireConfirm"); if(c) c.disabled=true;
+  qmsg("wireMsg","Signing the settlements into the vault\u2026");
+  try{
+    const body={settlements:wireSettlements.map(s=>({xlRow:s.xlRow,result:s.result,payout:s.payout!=null?s.payout:0,position:s.position,legDiv:s.legDiv,favDiv:s.favDiv,fieldSize:s.fieldSize,receipt:""}))};
+    const r=await api("action=settle",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    if(r.error){ qmsg("wireMsg",r.error+((r.errors||[]).length?(" \u2014 "+r.errors.join("; ")):""),"err"); return; }
+    qmsg("wireMsg","Settled "+((r.settled||[]).length)+" legs."+((r.warnings||[]).length?(" WARNINGS: "+r.warnings.join("; ")):""),"ok");
+    wireSettlements=null; $("wireOut").innerHTML="";
+    await runAudit(); await loadState();
+  }catch(e){ qmsg("wireMsg","Settle failed: "+e.message,"err"); }
+  finally{ if(c) c.disabled=false; }
 }
 
 function srcChip(s){
@@ -1692,6 +1767,9 @@ function renderMorning(msg){
     '<div class="lesson">The morning trawl: triage with the data-edge gate applied in code, SGPools tipster PDFs deep-read, the scout manifest\u2019s pundit sources harvested per region, and weather pulled at every track. Runs by cron at 7:15am Phuket, once the day\u2019s cards are up, or by hand right here. The pack below feeds our convergence session.</div>'+
     '<button class="qbtn" id="toutRun">Run the morning trawl now (60-120s)</button>'+
     '<div class="qmsg" id="toutMsg">'+(msg?esc(msg):"")+'</div></div>';
+
+  h+=renderResultsWireCard();
+  h+=renderVetoBookCard();
 
   if(morningPack){
     const p=morningPack;
@@ -1744,6 +1822,8 @@ function renderMorning(msg){
     }catch(e){ qmsg("toutMsg","Trawl failed: "+e.message,"err"); }
     finally{ const b=$("toutRun"); if(b) b.disabled=false; }
   });
+  const wf=$("wireFetch");
+  if(wf) wf.addEventListener("click",runResultsWire);
   const tc=$("toutCopy");
   if(tc) tc.addEventListener("click",async()=>{
     try{ await navigator.clipboard.writeText(morningPack.copyText||""); tc.textContent="Copied!"; }

@@ -378,12 +378,14 @@ async function tabPrices(pack, stats) {
       }
       if (!matched) { stats.misses.push(m.venue + " R" + race.raceNo + " (tab)"); last = null; continue; }
       last = { venue: matched.venue, offset: (matched.body.raceNumber || 0) - race.raceNo };
+      // persist the match so the Results Wire can come back for finals without re-matching
+      race.priceRef = { src: "tab", venue: matched.venue, srcRaceNo: matched.body.raceNumber || 0 };
       const byName = {};
       (matched.body.runners || []).forEach((rn) => { byName[normName(rn.runnerName)] = rn; });
       for (const h of race.runners || []) {
         const rn = byName[normName(h.name)];
         const p = rn && runnerPrice(rn);
-        if (p) { h.price = p; stats.pricedRunners++; }
+        if (p) { p.srcNo = rn.runnerNumber != null ? rn.runnerNumber : rn.number; h.price = p; stats.pricedRunners++; }
       }
       stats.matchedRaces++;
     }
@@ -441,6 +443,7 @@ async function pmuPrices(pack, stats) {
         }
       }
       if (!matched) { stats.misses.push(m.venue + " R" + race.raceNo + " (pmu)"); continue; }
+      race.priceRef = { src: "pmu", R: matched.c.R, C: matched.c.C };
       const win = await getRapports(matched.c.R, matched.c.C, "E_SIMPLE_GAGNANT");
       const pla = await getRapports(matched.c.R, matched.c.C, "E_SIMPLE_PLACE");
       const numByName = {};
@@ -456,6 +459,7 @@ async function pmuPrices(pack, stats) {
           pla: p.direct != null ? p.direct : null,
           ref: w.ref != null ? w.ref : null,
           src: "pmu",
+          srcNo: np,
         };
         stats.pricedRunners++;
       }
@@ -464,10 +468,51 @@ async function pmuPrices(pack, stats) {
   }
 }
 
+// SA press-forecast prices. The bookmaker sites are Cloudflare walls, but the Race
+// Coast preview prose we ALREADY fetch routinely carries betting forecasts in text
+// ("should be around 9-2"). This scans each SA source's text for fractional odds
+// within a short window after a card runner's name and stamps a LOW-FIDELITY price
+// (src:"sapress"). Guardrails: only classic fractional denominators, never
+// overwrite a real tote price, and the odds must sit within 90 chars of the name.
+function fracToDec(a, b) { return b > 0 ? a / b + 1 : 0; }
+function saPrices(pack, stats) {
+  const DENOMS = { 1: 1, 2: 1, 4: 1, 5: 1, 8: 1, 10: 1 };
+  const saMeets = (pack.meets || []).filter((m) => m.region === "SA" && (m.raceMap || []).length);
+  for (const m of saMeets) {
+    const texts = (m.sources || []).filter((s) => s.ok && !s.ssotFail && s.text).map((s) => String(s.text));
+    if (!texts.length) continue;
+    const blob = texts.join("\n").toUpperCase();
+    for (const race of m.raceMap || []) {
+      let hit = false;
+      for (const h of race.runners || []) {
+        if (h.price) continue; // never downgrade a real price
+        const nm = String(h.name || "").toUpperCase();
+        if (!nm) continue;
+        let i = -1;
+        while ((i = blob.indexOf(nm, i + 1)) !== -1) {
+          const win = blob.slice(i + nm.length, i + nm.length + 90);
+          const mt = /(\d{1,2})\s*[-\/]\s*(\d{1,2})/.exec(win);
+          if (mt) {
+            const a = parseInt(mt[1], 10), b = parseInt(mt[2], 10);
+            if (DENOMS[b] && a >= 1 && a <= 40 && !(a <= 31 && b > 10)) {
+              h.price = { win: Math.round(fracToDec(a, b) * 100) / 100, pla: null, ref: null, src: "sapress" };
+              stats.pricedRunners++;
+              hit = true;
+              break;
+            }
+          }
+        }
+      }
+      if (hit) stats.matchedRaces++;
+    }
+  }
+}
+
 async function stagePrices(pack) {
   const stats = { at: new Date().toISOString(), matchedRaces: 0, pricedRunners: 0, misses: [], errors: [] };
   try { await tabPrices(pack, stats); } catch (e) { stats.errors.push("tab: " + String(e.message || e)); }
   try { await pmuPrices(pack, stats); } catch (e) { stats.errors.push("pmu: " + String(e.message || e)); }
+  try { saPrices(pack, stats); } catch (e) { stats.errors.push("sapress: " + String(e.message || e)); }
   stats.misses = stats.misses.slice(0, 60);
   pack.prices = stats;
   return stats;
@@ -921,6 +966,134 @@ module.exports = async (req, res) => {
         deselected: pack.deselected,
         sourceHealth: pack.sourceHealth || [],
       });
+    }
+
+    if (action === "results") {
+      // THE RESULTS WIRE (enhancement #1, 19/07/2026). For priced regions the same
+      // endpoints that served morning odds serve final arrival orders and declared
+      // dividends after the race. SGPools COMMINGLES into host totes for most
+      // foreign meets, so host dividends are, to rounding and currency policy, the
+      // dividends. This action PROPOSES settlements only — positions and results
+      // are gospel, payouts are host-tote ESTIMATES the user confirms against the
+      // SGPools slip. The commit still goes through stewards' settle with all its
+      // guards. The wire taps; the stewards sign.
+      const dateParam = req.query.date ? String(req.query.date) : phuketToday();
+      const pack = await loadPack(dateParam);
+      if (!pack) return res.status(409).json({ error: "No pack for " + dateParam });
+      const [logRaw] = await redis([["GET", "stw:betlog"]]);
+      if (!logRaw) return res.status(404).json({ error: "Vault not seeded" });
+      const log = JSON.parse(logRaw);
+      const rnum = (v) => { const x = parseFloat(v); return isFinite(x) ? x : 0; };
+      const rr2 = (v) => Math.round(rnum(v) * 100) / 100;
+      const VENUE_CODE = {
+        "South Africa": "SA", "France": "FR", "United Kingdom": "UK",
+        "Australia": "AU", "Australia (Melbourne)": "MB", "Australia (Perth)": "PE",
+        "Korea": "SK", "Japan": "JP", "Turkey": "TK", "Malaysia (Selangor)": "MY",
+        "Malaysia": "MY", "Germany": "DE", "Hong Kong": "HK", "Singapore": "SG",
+      };
+      const raceIx = {};
+      (pack.meets || []).forEach((m) => {
+        const code = VENUE_CODE[m.venue] || m.venue;
+        (m.raceMap || []).forEach((r) => { raceIx[code + "|" + r.raceNo] = r; });
+      });
+      const pend = log.filter((r) =>
+        String(r.date) === dateParam &&
+        (String(r.ledger || "Model").trim() === "Model") &&
+        ["", "pending"].includes(String(r.result || "").trim().toLowerCase()));
+      const placesFor = (fs) => (fs >= 8 ? 3 : fs >= 5 ? 2 : 1);
+      const d = dateParam.split("/");
+      const tabDate = d[2] + "-" + d[1] + "-" + d[0];
+      const pmuBase = "https://online.turfinfo.api.pmu.fr/rest/client/61/programme/" + d[0] + d[1] + d[2];
+      const cache = {};
+      async function tabFinal(venue, n) {
+        const k = "t|" + venue + "|" + n;
+        if (cache[k] !== undefined) return cache[k];
+        const u = "https://api.beta.tab.com.au/v1/tab-info-service/racing/dates/" + tabDate +
+          "/meetings/R/" + encodeURIComponent(venue) + "/races/" + n + "?jurisdiction=NSW";
+        const r = await fetchWithTimeout(u, 12000, true, { ua: "iphone" });
+        if (!r.ok) return (cache[k] = null);
+        const b = r.body || {};
+        const pos = {};
+        const resArr = b.results || b.raceResults || [];
+        if (Array.isArray(resArr))
+          resArr.forEach((slot, i) =>
+            (Array.isArray(slot) ? slot : [slot]).forEach((num) => { if (num != null) pos[num] = i + 1; }));
+        const winD = {}, plaD = {};
+        (b.dividends || b.poolDividends || []).forEach((e) => {
+          const t = String(e.wageringProduct || e.poolType || e.divType || e.betType || "").toUpperCase();
+          const entries = e.poolDividends || e.dividends || [e];
+          entries.forEach((x) => {
+            const amt = rnum(x.amount != null ? x.amount : x.dividend);
+            const sels = [].concat(x.selections != null ? x.selections : (x.numbers != null ? x.numbers : (x.number != null ? [x.number] : [])));
+            if (!amt || !sels.length) return;
+            sels.forEach((s) => {
+              const numOnly = parseInt(String(s).replace(/[^0-9]/g, ""), 10);
+              if (!numOnly) return;
+              if (t.indexOf("WIN") !== -1) winD[numOnly] = amt;
+              else if (t.indexOf("PLACE") !== -1) plaD[numOnly] = amt;
+            });
+          });
+        });
+        return (cache[k] = { done: Object.keys(pos).length > 0, pos, win: winD, pla: plaD, raw: !Object.keys(winD).length && !Object.keys(plaD).length ? "no dividends parsed" : null });
+      }
+      async function pmuFinal(R, C) {
+        const k = "p|" + R + "|" + C;
+        if (cache[k] !== undefined) return cache[k];
+        const pr = await fetchWithTimeout(pmuBase + "/R" + R + "/C" + C + "/participants", 12000, true);
+        const pos = {};
+        if (pr.ok) (pr.body.participants || []).forEach((p) => { if (p.ordreArrivee) pos[p.numPmu] = p.ordreArrivee; });
+        const rd = await fetchWithTimeout(pmuBase + "/R" + R + "/C" + C + "/rapports-definitifs", 12000, true);
+        const winD = {}, plaD = {};
+        if (rd.ok) {
+          const arr = Array.isArray(rd.body) ? rd.body : [rd.body];
+          arr.forEach((t) => {
+            const type = String(t.typePari || "");
+            (t.rapports || []).forEach((x) => {
+              const numOnly = parseInt(String(x.combinaison).replace(/[^0-9]/g, ""), 10);
+              const amt = rnum(x.dividendePourUnEuro != null ? x.dividendePourUnEuro : x.dividende) / 100;
+              if (!numOnly || !amt) return;
+              if (type === "SIMPLE_GAGNANT") winD[numOnly] = rr2(amt);
+              else if (type === "SIMPLE_PLACE") plaD[numOnly] = rr2(amt);
+            });
+          });
+        }
+        return (cache[k] = { done: Object.keys(pos).length > 0, pos, win: winD, pla: plaD });
+      }
+      const settlements = [], skipped = [];
+      for (const leg of pend) {
+        const race = raceIx[leg.meet + "|" + leg.raceNo];
+        if (!race) { skipped.push({ leg: leg.horseName, why: "no pack race for " + leg.meet + " R" + leg.raceNo }); continue; }
+        const ref = race.priceRef;
+        if (!ref) { skipped.push({ leg: leg.horseName, why: "race was never price-matched (unpriced region or no sweep)" }); continue; }
+        const runner = (race.runners || []).find((h) => String(h.no) === String(leg.horseNo));
+        const srcNo = runner && runner.price && runner.price.srcNo;
+        if (srcNo == null) { skipped.push({ leg: leg.horseName, why: "runner not source-mapped" }); continue; }
+        const fin = ref.src === "tab" ? await tabFinal(ref.venue, ref.srcRaceNo) : await pmuFinal(ref.R, ref.C);
+        if (!fin || !fin.done) { skipped.push({ leg: leg.horseName, why: "race not resulted yet" }); continue; }
+        const posN = fin.pos[srcNo] || null;
+        const fs = race.fieldSize || (race.runners || []).length || 0;
+        const places = placesFor(fs);
+        let result, div = null;
+        if (posN === 1) { result = leg.betType === "WIN" ? "Win" : "Place"; div = leg.betType === "WIN" ? fin.win[srcNo] : fin.pla[srcNo]; }
+        else if (posN && posN <= places && leg.betType === "PLA") { result = "Place"; div = fin.pla[srcNo]; }
+        else result = "Lose";
+        // favourite = shortest pre-race win price in this race; its place div if it placed
+        let favDiv = null;
+        let fav = null;
+        (race.runners || []).forEach((h) => {
+          if (h.price && h.price.win != null && (!fav || h.price.win < fav.price.win)) fav = h;
+        });
+        if (fav && fav.price.srcNo != null) favDiv = fin.pla[fav.price.srcNo] != null ? fin.pla[fav.price.srcNo] : null;
+        settlements.push({
+          xlRow: leg.xlRow, meet: leg.meet, raceNo: leg.raceNo, horseNo: leg.horseNo,
+          horseName: leg.horseName, betType: leg.betType, src: ref.src,
+          result, position: posN, legDiv: div != null ? rr2(div) : null,
+          favDiv: favDiv != null ? rr2(favDiv) : null, fieldSize: fs || null,
+          payout: result === "Lose" ? 0 : (div != null ? rr2(rnum(leg.stake) * div) : null),
+          note: "host-tote estimate \u2014 confirm vs SGPools slip",
+        });
+      }
+      return res.status(200).json({ ok: true, date: dateParam, pending: pend.length, settlements, skipped });
     }
 
     if (action === "prices") {
