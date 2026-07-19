@@ -54,8 +54,8 @@ export const CONFIG = {
 
 // ----------------------------------------------------------------- REDIS ----
 
-const R_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
-const R_TOK = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
+const R_URL = process.env.UPSTASH_REDIS_REST_URL;
+const R_TOK = process.env.UPSTASH_REDIS_REST_TOKEN;
 
 async function redis(cmd) {
   const res = await fetch(`${R_URL}/${cmd.map(encodeURIComponent).join("/")}`, {
@@ -72,8 +72,11 @@ const rRange = (k, n) => redis(["LRANGE", k, "0", String(n - 1)]).then((a) => (a
 
 const K = {
   prices: (s) => `forex:prices:${s}`,
+  candles: (s) => `forex:candles:${s}`,
   news: "forex:news",
   verdict: (s) => `forex:verdict:${s}`,
+  open: "forex:openVerdicts",      // JSON array of unsettled directional verdicts
+  ledger: "forex:shadowLedger",    // list of settled shadow outcomes
   journal: "forex:journal",
   executed: "forex:executedIds", // reserved for the hands (Phase 3+)
 };
@@ -171,6 +174,60 @@ export function validateVerdict(v, nowIso) {
   return { ok: errors.length === 0, errors };
 }
 
+export function candleTime(c) {
+  // Twelve Data intraday datetimes are "YYYY-MM-DD HH:MM:SS" in UTC.
+  return new Date(String(c.datetime).replace(" ", "T") + (String(c.datetime).endsWith("Z") ? "" : "Z"));
+}
+
+export function settleVerdict(v, candlesNewestFirst, nowIso) {
+  // Deterministic paper settlement of a directional verdict against H1 candles.
+  // Pessimistic by design: a candle touching both SL and TP scores as SL.
+  // Returns {status, entry?, exit?, r?, closedAt?} where status is one of:
+  //   NOT_TRIGGERED  entry never touched before expiresAt
+  //   CHASE_SKIP     first touching candle opened beyond maxChase (gap; hands refuse)
+  //   TP / SL        position resolved
+  //   OPEN           triggered, still running at the data edge
+  //   PENDING        not triggered yet, verdict not yet expired
+  const buy = v.direction === "BUY";
+  const trig = v.entryZone.trigger, chase = v.entryZone.maxChase;
+  const created = new Date(v.verdictId.slice(0, 24));
+  const expires = new Date(v.expiresAt);
+  const seq = candlesNewestFirst
+    .map((c) => ({ t: candleTime(c), o: +c.open, h: +c.high, l: +c.low }))
+    .filter((c) => c.t > created)
+    .sort((a, b) => a.t - b.t);
+
+  let entryIdx = -1;
+  for (let i = 0; i < seq.length; i++) {
+    const c = seq[i];
+    if (c.t > expires) break;
+    const touched = buy ? c.h >= trig : c.l <= trig;
+    if (touched) {
+      const gapped = buy ? c.o > chase : c.o < chase;
+      if (gapped) return { status: "CHASE_SKIP", closedAt: c.t.toISOString() };
+      entryIdx = i;
+      break;
+    }
+  }
+  if (entryIdx === -1) {
+    return new Date(nowIso) >= expires ? { status: "NOT_TRIGGERED", closedAt: v.expiresAt } : { status: "PENDING" };
+  }
+
+  const entry = trig;
+  const risk = Math.abs(entry - v.slPrice);
+  for (let i = entryIdx; i < seq.length; i++) {
+    const c = seq[i];
+    const hitSl = buy ? c.l <= v.slPrice : c.h >= v.slPrice;
+    const hitTp = buy ? c.h >= v.tpPrice : c.l <= v.tpPrice;
+    if (hitSl) return { status: "SL", entry, exit: v.slPrice, r: -1, closedAt: c.t.toISOString() };
+    if (hitTp) {
+      const r = +((Math.abs(v.tpPrice - entry)) / risk).toFixed(2);
+      return { status: "TP", entry, exit: v.tpPrice, r, closedAt: c.t.toISOString() };
+    }
+  }
+  return { status: "OPEN", entry };
+}
+
 export function forceFlat(symbol, nowIso, reason, sourcesReached) {
   return {
     verdictId: `${nowIso}-${symbol.toLowerCase()}`,
@@ -209,6 +266,7 @@ async function stagePrices() {
         distToLow: +(last - box.low).toFixed(6),
       };
       await rSet(K.prices(p.symbol), snap);
+      await rSet(K.candles(p.symbol), candles.slice(0, 60));
       out.ok.push(p.symbol);
     } catch (e) {
       out.failed.push({ symbol: p.symbol, error: String(e.message || e) });
@@ -281,7 +339,7 @@ UPCOMING EVENTS FOR ${pair.ccys.join("/")}: ${JSON.stringify(rel)}
 RECENT HEADLINES:\n${heads}
 
 Rules you must obey:
-- Hunt for the trade. You are an opportunistic breakout trader: when the box, momentum and news align even reasonably, COMMIT with a directional call and honest conviction. Do not demand perfection. FLAT is reserved for when the evidence genuinely argues against a breakout (dead liquidity, imminent binary event, contradictory signals), not for mere uncertainty.
+- FLAT is the default and the common answer. Only go directional if the range box plus news genuinely favour a breakout with follow-through.
 - riskPercent must be <= ${CONFIG.maxRiskPercent}; default ${CONFIG.defaultRiskPercent}.
 - All prices absolute. For BUY: slPrice < trigger < tpPrice, maxChase >= trigger. Reverse for SELL.
 - Anchor trigger to the box edge; anchor SL/TP sensibly to box size / ATR.
@@ -354,10 +412,44 @@ async function stageConverge() {
     }
 
     await rSet(K.verdict(pair.symbol), verdict);
+    if (verdict.direction !== "FLAT") {
+      const open = (await rGet(K.open)) || [];
+      open.push(verdict);
+      await rSet(K.open, open);
+    }
     await rPush(K.journal, { at: nowIso, symbol: pair.symbol, direction: verdict.direction, conviction: verdict.conviction, sources: `${sourcesReached.hit}/${sourcesReached.expected}`, rationale: verdict.rationale.slice(0, 240) });
     results.push({ symbol: pair.symbol, direction: verdict.direction, conviction: verdict.conviction });
   }
   return results;
+}
+
+// ------------------------------------------------------------ SETTLE STAGE ----
+// Scores every open directional verdict against the freshest candles. Pure
+// paper: this is the shadow ledger that lets the week be judged on settled Rs.
+
+async function stageSettle() {
+  const nowIso = new Date().toISOString();
+  const open = (await rGet(K.open)) || [];
+  if (!open.length) return { settled: 0, stillOpen: 0 };
+  const remaining = [];
+  let settled = 0;
+  for (const v of open) {
+    const candles = (await rGet(K.candles(v.symbol))) || [];
+    const ruling = settleVerdict(v, candles, nowIso);
+    if (ruling.status === "PENDING" || ruling.status === "OPEN") {
+      remaining.push(v);
+      continue;
+    }
+    settled++;
+    await rPush(K.ledger, {
+      at: nowIso, verdictId: v.verdictId, symbol: v.symbol, direction: v.direction,
+      conviction: v.conviction, status: ruling.status,
+      entry: ruling.entry ?? null, exit: ruling.exit ?? null, r: ruling.r ?? null,
+      closedAt: ruling.closedAt ?? null,
+    });
+  }
+  await rSet(K.open, remaining);
+  return { settled, stillOpen: remaining.length };
 }
 
 // ---------------------------------------------------------------- HANDLER ----
@@ -392,8 +484,34 @@ export default async function handler(req, res) {
       const out = {};
       if (stage === "prices" || stage === "all") out.prices = await stagePrices();
       if (stage === "news" || stage === "all") out.news = await stageNews();
+      if (stage === "settle" || stage === "all") out.settle = await stageSettle();
       if (stage === "converge" || stage === "all") out.converge = await stageConverge();
       return res.status(200).json({ ok: true, stage, out });
+    }
+
+    if (action === "ledger") {
+      const n = Math.min(parseInt(q.n || "100", 10) || 100, 300);
+      return res.status(200).json({ ok: true, open: (await rGet(K.open)) || [], ledger: await rRange(K.ledger, n) });
+    }
+
+    if (action === "scorecard") {
+      const rows = await rRange(K.ledger, 300);
+      const card = { settled: rows.length, tp: 0, sl: 0, notTriggered: 0, chaseSkip: 0, sumR: 0, byPair: {} };
+      for (const r of rows) {
+        if (r.status === "TP") { card.tp++; card.sumR += r.r || 0; }
+        else if (r.status === "SL") { card.sl++; card.sumR += r.r || 0; }
+        else if (r.status === "NOT_TRIGGERED") card.notTriggered++;
+        else if (r.status === "CHASE_SKIP") card.chaseSkip++;
+        const p = card.byPair[r.symbol] = card.byPair[r.symbol] || { tp: 0, sl: 0, other: 0, sumR: 0 };
+        if (r.status === "TP") { p.tp++; p.sumR += r.r || 0; }
+        else if (r.status === "SL") { p.sl++; p.sumR += r.r || 0; }
+        else p.other++;
+      }
+      const resolved = card.tp + card.sl;
+      card.hitRate = resolved ? +(card.tp / resolved * 100).toFixed(1) : null;
+      card.avgR = resolved ? +(card.sumR / resolved).toFixed(2) : null;
+      card.sumR = +card.sumR.toFixed(2);
+      return res.status(200).json({ ok: true, scorecard: card });
     }
 
     if (action === "verdicts") {

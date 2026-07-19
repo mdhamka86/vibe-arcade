@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   CONFIG, computeBox, computeAtr, convergenceFloorOk, isStale,
-  redFolderImminent, validateVerdict, forceFlat,
+  redFolderImminent, validateVerdict, forceFlat, settleVerdict, candleTime,
 } from "../api/forex-brain.js";
 
 // ------------------------------------------------------- golden fixtures ----
@@ -165,4 +165,114 @@ test("total source failure degrades to a valid FLAT, never a directional call", 
   const r = validateVerdict(v, NOW);
   assert.equal(r.ok, true);
   assert.equal(v.direction, "FLAT");
+});
+
+// ------------------------------------------------- shadow settler rulings ----
+// Six rulings, each with a fixture: TP, SL, NOT_TRIGGERED, CHASE_SKIP, OPEN,
+// PENDING. Plus the pessimistic both-in-one-candle rule and the guarantee that
+// pre-verdict candles cannot influence settlement.
+
+function shadowBuy(overrides = {}) {
+  return {
+    verdictId: "2026-07-20T08:00:00.000Z-eurusd",
+    symbol: "EURUSD", direction: "BUY", conviction: 70,
+    entryZone: { trigger: 1.0900, maxChase: 1.0915 },
+    slPrice: 1.0850, tpPrice: 1.1000,
+    expiresAt: "2026-07-20T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+// Newest-first candles, Twelve Data string format. Helper builds them oldest-in
+// so fixtures read chronologically, then reverses to match the API shape.
+function candlesFrom(rows) {
+  return rows.map(([hh, o, h, l]) => ({
+    datetime: `2026-07-20 ${hh}:00:00`, open: String(o), high: String(h), low: String(l), close: String(o),
+  })).reverse();
+}
+
+test("candleTime parses Twelve Data UTC datetimes", () => {
+  const t = candleTime({ datetime: "2026-07-20 09:00:00" });
+  assert.equal(t.toISOString(), "2026-07-20T09:00:00.000Z");
+});
+
+test("settler: clean BUY runs to TP with correct R", () => {
+  const candles = candlesFrom([
+    ["09", 1.0890, 1.0902, 1.0885],   // touches trigger, opens inside chase
+    ["10", 1.0905, 1.0960, 1.0900],
+    ["11", 1.0960, 1.1005, 1.0955],   // TP 1.1000 hit
+  ]);
+  const r = settleVerdict(shadowBuy(), candles, "2026-07-20T12:30:00Z");
+  assert.equal(r.status, "TP");
+  assert.equal(r.entry, 1.09);
+  assert.equal(r.r, 2);               // 100 points reward / 50 points risk
+});
+
+test("settler: BUY stopped out scores exactly -1R", () => {
+  const candles = candlesFrom([
+    ["09", 1.0890, 1.0902, 1.0885],
+    ["10", 1.0898, 1.0899, 1.0845],   // SL 1.0850 hit
+  ]);
+  const r = settleVerdict(shadowBuy(), candles, "2026-07-20T12:30:00Z");
+  assert.equal(r.status, "SL");
+  assert.equal(r.r, -1);
+});
+
+test("settler: candle touching both SL and TP rules SL (pessimistic)", () => {
+  const candles = candlesFrom([
+    ["09", 1.0890, 1.1005, 1.0845],   // monster candle spans both
+  ]);
+  const r = settleVerdict(shadowBuy(), candles, "2026-07-20T12:30:00Z");
+  assert.equal(r.status, "SL");
+});
+
+test("settler: never triggered and expired rules NOT_TRIGGERED; unexpired rules PENDING", () => {
+  const quiet = candlesFrom([
+    ["09", 1.0880, 1.0895, 1.0870],
+    ["10", 1.0885, 1.0898, 1.0875],
+  ]);
+  assert.equal(settleVerdict(shadowBuy(), quiet, "2026-07-20T13:00:00Z").status, "NOT_TRIGGERED");
+  assert.equal(settleVerdict(shadowBuy(), quiet, "2026-07-20T10:30:00Z").status, "PENDING");
+});
+
+test("settler: gap open beyond maxChase rules CHASE_SKIP", () => {
+  const candles = candlesFrom([
+    ["09", 1.0930, 1.0970, 1.0925],   // first touch, but opened past 1.0915
+  ]);
+  const r = settleVerdict(shadowBuy(), candles, "2026-07-20T12:30:00Z");
+  assert.equal(r.status, "CHASE_SKIP");
+});
+
+test("settler: triggered with data running out rules OPEN", () => {
+  const candles = candlesFrom([
+    ["09", 1.0890, 1.0902, 1.0885],
+    ["10", 1.0905, 1.0930, 1.0895],   // in trade, neither exit hit
+  ]);
+  const r = settleVerdict(shadowBuy(), candles, "2026-07-20T12:30:00Z");
+  assert.equal(r.status, "OPEN");
+  assert.equal(r.entry, 1.09);
+});
+
+test("settler: SELL geometry settles in mirror", () => {
+  const v = shadowBuy({
+    verdictId: "2026-07-20T08:00:00.000Z-usdchf", symbol: "USDCHF", direction: "SELL",
+    entryZone: { trigger: 1.0850, maxChase: 1.0835 },
+    slPrice: 1.0900, tpPrice: 1.0750,
+  });
+  const candles = candlesFrom([
+    ["09", 1.0860, 1.0870, 1.0848],   // touches trigger from above
+    ["10", 1.0840, 1.0845, 1.0745],   // TP 1.0750 hit
+  ]);
+  const r = settleVerdict(v, candles, "2026-07-20T12:30:00Z");
+  assert.equal(r.status, "TP");
+  assert.equal(r.r, 2);
+});
+
+test("settler: candles printed before the verdict existed cannot settle it", () => {
+  const candles = candlesFrom([
+    ["06", 1.0890, 1.1010, 1.0840],   // pre-verdict monster: would hit everything
+    ["09", 1.0880, 1.0895, 1.0870],   // post-verdict: quiet, no trigger
+  ]);
+  const r = settleVerdict(shadowBuy(), candles, "2026-07-20T10:30:00Z");
+  assert.equal(r.status, "PENDING");
 });
