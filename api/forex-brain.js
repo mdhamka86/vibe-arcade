@@ -54,8 +54,8 @@ export const CONFIG = {
 
 // ----------------------------------------------------------------- REDIS ----
 
-const R_URL = process.env.UPSTASH_REDIS_REST_URL;
-const R_TOK = process.env.UPSTASH_REDIS_REST_TOKEN;
+const R_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
+const R_TOK = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
 
 async function redis(cmd) {
   const res = await fetch(`${R_URL}/${cmd.map(encodeURIComponent).join("/")}`, {
