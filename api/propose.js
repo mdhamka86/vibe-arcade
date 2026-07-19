@@ -553,6 +553,31 @@ module.exports = async (req, res) => {
         const a = agg(byConf[c]);
         return c + ": " + a.n + " legs, " + a.roi + "% ROI";
       });
+      // PHASE 5.2 (OVERHAUL.md): ROI by price band and field size. These read the
+      // legDiv/fieldSize fields the Phase 5.1 settle upgrade captures, so they render
+      // "(none recorded yet)" until settled legs with price data accumulate — that is
+      // expected, not broken. This is how the model learns "PLA under $1.40 never
+      // pays" from its own ledger instead of a hard-coded rule.
+      const bandOf = (b) => {
+        const dv = parseFloat(b.legDiv);
+        if (!isFinite(dv) || dv <= 0) return null;
+        return dv < 1.4 ? "<$1.40" : dv < 1.8 ? "$1.40-1.79" : dv < 2.5 ? "$1.80-2.49" : "$2.50+";
+      };
+      const byBand = {};
+      recent.forEach((b) => { const k = bandOf(b); if (k) (byBand[k] = byBand[k] || []).push(b); });
+      const bandLines = ["<$1.40", "$1.40-1.79", "$1.80-2.49", "$2.50+"]
+        .filter((k) => byBand[k])
+        .map((k) => { const a = agg(byBand[k]); return k + ": " + a.n + " legs, " + a.roi + "% ROI"; });
+      const fsOf = (b) => {
+        const f = parseInt(b.fieldSize, 10);
+        if (!(f >= 2)) return null;
+        return f <= 8 ? "<=8 runners" : f <= 11 ? "9-11 runners" : "12+ runners";
+      };
+      const byFs = {};
+      recent.forEach((b) => { const k = fsOf(b); if (k) (byFs[k] = byFs[k] || []).push(b); });
+      const fsLines = ["<=8 runners", "9-11 runners", "12+ runners"]
+        .filter((k) => byFs[k])
+        .map((k) => { const a = agg(byFs[k]); return "field " + k + ": " + a.n + " legs, " + a.roi + "% ROI"; });
 
       // current promoted laws (candidates for repeal) and lesson themes (candidates for promotion)
       const promoted = (ch.laws || []).filter((l) => l.custom && !l.repealed);
@@ -600,6 +625,8 @@ module.exports = async (req, res) => {
         "\nWIN book: " + JSON.stringify(winA) +
         "\nPLA book: " + JSON.stringify(plaA) +
         "\nBy confidence:\n  " + (confLines.join("\n  ") || "(none)") +
+        "\nBy price band (legDiv on settled legs):\n  " + (bandLines.join("\n  ") || "(none recorded yet \u2014 price capture began 19/07/2026)") +
+        "\nBy field size:\n  " + (fsLines.join("\n  ") || "(none recorded yet)") +
         "\n\nReview whether the Charter should evolve. Respond with ONLY minified JSON, no fences, exactly:\n" +
         '{"summary":"1-2 sentence read of whether the Charter needs to evolve right now",' +
         '"promotions":[{"title":"short law title","rule":"the full binding rule","why":"the multi-day evidence justifying elevation to law","fromLedgerSeq":0}],' +
@@ -740,9 +767,14 @@ module.exports = async (req, res) => {
         "4. Medium and Low-Med confidence legs are vetoed outright. Propose only legs you would honestly rate Medium-High or High \u2014 and remember the label carries NO privileges (flat stakes, no volume rights); it is a calibration gauge being audited for label creep (share jumped 36%\u219260% and inverted to -17.6%).\n" +
         "5. PER-MEET LEG CAPS tied to verified external source count: 0 sources = 0 legs, 1 source = 2 legs max, 2+ sources = 4 legs max. Order each meet's legs BEST FIRST \u2014 the cap keeps the first N and vetoes the rest.\n" +
         "A short book is the honest outcome. Every vetoed leg is logged and shown; proposing legs that will be vetoed is worse than not proposing them.\n" +
+        "\nPHASE 4 CONVERGENCE INVERSION (OVERHAUL.md):\n" +
+        "Structure every race read as ANCHOR vs VALUE TIER. The consensus #1 across sources is the MARKET ANCHOR: it tells you where the crowd's money is crushed, and it is NOT the default bet \u2014 in a parimutuel pool the most agreed-upon horse is by construction the most overbet one. The bettable tier is the horse(s) ranked 2nd-3rd by your QUALITY sources. Weight source QUALITY, not count: a named analyst's reasoned case outweighs three syndicated tips repeating each other, which are ONE opinion wearing three hats.\n" +
+        "Legs must come from the value tier. The anchor may be proposed WIN-ONLY, and only with an explicit case in the reason for why the market still underestimates it. Anchor PLA legs are vetoed in code.\n" +
+        "Declare your read per race in raceReads, and tag every leg with tier: anchor | value | lone.\n" +
         "\n\nNow produce the betlist. Respond with ONLY minified JSON, no markdown fences, exactly:\n" +
         '{"dayShape":"2-3 sentence summary: meets in play, WIN vs PLA lean, any Trio, overall stance",' +
-        '"legs":[{"meet":"","region":"","raceNo":0,"horseNo":0,"horseName":"","betType":"WIN|PLA|TRIO","stake":10,"confidence":"High|Medium-High|Medium|Low-Med","reason":"convergence read: which sources agree and why","consensusTop":false,"unconfirmed":false}],' +
+        '"legs":[{"meet":"","region":"","raceNo":0,"horseNo":0,"horseName":"","betType":"WIN|PLA|TRIO","stake":10,"confidence":"High|Medium-High|Medium|Low-Med","reason":"convergence read: which sources agree and why","tier":"anchor|value|lone","consensusTop":false,"unconfirmed":false}],' +
+        '"raceReads":[{"meet":"","raceNo":0,"anchor":"consensus #1 horse name","valueTier":["horse names ranked 2nd-3rd by quality sources"],"note":"one-line read of the race shape"}],' +
         '"trioNote":"if a Trio is proposed, the frame and why; else empty",' +
         '"sourcesChecked":{"MeetName":["source ids used"]},' +
         '"skipped":[{"meet":"","why":"why no or few legs here"}]}';
@@ -827,7 +859,10 @@ module.exports = async (req, res) => {
           betType: String(raw.betType || "").trim().toUpperCase(),
           confidence: String(raw.confidence || "").trim(),
           reason: String(raw.reason || "").trim(),
-          consensusTop: !!raw.consensusTop,
+          tier: String(raw.tier || "").trim().toLowerCase(),
+          // Phase 4 normalisation: a leg tagged tier=anchor IS the consensus pick,
+          // whatever the model set consensusTop to. One signal, no contradictions.
+          consensusTop: !!raw.consensusTop || String(raw.tier || "").trim().toLowerCase() === "anchor",
           unconfirmed: !!raw.unconfirmed,
         };
         // LAW: flat stake, enforced regardless of what the model said
@@ -1040,6 +1075,7 @@ module.exports = async (req, res) => {
         legs: gated,
         trioNote: parsed.trioNote || "",
         sourcesChecked: parsed.sourcesChecked || {},
+        raceReads: parsed.raceReads || [],
         skipped: parsed.skipped || [],
         corrections,
         vetoes,
