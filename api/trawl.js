@@ -145,6 +145,15 @@ function regionOf(venue) {
   // whole-word code test: "SA", "(SA)", "[SGP SA3]", "SA "
   const code = (c) => new RegExp("(^|[^a-z])" + c + "([^a-z]|$)", "i").test(v);
 
+  // COUNTRY LABEL WINS FIRST. SGPools meet labels are coupon containers, not venues
+  // ("Australia (Perth)" held Grafton + Tasmania on 19/07/2026), and several course
+  // names are dual-hemisphere (Perth, Newcastle, Sandown, Ascot, Wellington). An
+  // explicit country word in the label must beat every course-name heuristic below,
+  // otherwise "Australia (Perth)" resolves to UK via Perth, Scotland and all pundit
+  // sources get withheld as wrong-meeting.
+  if (/\baustralia\b|\bnew zealand\b/.test(v)) return "AU";
+  if (/united kingdom|\bireland\b|\bengland\b|\bscotland\b|\bwales\b/.test(v)) return "UK";
+
   // --- South Africa: country, code, and every course actually bet
   if (v.includes("south africa") || code("sa") ||
       /greyville|scottsville|durbanville|kenilworth|turffontein|fairview|vaal|hollywoodbets/.test(v)) return "SA";
