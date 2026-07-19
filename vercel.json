@@ -1,5 +1,8 @@
 {
   "outputDirectory": "public",
+  "regions": [
+    "syd1"
+  ],
   "crons": [
     {
       "path": "/api/trawl?action=run&stage=all",
