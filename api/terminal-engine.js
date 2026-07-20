@@ -416,17 +416,24 @@ function bookView(book) {
   return {
     ...book,
     positions: (book.positions || []).map((p) => {
-      const base = p.ageResetAt || p.openedAt;
-      const d = daysHeld(base);
-      const isLongTerm = !!p.longTerm || /long/i.test(p.proposedHorizon || '');
-      // precise held duration matters for a zero-day desk: hours, not just whole days.
+    const isLongTerm = !!p.longTerm || /long/i.test(p.proposedHorizon || '');
+      // HELD DURATION IS A FACT: always from the true open time (openedAt, anchored to the
+      // MT5 platform open time). This NEVER resets on a click, a KEEP, or a long-term mark.
+      const trueHeldDays = daysHeld(p.openedAt);
       const hoursHeld = p.openedAt ? Math.max(0, (now - p.openedAt) / 3600e3) : null;
-      // is the open time anchored to the platform's own record, or only "since first seen"?
+      // REVIEW STALENESS IS A SEPARATE NAG CLOCK: days since the last KEEP review (or open).
+      // It drives ONLY the review-ladder flag (OK/NOTE/AMBER/RED) so a consciously-kept
+      // position stops nagging. It is NEVER shown to the user as "held X days".
+      const reviewDays = daysHeld(p.ageResetAt || p.openedAt);
       const openTimeReliable = !!(p.mt5OpenTs || p.openTimeKnown || p.ideaId);
       return {
         ...p,
-        daysHeld: daysHeld(p.openedAt), ageDays: d, ageFlag: isLongTerm ? 'OK' : ageFlag(d),
-        longTerm: isLongTerm, hoursHeld: hoursHeld != null ? +hoursHeld.toFixed(1) : null,
+        daysHeld: trueHeldDays,
+        ageDays: trueHeldDays,                                  // UI binds "held X days" to this
+        reviewDays,                                             // nag clock, ladder only
+        ageFlag: isLongTerm ? 'OK' : ageFlag(reviewDays),       // colour/flag from the nag clock
+        longTerm: isLongTerm,
+        hoursHeld: hoursHeld != null ? +hoursHeld.toFixed(1) : null,
         openTimeReliable,
       };
     }),
