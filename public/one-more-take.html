@@ -34,7 +34,7 @@ button{border:0}.hidden{display:none!important}
 .screen{animation:screenIn .28s ease-out}@keyframes screenIn{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
 .title-screen{min-height:calc(100vh - 24px);display:grid;place-items:center;position:relative;overflow:hidden;border-radius:22px;background:#0b141f;border:1px solid rgba(224,187,90,.14);box-shadow:var(--shadow)}
 .title-bg{position:absolute;inset:0}.title-bg:after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,rgba(8,12,19,.08),rgba(8,12,19,.78) 68%,#08111b)}
-.remote-wrap{position:relative;overflow:hidden;background:linear-gradient(135deg,#203148,#0a111b)}.remote-wrap img{width:100%;height:100%;object-fit:cover;display:block;position:relative;z-index:1}.remote-wrap .fallback{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 35%,#24364a,#0b121c 72%);color:rgba(224,187,90,.34)}
+.remote-wrap{position:relative;overflow:hidden;background:linear-gradient(135deg,#203148,#0a111b)}.remote-wrap img{width:100%;height:100%;object-fit:cover;display:block;position:relative;z-index:1}.remote-wrap .fallback{position:absolute;inset:0;z-index:0;pointer-events:none;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 50% 35%,#24364a,#0b121c 72%);color:rgba(224,187,90,.34)}
 .title-content{position:relative;z-index:2;text-align:center;width:min(560px,92%);padding:48px 22px 30px;display:flex;flex-direction:column;align-items:center;gap:14px}.studio-seal{width:78px;height:78px;border-radius:50%;margin:0;background:var(--gold);display:grid;place-items:center;color:#1e1506;box-shadow:0 0 0 8px rgba(224,187,90,.08)}
 .title-logo{font-family:var(--font-display);margin:0;display:flex;flex-direction:column;align-items:center;gap:8px;line-height:1}.title-logo .main{display:block;color:var(--gold);font-size:clamp(52px,10vw,84px);letter-spacing:.02em}.title-logo .sub{display:block;color:var(--ink);font-size:clamp(26px,5.2vw,42px);letter-spacing:.18em;padding-left:.18em}.tagline{font-family:var(--font-display);font-style:italic;color:#d8cfbf;font-size:clamp(17px,3.8vw,22px);line-height:1.25;max-width:420px;margin:0 auto}.menu{display:grid;gap:12px;width:min(360px,100%);margin:0 auto}.credit{font-size:12px;color:var(--muted);margin-top:4px;display:flex;align-items:center;gap:10px}
 .marquee{height:6px;width:min(320px,74vw);background:repeating-linear-gradient(90deg,var(--gold) 0 7px,transparent 7px 17px);opacity:.38}
@@ -68,7 +68,7 @@ button{border:0}.hidden{display:none!important}
 </head>
 <body><div id="root"></div>
 <script type="text/babel" data-type="module">
-const {useState,useEffect,useMemo,useRef} = React;
+const {useState,useEffect,useMemo,useRef,useReducer} = React;
 
 const IMG=(id,kind,urls,crop='50% 50%',fallback='set')=>({id,kind,provider:'multi-source',creator:'curated remote source',sourcePage:'https://unsplash.com',urls,crop,fallback});
 
@@ -191,10 +191,10 @@ function RemoteImage({asset,className='',style={},alt='',imgStyle={}}){
   const sources=asset?(asset.urls||(asset.url?[asset.url]:[])):[];
   const [index,setIndex]=useState(0);
   useEffect(()=>setIndex(0),[asset?.id]);
-  const src=sources[index];
+  const src=index<sources.length?sources[index]:null;
   return <div className={`remote-wrap ${className}`} style={style}>
-    <div className="fallback"><FallbackArt type={asset?.fallback}/></div>
-    {src&&<img key={src} src={src} alt={alt} referrerPolicy="no-referrer" loading="lazy" decoding="async" onError={()=>setIndex(i=>i+1)} style={{objectPosition:asset?.crop||'50% 50%',...imgStyle}}/>}
+    <div className="fallback" aria-hidden="true"><FallbackArt type={asset?.fallback}/></div>
+    {src&&<img key={src} src={src} alt={alt} referrerPolicy="no-referrer" loading="lazy" decoding="async" onError={()=>setIndex(i=>Math.min(i+1,sources.length))} style={{objectPosition:asset?.crop||'50% 50%',...imgStyle}}/>}
   </div>
 }
 function AssetCredit(){return null}
@@ -260,14 +260,362 @@ const POSTURES=[
 {id:'full',name:'Full Send',desc:'Spectacle ceiling. Injury, overrun and insurance risk.',variance:27,bonus:8}
 ];
 
-const SAVE_KEY='oneMoreTake_save_v1',BACKUP_KEY='oneMoreTake_save_v1_backup';
-const freshStudio=(name='Hammy Pictures')=>({saveVersion:1,studio:{name,cash:250000,reputation:12,trust:50,prestige:5,year:1,quarter:1},archive:[],current:null,sound:true,createdAt:new Date().toISOString()});
-function loadSave(){try{const s=JSON.parse(localStorage.getItem(SAVE_KEY)||'null');return s&&s.saveVersion===1&&s.studio?s:null}catch{return null}}
-function persist(s){try{const old=localStorage.getItem(SAVE_KEY);if(old)localStorage.setItem(BACKUP_KEY,old);localStorage.setItem(SAVE_KEY,JSON.stringify(s));return true}catch{return false}}
-function hashSeed(str){let h=2166136261;for(let i=0;i<str.length;i++){h^=str.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
-function seeded(seed,n){let x=(seed+n*2654435761)>>>0;x^=x<<13;x^=x>>>17;x^=x<<5;return (x>>>0)/4294967295}
+const OMT_ENGINE=(()=>{
+const SAVE_VERSION = 2;
+const BUILD_ID = '0.3-phase2';
+
+function clamp(n, a = 0, b = 100) {
+  return Math.max(a, Math.min(b, Number(n) || 0));
+}
+
+function hashSeed(str) {
+  let h = 2166136261;
+  const input = String(str ?? '');
+  for (let i = 0; i < input.length; i += 1) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function seeded(seed, n = 0) {
+  let x = ((Number(seed) || 0) + n * 2654435761) >>> 0;
+  x ^= x << 13;
+  x ^= x >>> 17;
+  x ^= x << 5;
+  return (x >>> 0) / 4294967295;
+}
+
+function createGameState(name = 'Hammy Pictures', now = new Date().toISOString()) {
+  const safeName = String(name || 'Hammy Pictures').trim().slice(0, 28) || 'Hammy Pictures';
+  return {
+    saveVersion: SAVE_VERSION,
+    build: BUILD_ID,
+    meta: { createdAt: now, updatedAt: now },
+    studio: {
+      name: safeName,
+      cash: 250000,
+      reputation: 12,
+      trust: 50,
+      prestige: 5,
+      year: 1,
+      quarter: 1,
+    },
+    archive: [],
+    current: null,
+    franchises: {},
+    history: [],
+    rngSeed: hashSeed(`${safeName}|${now}`),
+    settings: { sound: true },
+    sound: true,
+  };
+}
+
+function createProject(script, game, nowMs = Date.now()) {
+  if (!script?.id) throw new Error('createProject requires a script');
+  const year = game?.studio?.year || 1;
+  const quarter = game?.studio?.quarter || 1;
+  const baseSeed = game?.rngSeed || hashSeed(game?.studio?.name || 'studio');
+  const ordinal = Array.isArray(game?.history) ? game.history.length : 0;
+  const seed = hashSeed(`${baseSeed}|${script.id}|${year}|${quarter}|${ordinal}`);
+  return {
+    projectId: `film-${year}q${quarter}-${script.id}-${seed.toString(36)}`,
+    seed,
+    status: 'DEVELOPMENT',
+    scriptId: script.id,
+    title: script.title,
+    cast: { leadId: null, supportId: null, directorId: null },
+    budget: {
+      levels: { cast: 2, sets: 2, stunts: 2, effects: 2, post: 2 },
+      approved: Number(script.base) || 0,
+    },
+    posture: 'balanced',
+    sceneIndex: 0,
+    scenes: [],
+    incidents: [],
+    relationshipsChanged: [],
+    injuries: [],
+    spend: 0,
+    postBonus: 0,
+    createdAt: new Date(nowMs).toISOString(),
+  };
+}
+
+function ensureStudio(studio, fallbackName = 'Hammy Pictures') {
+  return {
+    name: String(studio?.name || fallbackName).slice(0, 28),
+    cash: Number.isFinite(Number(studio?.cash)) ? Number(studio.cash) : 250000,
+    reputation: clamp(studio?.reputation ?? 12),
+    trust: clamp(studio?.trust ?? 50),
+    prestige: clamp(studio?.prestige ?? 5),
+    year: Math.max(1, Math.floor(Number(studio?.year) || 1)),
+    quarter: clamp(Math.floor(Number(studio?.quarter) || 1), 1, 4),
+  };
+}
+
+function normalizeProject(project) {
+  if (!project || typeof project !== 'object') return null;
+  return {
+    ...project,
+    projectId: String(project.projectId || `film-migrated-${hashSeed(JSON.stringify(project))}`),
+    seed: Number(project.seed) >>> 0,
+    status: String(project.status || 'DEVELOPMENT'),
+    cast: {
+      leadId: project.cast?.leadId || null,
+      supportId: project.cast?.supportId || null,
+      directorId: project.cast?.directorId || null,
+    },
+    budget: {
+      ...project.budget,
+      levels: {
+        cast: clamp(project.budget?.levels?.cast ?? 2, 0, 4),
+        sets: clamp(project.budget?.levels?.sets ?? 2, 0, 4),
+        stunts: clamp(project.budget?.levels?.stunts ?? 2, 0, 4),
+        effects: clamp(project.budget?.levels?.effects ?? 2, 0, 4),
+        post: clamp(project.budget?.levels?.post ?? 2, 0, 4),
+      },
+      approved: Number(project.budget?.approved) || 0,
+    },
+    posture: project.posture || 'balanced',
+    sceneIndex: Math.max(0, Math.floor(Number(project.sceneIndex) || 0)),
+    scenes: Array.isArray(project.scenes) ? project.scenes : [],
+    incidents: Array.isArray(project.incidents) ? project.incidents : [],
+    relationshipsChanged: Array.isArray(project.relationshipsChanged) ? project.relationshipsChanged : [],
+    injuries: Array.isArray(project.injuries) ? project.injuries : [],
+    spend: Number(project.spend) || 0,
+    postBonus: Number(project.postBonus) || 0,
+  };
+}
+
+function migrateSave(raw, now = new Date().toISOString()) {
+  if (!raw || typeof raw !== 'object') return null;
+  if (raw.saveVersion === SAVE_VERSION) {
+    return {
+      ...createGameState(raw.studio?.name || 'Hammy Pictures', raw.meta?.createdAt || raw.createdAt || now),
+      ...raw,
+      saveVersion: SAVE_VERSION,
+      build: BUILD_ID,
+      meta: {
+        createdAt: raw.meta?.createdAt || raw.createdAt || now,
+        updatedAt: now,
+      },
+      studio: ensureStudio(raw.studio),
+      archive: Array.isArray(raw.archive) ? raw.archive : [],
+      current: normalizeProject(raw.current),
+      franchises: raw.franchises && typeof raw.franchises === 'object' ? raw.franchises : {},
+      history: Array.isArray(raw.history) ? raw.history : [],
+      rngSeed: Number(raw.rngSeed) >>> 0 || hashSeed(`${raw.studio?.name || 'studio'}|${raw.createdAt || now}`),
+      settings: { sound: raw.settings?.sound ?? raw.sound ?? true },
+      sound: raw.settings?.sound ?? raw.sound ?? true,
+    };
+  }
+  if (raw.saveVersion === 1 && raw.studio) {
+    return {
+      saveVersion: SAVE_VERSION,
+      build: BUILD_ID,
+      meta: { createdAt: raw.createdAt || now, updatedAt: now, migratedFrom: 1 },
+      studio: ensureStudio(raw.studio),
+      archive: Array.isArray(raw.archive) ? raw.archive : [],
+      current: normalizeProject(raw.current),
+      franchises: {},
+      history: [{ type: 'SAVE_MIGRATED', from: 1, at: now }],
+      rngSeed: hashSeed(`${raw.studio.name}|${raw.createdAt || now}`),
+      settings: { sound: raw.sound !== false },
+      sound: raw.sound !== false,
+    };
+  }
+  return null;
+}
+
+function validateSave(raw) {
+  const errors = [];
+  if (!raw || typeof raw !== 'object') errors.push('Save must be an object');
+  if (raw?.saveVersion !== SAVE_VERSION) errors.push(`Expected saveVersion ${SAVE_VERSION}`);
+  if (!raw?.studio || typeof raw.studio !== 'object') errors.push('Missing studio');
+  if (!raw?.studio?.name || typeof raw.studio.name !== 'string') errors.push('Missing studio name');
+  if (!Number.isFinite(Number(raw?.studio?.cash))) errors.push('Invalid studio cash');
+  if (!Array.isArray(raw?.archive)) errors.push('Archive must be an array');
+  if (!Array.isArray(raw?.history)) errors.push('History must be an array');
+  if (raw?.current && !raw.current.projectId) errors.push('Current project missing projectId');
+  return { valid: errors.length === 0, errors };
+}
+
+function calculateChemistry(a, b, context = {}) {
+  if (!a || !b || a.id === b.id) return 0;
+  let score = 50;
+  const traitsA = new Set(a.traits || []);
+  const traitsB = new Set(b.traits || []);
+  if (traitsA.has('Chemistry Magnet') || traitsB.has('Chemistry Magnet')) score += 12;
+  if (traitsA.has('Quiet Professional') || traitsB.has('Quiet Professional')) score += 4;
+  if (traitsA.has('Improviser') && traitsB.has('Improviser')) score += 6;
+  if (traitsA.has('Hates Sequels') && context.sequelNumber > 0) score -= 8;
+  const reliabilityA = Number(a.skills?.Reliability ?? a.skills?.Control ?? 50);
+  const reliabilityB = Number(b.skills?.Reliability ?? b.skills?.Control ?? 50);
+  score -= Math.min(10, Math.abs(reliabilityA - reliabilityB) / 8);
+  const stableNoise = seeded(hashSeed([a.id, b.id].sort().join('|')), 3) * 12 - 6;
+  return Math.round(clamp(score + stableNoise));
+}
+
+function calculateSceneOutcome({ project, script, scene, choiceIndex, lead, support, director, budgetLevels = [0.65, 0.85, 1, 1.25, 1.55], postures = [] }) {
+  if (!project || !script || !scene || !lead || !support || !director) {
+    throw new Error('calculateSceneOutcome received incomplete context');
+  }
+  const posture = postures.find((p) => p.id === project.posture) || { variance: 10, bonus: 0 };
+  const relevant = (Number(lead.skills?.Acting || 0) + Number(support.skills?.Acting || 0) + Number(director.skills?.Vision || 0)) / 3;
+  const chemistry = calculateChemistry(lead, support, { genre: script.genre });
+  const levels = Object.values(project.budget?.levels || { cast: 2, sets: 2, stunts: 2, effects: 2, post: 2 });
+  const budgetAverage = levels.reduce((sum, level) => sum + Number(level || 0), 0) / Math.max(1, levels.length);
+  const choiceProfiles = [
+    { label: 'SAFE', bonus: 1, variance: 0.55 },
+    { label: 'RISK', bonus: 3, variance: 1.25 },
+    { label: 'CREATIVE', bonus: 2, variance: 0.9 },
+  ];
+  const profile = choiceProfiles[choiceIndex] || choiceProfiles[0];
+  const roll = (seeded(project.seed, project.sceneIndex * 17 + choiceIndex * 5 + 1) * 2 - 1) * posture.variance * profile.variance;
+  const quality = Math.round(clamp(
+    36
+      + relevant * 0.34
+      + (chemistry - 50) * 0.12
+      + budgetAverage * 4
+      + Number(posture.bonus || 0)
+      + profile.bonus
+      + roll
+      - Number(script.difficulty || 50) * 0.16,
+  ));
+  const band = quality >= 90 ? 'ICONIC' : quality >= 75 ? 'EXCEPTIONAL' : quality >= 60 ? 'STRONG' : quality >= 42 ? 'USABLE' : quality >= 24 ? 'ROUGH' : 'CATASTROPHIC';
+  const textPools = quality >= 60
+    ? ['The crew briefly remembers why they entered the industry.', 'The take lands. Even the boom operator looks emotional.', 'Somehow, this is cinema.']
+    : quality < 40
+      ? ['The set falls silent in the specific way that means money has died.', 'Nobody says “cut” because nobody wishes to accept responsibility.', 'The footage exists. That is the kindest available description.']
+      : ['It will cut together. Probably. With music.', 'Competent enough to survive the edit.', 'Nobody celebrates, but nobody calls legal.'];
+  const text = textPools[Math.floor(seeded(project.seed, 700 + project.sceneIndex * 11 + choiceIndex) * textPools.length)];
+  return {
+    choice: scene.choices?.[choiceIndex]?.[0] || `Choice ${choiceIndex + 1}`,
+    quality,
+    band,
+    text,
+    modifiers: {
+      relevantSkill: Math.round(relevant),
+      chemistry,
+      budgetAverage: Number(budgetAverage.toFixed(2)),
+      posture: project.posture,
+      choiceProfile: profile.label,
+      roll: Number(roll.toFixed(2)),
+    },
+  };
+}
+
+function calculateFilmScores(project, script, cast = {}) {
+  const scenes = Array.isArray(project?.scenes) ? project.scenes : [];
+  const average = scenes.length ? scenes.reduce((sum, s) => sum + Number(s.quality || 0), 0) / scenes.length : 0;
+  const spread = scenes.length ? Math.max(...scenes.map((s) => s.quality)) - Math.min(...scenes.map((s) => s.quality)) : 0;
+  const lead = cast.lead;
+  const support = cast.support;
+  const director = cast.director;
+  const chemistry = calculateChemistry(lead, support, { genre: script?.genre });
+  return {
+    average: Math.round(average),
+    performance: Math.round(clamp(average * 0.55 + (lead?.skills?.Acting || 50) * 0.25 + (support?.skills?.Acting || 50) * 0.12 + chemistry * 0.08)),
+    direction: Math.round(clamp(average * 0.6 + (director?.skills?.Vision || 50) * 0.25 + (director?.skills?.Control || 50) * 0.15)),
+    craft: Math.round(clamp(average + Number(project?.postBonus || 0) - spread * 0.08)),
+    spectacle: Math.round(clamp(average * 0.7 + (project?.budget?.levels?.stunts || 0) * 4 + (project?.budget?.levels?.effects || 0) * 4)),
+    coherence: Math.round(clamp(average + Number(project?.postBonus || 0) - spread * 0.35)),
+    originality: Math.round(clamp(average * 0.72 + Number(script?.prestige || 0) * 0.2 + (project?.posture === 'cook' ? 8 : project?.posture === 'full' ? 5 : 0))),
+    chemistry,
+  };
+}
+
+function calculateRelease({ project, script, lead, support, director, campaignIndex = 0, spendIndex = 1, marketingAmounts = [10000, 25000, 50000], studio }) {
+  const scores = calculateFilmScores(project, script, { lead, support, director });
+  const marketing = Number(marketingAmounts[spendIndex] || marketingAmounts[0] || 0);
+  const campaignCriticBonus = campaignIndex === 2 ? 4 : 0;
+  const campaignAudienceBonus = campaignIndex === 1 ? 4 : campaignIndex === 0 ? 2 : 0;
+  const critic = Math.round(clamp(scores.performance * 0.25 + scores.direction * 0.25 + scores.coherence * 0.3 + scores.originality * 0.2 + campaignCriticBonus + (seeded(project.seed, 200) * 10 - 5)));
+  const audience = Math.round(clamp(scores.average * 0.35 + scores.spectacle * 0.22 + scores.chemistry * 0.12 + Number(script.commercial || 0) * 0.2 + Number(lead?.fame || 0) * 0.11 + campaignAudienceBonus + (seeded(project.seed, 201) * 12 - 6)));
+  const gross = Math.round((45000 + Number(script.commercial || 0) * 1400 + audience * 2100 + Number(lead?.fame || 0) * 600 + Number(studio?.reputation || 0) * 450) * (1 + spendIndex * 0.28) * (campaignIndex === 0 ? 1.06 : 1));
+  const productionSpend = Number(project.spend || 0);
+  const profit = Math.round(gross * 0.62 - productionSpend - marketing);
+  const review = critic >= 80
+    ? 'A baffling, beautiful catastrophe that somehow becomes cinema.'
+    : critic >= 65
+      ? 'Uneven, energetic and saved by one genuinely terrific sequence.'
+      : critic >= 45
+        ? 'The footage exists. Several performances do too.'
+        : 'An expensive hostage situation involving a camera.';
+  return { critic, audience, gross, profit, marketing, scores, review };
+}
+
+function advanceQuarter(studio) {
+  const quarter = Number(studio?.quarter) || 1;
+  return {
+    ...studio,
+    quarter: quarter === 4 ? 1 : quarter + 1,
+    year: quarter === 4 ? (Number(studio?.year) || 1) + 1 : Number(studio?.year) || 1,
+  };
+}
+
+function finalizePremiere(game, film, now = new Date().toISOString()) {
+  const advanced = advanceQuarter(game.studio);
+  const studio = {
+    ...advanced,
+    cash: Number(game.studio.cash || 0) + Number(film.gross || 0) * 0.62,
+    reputation: clamp(Number(game.studio.reputation || 0) + Math.round((Number(film.audience || 0) - 50) / 12)),
+    trust: clamp(Number(game.studio.trust || 0) + Math.round((Number(film.audience || 0) - Number(film.critic || 0)) / 18)),
+    prestige: clamp(Number(game.studio.prestige || 0) + Math.round((Number(film.critic || 0) - 55) / 15)),
+  };
+  return {
+    ...game,
+    studio,
+    archive: [...(game.archive || []), film],
+    current: null,
+    history: [...(game.history || []), { type: 'FILM_RELEASED', filmId: film.id, at: now }],
+    meta: { ...(game.meta || {}), updatedAt: now },
+  };
+}
+
+return {SAVE_VERSION,BUILD_ID,clamp,hashSeed,seeded,createGameState,createProject,migrateSave,validateSave,calculateChemistry,calculateSceneOutcome,calculateFilmScores,calculateRelease,advanceQuarter,finalizePremiere};
+})();
+const {SAVE_VERSION,BUILD_ID,clamp,hashSeed,seeded,createGameState,createProject,migrateSave,validateSave,calculateChemistry,calculateSceneOutcome,calculateFilmScores,calculateRelease,advanceQuarter,finalizePremiere}=OMT_ENGINE;
+
+
+const SAVE_KEY='oneMoreTake_save_v2',LEGACY_SAVE_KEY='oneMoreTake_save_v1',BACKUP_KEY='oneMoreTake_save_v2_backup';
+const freshStudio=createGameState;
+function parseStored(key){try{const raw=localStorage.getItem(key);return raw?JSON.parse(raw):null}catch{return null}}
+function loadSave(){
+  for(const key of [SAVE_KEY,BACKUP_KEY,LEGACY_SAVE_KEY]){
+    const migrated=migrateSave(parseStored(key));
+    if(migrated&&validateSave(migrated).valid){
+      if(key!==SAVE_KEY)persist(migrated);
+      return migrated;
+    }
+  }
+  return null;
+}
+function persist(state){
+  try{
+    const normalized=migrateSave(state);
+    const check=validateSave(normalized);
+    if(!check.valid){console.error('Save rejected',check.errors);return false}
+    const old=localStorage.getItem(SAVE_KEY);
+    if(old)localStorage.setItem(BACKUP_KEY,old);
+    normalized.meta={...(normalized.meta||{}),updatedAt:new Date().toISOString()};
+    localStorage.setItem(SAVE_KEY,JSON.stringify(normalized));
+    return true;
+  }catch(error){console.error('Save failed',error);return false}
+}
 function cash(n){return '$'+Math.round(n).toLocaleString()}
-function clamp(n,a=0,b=100){return Math.max(a,Math.min(b,n))}
+
+function runPhase2SelfTests(){
+  const checks=[];
+  const test=(name,fn)=>{try{fn();checks.push({name,ok:true})}catch(error){checks.push({name,ok:false,error:String(error?.message||error)})}};
+  test('save-v2-valid',()=>{const g=createGameState('Test Studio','2026-07-20T00:00:00.000Z');if(!validateSave(g).valid)throw new Error('new save invalid')});
+  test('v1-migration',()=>{const g=migrateSave({saveVersion:1,studio:{name:'Legacy',cash:100,year:1,quarter:1},archive:[],current:null,sound:true});if(g.saveVersion!==SAVE_VERSION)throw new Error('migration failed')});
+  test('deterministic-project',()=>{const g=createGameState('Test','2026-07-20T00:00:00.000Z');const a=createProject(SCRIPTS[0],g,0),b=createProject(SCRIPTS[0],g,0);if(a.seed!==b.seed)throw new Error('project seed drift')});
+  test('deterministic-scene',()=>{const g=createGameState('Test','2026-07-20T00:00:00.000Z');const p=createProject(SCRIPTS[0],g,0);p.cast={leadId:PEOPLE[0].id,supportId:PEOPLE[1].id,directorId:DIRECTORS[0].id};const args={project:p,script:SCRIPTS[0],scene:SCRIPTS[0].scenes[0],choiceIndex:1,lead:PEOPLE[0],support:PEOPLE[1],director:DIRECTORS[0],budgetLevels:BUDGET_LEVELS,postures:POSTURES};if(JSON.stringify(calculateSceneOutcome(args))!==JSON.stringify(calculateSceneOutcome(args)))throw new Error('scene drift')});
+  return {passed:checks.filter(x=>x.ok).length,total:checks.length,checks};
+}
+const PHASE2_TEST_REPORT=runPhase2SelfTests();
+if(typeof window!=='undefined'){window.OMT_ENGINE=OMT_ENGINE;window.OMT_PHASE2_TESTS=PHASE2_TEST_REPORT;console.info('ONE MORE TAKE! Phase 2 tests',PHASE2_TEST_REPORT)}
 
 const SFX={ctx:null,on:true,tone(freq=440,dur=.07,type='sine',gain=.035){if(!this.on)return;try{this.ctx=this.ctx||new(window.AudioContext||window.webkitAudioContext)();const o=this.ctx.createOscillator(),g=this.ctx.createGain();o.type=type;o.frequency.value=freq;g.gain.setValueAtTime(gain,this.ctx.currentTime);g.gain.exponentialRampToValueAtTime(.0001,this.ctx.currentTime+dur);o.connect(g);g.connect(this.ctx.destination);o.start();o.stop(this.ctx.currentTime+dur)}catch{}},tap(){this.tone(520,.05)},good(){this.tone(520,.08,'triangle');setTimeout(()=>this.tone(780,.12,'triangle'),70)},bad(){this.tone(180,.15,'sawtooth')},premiere(){this.tone(220,.14,'triangle');setTimeout(()=>this.tone(440,.16,'triangle'),120);setTimeout(()=>this.tone(660,.22,'triangle'),240)}};
 
@@ -277,9 +625,9 @@ function Topbar({title,onBack,sound,setSound,right}){return <div className="topb
 function Title({saved,onNew,onContinue,sound,setSound}){return <div className="title-screen screen"><RemoteImage asset={ASSETS.heroSet} className="title-bg" alt="Film set"/><div className="title-content"><div className="studio-seal"><Icon name="film" size={36}/></div><h1 className="title-logo"><span className="main">ONE MORE</span><span className="sub">TAKE!</span></h1><div className="marquee"/><p className="tagline">Make movies. Manage egos. Pray for a hit.</p><div className="menu">{saved&&<button className="btn gold wide" onClick={onContinue}><Icon name="play"/>Continue {saved.studio.name}</button>}<button className={saved?'btn wide':'btn gold wide'} onClick={onNew}><Icon name="spark"/>New Studio</button><button className="btn ghost wide" onClick={()=>alert('Vertical slice: pick a script, cast the leads and director, fund the departments, survive four scenes, then watch the premiere.')}><Icon name="script"/>How to Play</button></div><div className="credit"><span>a hammyLabs joint</span><SoundButton sound={sound} setSound={setSound}/></div></div></div>}
 
 function Stats({studio}){return <div className="stats"><div className="stat gold"><label>Cash</label><b>{cash(studio.cash)}</b></div><div className="stat"><label>Reputation</label><b>{studio.reputation}</b></div><div className="stat"><label>Audience Trust</label><b>{studio.trust}</b></div><div className="stat"><label>Prestige</label><b>{studio.prestige}</b></div><div className="stat"><label>Calendar</label><b>Y{studio.year} · Q{studio.quarter}</b></div></div>}
-function Office({game,setScreen,sound,setSound,newFilm}){const last=game.archive[game.archive.length-1];return <div className="screen"><Topbar title={game.studio.name} sound={sound} setSound={setSound}/><div className="hero"><RemoteImage asset={ASSETS.heroSet} className="hero-art" alt="Film production set"/><div className="hero-copy"><span className="eyebrow">Garage Pictures · Studio Tier 1</span><h1>{game.studio.name}</h1><p className="subcopy">One soundstage, several dreams and a deeply optimistic insurance policy.</p><AssetCredit asset={ASSETS.heroSet}/></div></div><Stats studio={game.studio}/><div className="ribbon"><Icon name="bolt" size={16}/><span><strong>Current trend:</strong> Practical effects nostalgia. Audiences want to see something real explode.</span></div><div className="section-head"><div><h2>Studio Office</h2><p>What are we doing this quarter?</p></div></div><div className="action-grid"><button className="action-card" onClick={newFilm}><RemoteImage asset={ASSETS.actionStart} className="action-art" alt="Start a film"/><b>Start a Film</b><span>Read three pitches and gamble the studio’s future.</span></button><button className="action-card" onClick={()=>setScreen('talent')}><RemoteImage asset={ASSETS.actionRoster} className="action-art" alt="Talent roster"/><b>Talent Roster</b><span>Inspect the stars, egos and insurance risks.</span></button><button className="action-card" onClick={()=>setScreen('archive')}><RemoteImage asset={ASSETS.actionArchive} className="action-art" alt="Movie archive"/><b>Movie Archive</b><span>{game.archive.length?`${game.archive.length} film${game.archive.length===1?'':'s'} released.`:'The shelves are tragically empty.'}</span></button></div>{last&&<><div className="section-head"><div><h2>Latest Release</h2><p>The accountants have stopped crying.</p></div></div><div className="panel"><div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center'}}><div><span className="eyebrow">{last.genre}</span><h3 style={{marginTop:4}}>{last.title}</h3><p>{last.review}</p></div><div style={{textAlign:'right'}}><b style={{fontFamily:'var(--font-display)',fontSize:27,color:'var(--gold)'}}>{last.audience}</b><small style={{display:'block',color:'var(--muted)'}}>AUDIENCE</small></div></div></div></>}<div className="footer-note">ONE MORE TAKE! · vertical slice v0.2</div></div>}
+function Office({game,setScreen,sound,setSound,newFilm}){const last=game.archive[game.archive.length-1];return <div className="screen"><Topbar title={game.studio.name} sound={sound} setSound={setSound}/><div className="hero"><RemoteImage asset={ASSETS.heroSet} className="hero-art" alt="Film production set"/><div className="hero-copy"><span className="eyebrow">Garage Pictures · Studio Tier 1</span><h1>{game.studio.name}</h1><p className="subcopy">One soundstage, several dreams and a deeply optimistic insurance policy.</p><AssetCredit asset={ASSETS.heroSet}/></div></div><Stats studio={game.studio}/><div className="ribbon"><Icon name="bolt" size={16}/><span><strong>Current trend:</strong> Practical effects nostalgia. Audiences want to see something real explode.</span></div><div className="section-head"><div><h2>Studio Office</h2><p>What are we doing this quarter?</p></div></div><div className="action-grid"><button className="action-card" onClick={newFilm}><RemoteImage asset={ASSETS.actionStart} className="action-art" alt="Start a film"/><b>Start a Film</b><span>Read three pitches and gamble the studio’s future.</span></button><button className="action-card" onClick={()=>setScreen('talent')}><RemoteImage asset={ASSETS.actionRoster} className="action-art" alt="Talent roster"/><b>Talent Roster</b><span>Inspect the stars, egos and insurance risks.</span></button><button className="action-card" onClick={()=>setScreen('archive')}><RemoteImage asset={ASSETS.actionArchive} className="action-art" alt="Movie archive"/><b>Movie Archive</b><span>{game.archive.length?`${game.archive.length} film${game.archive.length===1?'':'s'} released.`:'The shelves are tragically empty.'}</span></button></div>{last&&<><div className="section-head"><div><h2>Latest Release</h2><p>The accountants have stopped crying.</p></div></div><div className="panel"><div style={{display:'flex',justifyContent:'space-between',gap:10,alignItems:'center'}}><div><span className="eyebrow">{last.genre}</span><h3 style={{marginTop:4}}>{last.title}</h3><p>{last.review}</p></div><div style={{textAlign:'right'}}><b style={{fontFamily:'var(--font-display)',fontSize:27,color:'var(--gold)'}}>{last.audience}</b><small style={{display:'block',color:'var(--muted)'}}>AUDIENCE</small></div></div></div></>}<div className="footer-note">ONE MORE TAKE! · v0.3 · Phase 2 engine</div></div>}
 
-function ScriptDesk({game,setGame,setScreen,sound,setSound}){const selected=game.current?.scriptId;function choose(s){SFX.tap();setGame(g=>({...g,current:{projectId:`film-${Date.now()}`,seed:hashSeed(s.id+Date.now()),status:'DEVELOPMENT',scriptId:s.id,title:s.title,cast:{leadId:null,supportId:null,directorId:null},budget:{levels:{cast:2,sets:2,stunts:2,effects:2,post:2},approved:s.base},posture:'balanced',sceneIndex:0,scenes:[],spend:0}}))}return <div className="screen"><Topbar title="The Script Desk" onBack={()=>setScreen('office')} sound={sound} setSound={setSound}/><div className="section-head"><div><h2>Three pitches. One production slot.</h2><p>Rejecting all three costs nothing except another quarter of your life.</p></div></div><div className="script-grid">{SCRIPTS.map(s=><div key={s.id} className={`paper-card clickable ${selected===s.id?'selected':''}`} onClick={()=>choose(s)}><RemoteImage asset={s.asset} className="script-photo" alt="Film production atmosphere"/><div className="paper-inner"><span className="genre">{s.genre} · {s.tone}</span><h3>{s.title}</h3><p>{s.premise}</p><div className="chips"><span className="chip">Budget {cash(s.base)}</span><span className="chip">Commercial {s.commercial}</span><span className="chip">Prestige {s.prestige}</span></div></div></div>)}</div>{selected&&<div style={{position:'sticky',bottom:8,marginTop:15}}><button className="btn gold wide" onClick={()=>{SFX.good();setScreen('casting')}}><Icon name="people"/>Take It to Casting</button></div>}</div>}
+function ScriptDesk({game,setGame,setScreen,sound,setSound}){const selected=game.current?.scriptId;function choose(s){SFX.tap();setGame(g=>({...g,current:createProject(s,g)}))}return <div className="screen"><Topbar title="The Script Desk" onBack={()=>setScreen('office')} sound={sound} setSound={setSound}/><div className="section-head"><div><h2>Three pitches. One production slot.</h2><p>Rejecting all three costs nothing except another quarter of your life.</p></div></div><div className="script-grid">{SCRIPTS.map(s=><div key={s.id} className={`paper-card clickable ${selected===s.id?'selected':''}`} onClick={()=>choose(s)}><RemoteImage asset={s.asset} className="script-photo" alt="Film production atmosphere"/><div className="paper-inner"><span className="genre">{s.genre} · {s.tone}</span><h3>{s.title}</h3><p>{s.premise}</p><div className="chips"><span className="chip">Budget {cash(s.base)}</span><span className="chip">Commercial {s.commercial}</span><span className="chip">Prestige {s.prestige}</span></div></div></div>)}</div>{selected&&<div style={{position:'sticky',bottom:8,marginTop:15}}><button className="btn gold wide" onClick={()=>{SFX.good();setScreen('casting')}}><Icon name="people"/>Take It to Casting</button></div>}</div>}
 
 function TalentCard({person,selected,onClick}){return <div className={`card talent-card clickable ${selected?'selected':''}`} onClick={onClick}><RemoteImage asset={person.asset} className="portrait" alt={person.name}/><div className="card-body"><div className="talent-meta"><div><span className="kicker">{person.role} · age {person.age}</span><h3>{person.name}</h3></div><span className="salary">{cash(person.salary)}</span></div><p>{person.flavor}</p><div className="bars">{Object.entries(person.skills).map(([k,v])=><div className="barrow" key={k}><span>{k}</span><div className="bar"><i style={{width:v+'%'}}/></div><b>{v}</b></div>)}</div><div className="chips">{person.traits.slice(0,3).map(t=><span className="chip gold" key={t}>{t}</span>)}</div></div></div>}
 function MiniPick({label,person}){return <div className="pick"><div className="mini-face">{person?<RemoteImage asset={person.asset} alt={person.name}/>:<FallbackArt type="camera"/>}</div><div style={{minWidth:0}}><label>{label}</label><b>{person?.name||'Not selected'}</b></div></div>}
@@ -287,19 +635,19 @@ function Casting({game,setGame,setScreen,sound,setSound}){const [tab,setTab]=use
 
 function ProductionPlan({game,setGame,setScreen,sound,setSound}){const script=SCRIPTS.find(s=>s.id===game.current.scriptId),levels=game.current.budget.levels,posture=game.current.posture;const depts=[['cast','Cast'],['sets','Sets & Costumes'],['stunts','Stunts'],['effects','Effects'],['post','Post-production']];const total=Math.round(script.base*(.2*BUDGET_LEVELS[levels.cast]+.2*BUDGET_LEVELS[levels.sets]+.18*BUDGET_LEVELS[levels.stunts]+.18*BUDGET_LEVELS[levels.effects]+.24*BUDGET_LEVELS[levels.post]));function setLevel(k,v){SFX.tap();setGame(g=>({...g,current:{...g.current,budget:{...g.current.budget,levels:{...g.current.budget.levels,[k]:v},approved:total}}}))}function begin(){setGame(g=>({...g,current:{...g.current,status:'SHOOTING',spend:total,sceneIndex:0,scenes:[]},studio:{...g.studio,cash:g.studio.cash-total}}));SFX.good();setScreen('production')}return <div className="screen"><Topbar title="Production Plan" onBack={()=>setScreen('casting')} sound={sound} setSound={setSound}/><div className="plan-grid"><div className="panel"><h3>Department Budget</h3><p>Spending helps, with diminishing returns. Reckless remains an adjective, not financial advice.</p>{depts.map(([k,label])=><div className="budget-row" key={k}><b>{label}</b><span>{BUDGET_NAMES[levels[k]]}</span><div className="tier-buttons">{BUDGET_NAMES.map((n,i)=><button key={n} className={`tier ${levels[k]===i?'on':''}`} onClick={()=>setLevel(k,i)}>{n}</button>)}</div></div>)}</div><div><div className="panel"><h3>Production Posture</h3><p>How much chaos are we inviting onto the set?</p><div className="postures">{POSTURES.map(p=><button key={p.id} className={`posture ${posture===p.id?'on':''}`} onClick={()=>{SFX.tap();setGame(g=>({...g,current:{...g.current,posture:p.id}}))}}><b>{p.name}</b><span>{p.desc}</span></button>)}</div></div><div className="panel" style={{marginTop:12}}><h3>Approval</h3><p>{script.title}</p><div className="stats" style={{gridTemplateColumns:'1fr 1fr'}}><div className="stat gold"><label>Projected Spend</label><b>{cash(total)}</b></div><div className={`stat ${total>game.studio.cash?'red':'green'}`}><label>Cash After</label><b>{cash(game.studio.cash-total)}</b></div></div><button className="btn gold wide" disabled={total>game.studio.cash} onClick={begin}><Icon name="camera"/>Begin Production</button></div></div></div></div>}
 
-function Production({game,setGame,setScreen,sound,setSound,setToast}){const project=game.current,script=SCRIPTS.find(s=>s.id===project.scriptId),scene=script.scenes[project.sceneIndex],outcome=project.pendingOutcome;const posture=POSTURES.find(p=>p.id===project.posture);function choose(choiceIndex){if(outcome)return;const lead=PEOPLE.find(p=>p.id===project.cast.leadId),support=PEOPLE.find(p=>p.id===project.cast.supportId),director=DIRECTORS.find(p=>p.id===project.cast.directorId);const relevant=(lead.skills.Acting+support.skills.Acting+director.skills.Vision)/3;const budgetAvg=Object.values(project.budget.levels).reduce((a,b)=>a+b,0)/5;const roll=seeded(project.seed,project.sceneIndex*7+choiceIndex)*posture.variance*2-posture.variance;let quality=clamp(Math.round(42+relevant*.34+budgetAvg*4+posture.bonus+choiceIndex*(choiceIndex===1?2:-1)+roll-script.difficulty*.18));const band=quality>=78?'ICONIC':quality>=64?'STRONG':quality>=46?'USABLE':quality>=30?'ROUGH':'CATASTROPHIC';const good=quality>=60,bad=quality<40;const texts=good?['The crew briefly remembers why they entered the industry.','The take lands. Even the boom operator looks emotional.','Somehow, this is cinema.']:bad?['The set falls silent in the specific way that means money has died.','Nobody says “cut” because nobody wishes to accept responsibility.','The footage exists. That is the kindest available description.']:['It will cut together. Probably. With music.'];const result={choice:scene.choices[choiceIndex][0],quality,band,text:texts[Math.floor(seeded(project.seed,99+project.sceneIndex)*texts.length)]};SFX[good?'good':bad?'bad':'tap']();setGame(g=>({...g,current:{...g.current,pendingOutcome:result}}))}
+function Production({game,setGame,setScreen,sound,setSound,setToast}){const project=game.current,script=SCRIPTS.find(s=>s.id===project.scriptId),scene=script.scenes[project.sceneIndex],outcome=project.pendingOutcome;function choose(choiceIndex){if(outcome)return;const lead=PEOPLE.find(p=>p.id===project.cast.leadId),support=PEOPLE.find(p=>p.id===project.cast.supportId),director=DIRECTORS.find(p=>p.id===project.cast.directorId);const result=calculateSceneOutcome({project,script,scene,choiceIndex,lead,support,director,budgetLevels:BUDGET_LEVELS,postures:POSTURES});SFX[result.quality>=60?'good':result.quality<40?'bad':'tap']();setGame(g=>({...g,current:{...g.current,pendingOutcome:result}}))}
 function next(){const result=project.pendingOutcome;const savedScene={name:scene.name,type:scene.type,...result,asset:script.asset.id};if(project.sceneIndex<script.scenes.length-1){setGame(g=>({...g,current:{...g.current,scenes:[...g.current.scenes,savedScene],sceneIndex:g.current.sceneIndex+1,pendingOutcome:null}}));SFX.tap()}else{setGame(g=>({...g,current:{...g.current,scenes:[...g.current.scenes,savedScene],status:'POST',pendingOutcome:null}}));SFX.good();setScreen('post')}}return <div className="screen soundstage"><Topbar title="Soundstage" sound={sound} setSound={setSound} right={<span className="chip gold">Scene {project.sceneIndex+1}/{script.scenes.length}</span>}/><div className="production-hero"><RemoteImage asset={script.asset} style={{position:'absolute',inset:0}} alt="Production scene"/><div className="scene-title"><span className="eyebrow">{scene.type}</span><h2>{scene.name}</h2></div></div><div className="progress">{script.scenes.map((_,i)=><i key={i} className={i<project.sceneIndex?'done':i===project.sceneIndex?'now':''}/>)}</div><div className="event-box"><h3>Production Crisis</h3><p>{scene.event}</p><div className="choices">{scene.choices.map((c,i)=><button className="choice" disabled={!!outcome} key={c[0]} onClick={()=>choose(i)}><b>{c[0]}</b><span>{c[1]}</span><em>{i===0?'SAFE-ish':i===1?'HIGH VARIANCE':'CREATIVE ESCAPE'}</em></button>)}</div>{outcome&&<div className={`outcome ${outcome.quality>=60?'good':outcome.quality<40?'bad':''}`}><b>{outcome.band} · Scene quality {outcome.quality}</b><p>{outcome.text}</p></div>}{outcome&&<button className="btn gold wide" style={{marginTop:12}} onClick={next}>{project.sceneIndex<script.scenes.length-1?'Next Scene':'Wrap Production'} <Icon name="play" size={14}/></button>}</div><AssetCredit asset={script.asset}/></div>}
 
 function Post({game,setGame,setScreen,sound,setSound}){const [choice,setChoice]=useState(null);const options=[['Tighten the edit','Raises coherence and trims the weakest scene.',5],['Add an enormous score','Raises spectacle. Subtlety leaves the building.',4],['Hide the worst take','Raises the lowest scene quality.',6],['Release the beautiful mess','No cost. Originality and risk rise.',2]];function proceed(){const bonus=options[choice][2];setGame(g=>({...g,current:{...g.current,status:'MARKETING',postChoice:options[choice][0],postBonus:bonus}}));SFX.good();setScreen('release')}return <div className="screen"><Topbar title="Editing Room" onBack={null} sound={sound} setSound={setSound}/><div className="hero"><RemoteImage asset={ASSETS.camera} className="hero-art" alt="Cinema camera"/><div className="hero-copy"><span className="eyebrow">The footage is technically all here</span><h2>Save it in post.</h2><p className="subcopy">You have enough time and money for one decisive intervention.</p></div></div><div className="choices">{options.map((o,i)=><button key={o[0]} className={`choice ${choice===i?'selected':''}`} style={choice===i?{borderColor:'var(--gold)',background:'rgba(229,185,77,.08)'}:{}} onClick={()=>{SFX.tap();setChoice(i)}}><b>{o[0]}</b><span>{o[1]}</span></button>)}</div>{choice!==null&&<button className="btn gold wide" style={{marginTop:12}} onClick={proceed}>Lock the Cut <Icon name="check" size={15}/></button>}<AssetCredit asset={ASSETS.camera}/></div>}
 
-function Release({game,setGame,setScreen,sound,setSound}){const [campaign,setCampaign]=useState(null),[spend,setSpend]=useState(1);const campaigns=[['Sell the Star','Fame drives the opening weekend.'],['Sell the Spectacle','The trailer contains every explosion.'],['Mystery Teaser','Nobody knows what the film is, including the cast.']];const amounts=[10000,25000,50000];function release(){const p=game.current,script=SCRIPTS.find(s=>s.id===p.scriptId),lead=PEOPLE.find(x=>x.id===p.cast.leadId),avg=p.scenes.reduce((a,s)=>a+s.quality,0)/p.scenes.length+p.postBonus;const critic=clamp(Math.round(avg*.72+script.prestige*.22+(campaign===2?4:0)+(seeded(p.seed,200)*12-6)));const audience=clamp(Math.round(avg*.63+script.commercial*.27+lead.fame*.1+(campaign===1?4:0)+(seeded(p.seed,201)*14-7)));const marketing=amounts[spend],gross=Math.round((45000+script.commercial*1400+audience*2100+lead.fame*600)*(1+spend*.28)*(campaign===0?1.06:1));const profit=Math.round(gross*.62-p.spend-marketing);const review=critic>=80?'A baffling, beautiful catastrophe that somehow becomes cinema.':critic>=65?'Uneven, energetic and saved by one genuinely terrific sequence.':critic>=45?'The footage exists. Several performances do too.':'An expensive hostage situation involving a camera.';const film={id:p.projectId,title:script.title,genre:script.genre,tagline:script.tagline,assetId:script.asset.id,critic,audience,gross,profit,review,cast:p.cast,scenes:p.scenes,year:game.studio.year,quarter:game.studio.quarter};setGame(g=>({...g,current:{...g.current,status:'PREMIERE',release:film,marketing},studio:{...g.studio,cash:g.studio.cash-marketing},}));SFX.premiere();setScreen('premiere')}return <div className="screen"><Topbar title="Release Office" sound={sound} setSound={setSound}/><div className="panel"><h3>Campaign Angle</h3><p>How aggressively are we going to describe what happened?</p><div className="choices">{campaigns.map((c,i)=><button key={c[0]} className="choice" style={campaign===i?{borderColor:'var(--gold)',background:'rgba(229,185,77,.08)'}:{}} onClick={()=>{SFX.tap();setCampaign(i)}}><b>{c[0]}</b><span>{c[1]}</span></button>)}</div></div><div className="panel" style={{marginTop:12}}><h3>Marketing Spend</h3><p>Cash left: {cash(game.studio.cash)}</p><div className="tier-buttons">{amounts.map((a,i)=><button key={a} className={`tier ${spend===i?'on':''}`} onClick={()=>setSpend(i)}>{cash(a)}</button>)}</div></div>{campaign!==null&&<button className="btn gold wide" style={{marginTop:12}} disabled={amounts[spend]>game.studio.cash} onClick={release}><Icon name="star"/>Book the Premiere</button>}</div>}
+function Release({game,setGame,setScreen,sound,setSound}){const [campaign,setCampaign]=useState(null),[spend,setSpend]=useState(1);const campaigns=[['Sell the Star','Fame drives the opening weekend.'],['Sell the Spectacle','The trailer contains every explosion.'],['Mystery Teaser','Nobody knows what the film is, including the cast.']];const amounts=[10000,25000,50000];function release(){const p=game.current,script=SCRIPTS.find(s=>s.id===p.scriptId),lead=PEOPLE.find(x=>x.id===p.cast.leadId),support=PEOPLE.find(x=>x.id===p.cast.supportId),director=DIRECTORS.find(x=>x.id===p.cast.directorId);const result=calculateRelease({project:p,script,lead,support,director,campaignIndex:campaign,spendIndex:spend,marketingAmounts:amounts,studio:game.studio});const film={id:p.projectId,title:script.title,genre:script.genre,tagline:script.tagline,assetId:script.asset.id,critic:result.critic,audience:result.audience,gross:result.gross,profit:result.profit,review:result.review,scores:result.scores,cast:p.cast,scenes:p.scenes,year:game.studio.year,quarter:game.studio.quarter};setGame(g=>({...g,current:{...g.current,status:'PREMIERE',release:film,marketing:result.marketing},studio:{...g.studio,cash:g.studio.cash-result.marketing}}));SFX.premiere();setScreen('premiere')}return <div className="screen"><Topbar title="Release Office" sound={sound} setSound={setSound}/><div className="panel"><h3>Campaign Angle</h3><p>How aggressively are we going to describe what happened?</p><div className="choices">{campaigns.map((c,i)=><button key={c[0]} className="choice" style={campaign===i?{borderColor:'var(--gold)',background:'rgba(229,185,77,.08)'}:{}} onClick={()=>{SFX.tap();setCampaign(i)}}><b>{c[0]}</b><span>{c[1]}</span></button>)}</div></div><div className="panel" style={{marginTop:12}}><h3>Marketing Spend</h3><p>Cash left: {cash(game.studio.cash)}</p><div className="tier-buttons">{amounts.map((a,i)=><button key={a} className={`tier ${spend===i?'on':''}`} onClick={()=>setSpend(i)}>{cash(a)}</button>)}</div></div>{campaign!==null&&<button className="btn gold wide" style={{marginTop:12}} disabled={amounts[spend]>game.studio.cash} onClick={release}><Icon name="star"/>Book the Premiere</button>}</div>}
 
 function Premiere({game,setGame,setScreen}){const film=game.current.release,script=SCRIPTS.find(s=>s.id===game.current.scriptId);const [beat,setBeat]=useState(0);const beats=useMemo(()=>[
  {small:`${game.studio.name.toUpperCase()} PRESENTS`,big:film.title,line:film.tagline},
  ...film.scenes.map((s,i)=>({small:`SCENE ${i+1}`,big:s.name,line:s.quality>=70?'THIS WAS NOT IN THE INSURANCE FORM.':s.quality<40?'THE EDITOR HAS REQUESTED AN ALIAS.':s.choice.toUpperCase()})),
  {small:'CRITICS HAVE SPOKEN',big:`${film.critic}%`,line:film.review},
  {small:'AUDIENCES HAVE SPOKEN LOUDER',big:`${film.audience}%`,line:`Opening soon. Regrets already available.`}
-],[]);useEffect(()=>{const t=setInterval(()=>setBeat(b=>{if(b>=beats.length-1){clearInterval(t);return b}return b+1}),1800);return()=>clearInterval(t)},[]);function finish(){const profit=film.profit;const nextQ=game.studio.quarter===4?1:game.studio.quarter+1,nextY=game.studio.quarter===4?game.studio.year+1:game.studio.year;setGame(g=>{const ng={...g,archive:[...g.archive,film],current:null,studio:{...g.studio,cash:g.studio.cash+film.gross*.62,reputation:clamp(g.studio.reputation+Math.round((film.audience-50)/12)),trust:clamp(g.studio.trust+Math.round((film.audience-film.critic)/18)),prestige:clamp(g.studio.prestige+Math.round((film.critic-55)/15)),quarter:nextQ,year:nextY}};return ng});setScreen('results')}const b=beats[beat];return <div className="premiere film-bars"><RemoteImage asset={script.asset} className="premiere-bg" alt="Film trailer backdrop"/><button className="btn ghost small trailer-skip" onClick={finish}>Skip / Results</button><div className="trailer-copy" key={beat}><div className="present">{b.small}</div><h1>{b.big}</h1><p>{b.line}</p>{beat===beats.length-1&&<button className="btn gold" onClick={finish}>See the Numbers</button>}</div></div>}
+],[]);useEffect(()=>{const t=setInterval(()=>setBeat(b=>{if(b>=beats.length-1){clearInterval(t);return b}return b+1}),1800);return()=>clearInterval(t)},[]);function finish(){setGame(g=>finalizePremiere(g,film));setScreen('results')}const b=beats[beat];return <div className="premiere film-bars"><RemoteImage asset={script.asset} className="premiere-bg" alt="Film trailer backdrop"/><button className="btn ghost small trailer-skip" onClick={finish}>Skip / Results</button><div className="trailer-copy" key={beat}><div className="present">{b.small}</div><h1>{b.big}</h1><p>{b.line}</p>{beat===beats.length-1&&<button className="btn gold" onClick={finish}>See the Numbers</button>}</div></div>}
 
 function Results({game,setScreen,sound,setSound}){const film=game.archive[game.archive.length-1],asset=SCRIPTS.find(s=>s.title===film.title)?.asset||ASSETS.heroSet;return <div className="screen"><Topbar title="Premiere Night" sound={sound} setSound={setSound}/><div className="result-hero"><div className="result-poster"><RemoteImage asset={asset} style={{position:'absolute',inset:0}}/><div className="poster-copy"><small>{film.genre.toUpperCase()}</small><h2>{film.title}</h2><p>{film.tagline}</p></div></div><div className="scores"><div className="score"><b>{film.critic}%</b><span>Critics</span></div><div className="score"><b>{film.audience}%</b><span>Audience</span></div><div className="score"><b style={{color:film.profit>=0?'#8ed5a9':'#ef837a'}}>{film.profit>=0?'+':''}{cash(film.profit)}</b><span>Profit</span></div></div><div className="review">“{film.review}”</div><button className="btn gold wide" style={{marginTop:14}} onClick={()=>setScreen('office')}>Back to the Studio</button></div></div>}
 
@@ -308,21 +656,27 @@ function Archive({game,setScreen,sound,setSound}){return <div className="screen"
 
 function NewStudioModal({onClose,onCreate}){const [name,setName]=useState('Hammy Pictures');return <div className="modal-bg"><div className="modal"><h2>Name Your Studio</h2><p>Future award speeches, lawsuits and unnecessary sequels will use this name.</p><div className="field"><label>Studio name</label><input value={name} maxLength={28} onChange={e=>setName(e.target.value)}/></div><div style={{display:'flex',gap:8,marginTop:14}}><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn gold" style={{flex:1}} disabled={!name.trim()} onClick={()=>onCreate(name.trim())}>Open the Gates</button></div></div></div>}
 
+function gameReducer(state,action){
+ if(action.type==='REPLACE')return migrateSave(action.state)||state;
+ if(action.type==='UPDATE'){const next=typeof action.updater==='function'?action.updater(state):action.updater;return next||state}
+ return state;
+}
 function App(){
  const initial=loadSave();
- const [game,setGameRaw]=useState(initial||freshStudio());
+ const [game,dispatch]=useReducer(gameReducer,initial||freshStudio());
  const [hasSave,setHasSave]=useState(!!initial);
  const [screen,setScreen]=useState('title');
  const [newModal,setNewModal]=useState(false);
  const [toast,setToast]=useState(null);
- const setGame=updater=>setGameRaw(prev=>typeof updater==='function'?updater(prev):updater);
- const sound=game.sound!==false;
- function setSound(v){SFX.on=v;setGame(g=>({...g,sound:v}))}
+ const setGame=updater=>dispatch({type:'UPDATE',updater});
+ const replaceGame=state=>dispatch({type:'REPLACE',state});
+ const sound=game.settings?.sound??game.sound!==false;
+ function setSound(v){SFX.on=v;setGame(g=>({...g,sound:v,settings:{...(g.settings||{}),sound:v}}))}
  useEffect(()=>{SFX.on=sound;if(screen!=='title'){persist(game);setHasSave(true)}},[game,screen]);
  function showToast(t){setToast(t);setTimeout(()=>setToast(null),2200)}
- function create(name){const ng=freshStudio(name);setGameRaw(ng);setNewModal(false);setScreen('office');persist(ng);setHasSave(true);SFX.good()}
+ function create(name){const ng=freshStudio(name);replaceGame(ng);setNewModal(false);setScreen('office');persist(ng);setHasSave(true);SFX.good()}
  function newFilm(){setGame(g=>({...g,current:null}));setScreen('scripts');SFX.tap()}
- return <>{screen==='title'&&<Title saved={hasSave?loadSave():null} onNew={()=>setNewModal(true)} onContinue={()=>{const s=loadSave();if(s){setGameRaw(s);setScreen('office');SFX.good()}}} sound={sound} setSound={setSound}/>} {screen==='office'&&<Office game={game} setScreen={setScreen} sound={sound} setSound={setSound} newFilm={newFilm}/>} {screen==='scripts'&&<ScriptDesk game={game} setGame={setGame} setScreen={setScreen} sound={sound} setSound={setSound}/>} {screen==='casting'&&<Casting game={game} setGame={setGame} setScreen={setScreen} sound={sound} setSound={setSound}/>} {screen==='plan'&&<ProductionPlan game={game} setGame={setGame} setScreen={setScreen} sound={sound} setSound={setSound}/>} {screen==='production'&&<Production game={game} setGame={setGame} setScreen={setScreen} sound={sound} setSound={setSound} setToast={showToast}/>} {screen==='post'&&<Post game={game} setGame={setGame} setScreen={setScreen} sound={sound} setSound={setSound}/>} {screen==='release'&&<Release game={game} setGame={setGame} setScreen={setScreen} sound={sound} setSound={setSound}/>} {screen==='premiere'&&<Premiere game={game} setGame={setGame} setScreen={setScreen}/>} {screen==='results'&&<Results game={game} setScreen={setScreen} sound={sound} setSound={setSound}/>} {screen==='talent'&&<Roster setScreen={setScreen} sound={sound} setSound={setSound}/>} {screen==='archive'&&<Archive game={game} setScreen={setScreen} sound={sound} setSound={setSound}/>} {newModal&&<NewStudioModal onClose={()=>setNewModal(false)} onCreate={create}/>} {toast&&<div className="toast">{toast}</div>}</>
+ return <>{screen==='title'&&<Title saved={hasSave?loadSave():null} onNew={()=>setNewModal(true)} onContinue={()=>{const s=loadSave();if(s){replaceGame(s);setScreen('office');SFX.good()}}} sound={sound} setSound={setSound}/>} {screen==='office'&&<Office game={game} setScreen={setScreen} sound={sound} setSound={setSound} newFilm={newFilm}/>} {screen==='scripts'&&<ScriptDesk game={game} setGame={setGame} setScreen={setScreen} sound={sound} setSound={setSound}/>} {screen==='casting'&&<Casting game={game} setGame={setGame} setScreen={setScreen} sound={sound} setSound={setSound}/>} {screen==='plan'&&<ProductionPlan game={game} setGame={setGame} setScreen={setScreen} sound={sound} setSound={setSound}/>} {screen==='production'&&<Production game={game} setGame={setGame} setScreen={setScreen} sound={sound} setSound={setSound} setToast={showToast}/>} {screen==='post'&&<Post game={game} setGame={setGame} setScreen={setScreen} sound={sound} setSound={setSound}/>} {screen==='release'&&<Release game={game} setGame={setGame} setScreen={setScreen} sound={sound} setSound={setSound}/>} {screen==='premiere'&&<Premiere game={game} setGame={setGame} setScreen={setScreen}/>} {screen==='results'&&<Results game={game} setScreen={setScreen} sound={sound} setSound={setSound}/>} {screen==='talent'&&<Roster setScreen={setScreen} sound={sound} setSound={setSound}/>} {screen==='archive'&&<Archive game={game} setScreen={setScreen} sound={sound} setSound={setSound}/>} {newModal&&<NewStudioModal onClose={()=>setNewModal(false)} onCreate={create}/>} {toast&&<div className="toast">{toast}</div>}</>
 }
 ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
 </script>

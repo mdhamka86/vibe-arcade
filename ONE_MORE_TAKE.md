@@ -2,31 +2,13 @@
 
 Design specification for **ONE MORE TAKE!**, a light, funny, mobile-first web game about running a chaotic movie studio. The game takes the emotional core of *The Movies* and *Stunts & Effects*—discovering stars, casting films, surviving productions, directing stunts and watching the finished result—and compresses it into a fast browser tycoon built on the proven **Whisker Warriors** structure.
 
-**Status:** v0.2 IMAGE-DRIVEN VERTICAL SLICE DEPLOYED (20/07/2026). Playable build is live at `public/one-more-take.html` and was pushed to `main` in commit `e782611`. The current loop includes studio creation, office dashboard, three-script slate, stock-photo talent casting, budget posture, four-scene production, post-production, marketing, generated premiere, results, archive, sound and versioned local saves. The visual layer now uses compressed remote photography with multi-source fallback chains and keeps inline SVG mainly for essential UI icons and emergency fallback art. Phase 1 is complete and the first Phase 3 loop is operational; engine extraction, deterministic tests, balancing and a full image-manifest audit remain before the vertical slice is considered passed. Immediate patch still required: correct `.action-card .action-art img` and `.ribbon strong` selectors in the deployed CSS. The core fantasy, architecture, scope, object contracts, build order and gates in this document remain binding. Scope expansion comes after the loop is fun, not before.
+**Status:** v0.3 PHASE 2 ENGINE BUILD PREPARED (20/07/2026). The image paint-order bug is fixed: loaded stock photography now sits above the SVG fallback layer, while failed URLs continue through a finite Unsplash → Picsum → Placehold.co chain. The playable one-film loop remains intact. Phase 2 is now implemented locally with a version-2 root state, `useReducer` state flow, v1 save migration, backup recovery, deterministic project/scene/release calculations, pure engine functions, seven Node tests green, and four browser self-tests green. Current delivery files: `one-more-take.html`, `one-more-take-engine.mjs`, and `one-more-take-engine.test.mjs`. Deployment and browser smoke testing are the remaining gate before Phase 2 is marked deployed. The binding build order remains in force; content expansion still waits behind loop quality and stability.
 
 **Owner:** Hammy (hammyLabs)  
 **Repo:** `mdhamka86/vibe-arcade`  
 **Primary build:** `public/one-more-take.html`  
 **Working title:** **ONE MORE TAKE!**  
 **Tagline:** *Make movies. Manage egos. Pray for a hit.*
-
-### Current implementation snapshot — v0.2
-
-- Deployment path: `public/one-more-take.html`
-- Repository: `mdhamka86/vibe-arcade`
-- Latest pushed build commit: `e782611`
-- Live route: `/one-more-take.html`
-- Current content: 3 scripts, 6 actors, 2 directors and 12 authored scene crises
-- Talent cards use remote stock-photo portraits
-- Script cards, office hero, production scenes and office action cards are image-driven
-- Remote image order: curated compressed stock URL, secondary remote fallback, neutral placeholder fallback
-- Current development hosts include Unsplash CDN, Picsum and Placehold.co
-- Inline SVG is restricted to essential controls, lightweight effects and last-resort fallback art
-- Core simulation and saves remain usable when a remote image fails
-- Known CSS patch: `.action-card.action-art img` must become `.action-card .action-art img`
-- Known CSS patch: `.ribbonstrong` must become `.ribbon strong`
-
-The generic Picsum and Placehold.co entries are resilience tools for the prototype, not final art provenance. Before public release, every visible production asset must be replaced or confirmed through a traceable manifest containing the exact source page, creator, licence and permitted use.
 
 ---
 
@@ -152,7 +134,7 @@ The save object is versioned, validated before loading and exportable as JSON. A
 
 No accounts, database, cloud saves, live AI calls or server-side game logic are required for the core game.
 
-The visual layer may fetch compressed royalty-free stock images while online. Core gameplay, saves and simulation must remain functional if an image host is unavailable. Each image slot walks an ordered source chain and ends in a lightweight non-blocking fallback; a failed host must never create an empty card, broken control or corrupted premiere.
+The visual layer may fetch hotlinked royalty-free stock images while online. Core gameplay, saves and simulation must remain functional if an image host is unavailable: every external image has an SVG, inline-art or CSS fallback rather than becoming a broken screen.
 
 ### Content depth comes after loop quality
 
@@ -517,14 +499,10 @@ Actors, directors and senior crew use one shared base shape.
   age: 34,
 
   portrait: {
-    assetId: "portrait-rex-valentine",
-    primaryUrl: "https://...compressed-stock-image...",
-    fallbackUrls: [
-      "https://...secondary-source...",
-      "https://...neutral-placeholder..."
-    ],
-    crop: "50% 20%",
-    fallbackArtId: "fallback-portrait"
+    type: "svg",
+    archetype: "heartthrob",
+    palette: "crimson-gold",
+    variant: 3
   },
 
   skills: {
@@ -1116,17 +1094,15 @@ The premiere is a deterministic visual recap built from `trailerBeats`.
 
 Version one uses:
 
-- compressed stock-photo scene backdrops;
-- stock-photo talent portraits;
-- deterministic image crops and colour treatments;
-- multi-source remote fallbacks;
-- limited inline SVG for essential UI, masks and emergency art only;
+- illustrated CSS backgrounds;
+- inline SVG set art;
+- SVG character portraits;
 - parallax pans;
 - zooms;
 - wipes;
 - title cards;
 - impact flashes;
-- lightweight silhouette stunts where photography is unavailable;
+- silhouette stunts;
 - particles;
 - simple sound effects;
 - short generated captions.
@@ -1260,13 +1236,13 @@ A stylised late-night studio aesthetic:
 - cream paper for scripts and reviews;
 - cyan production-light highlights;
 - visible grain and subtle projector texture;
-- compressed royalty-free stock photography for locations, sets, atmosphere, script cards, office actions and talent portraits;
-- restrained SVG masks, essential interface icons and lightweight fallback art in the same spirit as Whisker Warriors;
+- compressed royalty-free stock photography for locations, sets, atmosphere and selected portraits;
+- SVG overlays, masks, frames, icons and inline illustrated details in the same spirit as Whisker Warriors;
 - large readable typography.
 
 ### Stock-image approach
 
-The main photographic layer uses **royalty-free compressed stock images loaded from stable, permitted remote URLs rather than stored in the repository**. The prototype uses ordered multi-source URL arrays so a blocked or missing image host can fall through to another source without breaking the screen.
+The main photographic layer uses **royalty-free compressed stock images loaded from their original permitted remote URLs rather than stored in the repository**.
 
 Stock images are best used for:
 
@@ -1279,13 +1255,12 @@ Stock images are best used for:
 
 They are complemented by:
 
+- inline SVG character or prop art;
+- illustrated silhouettes;
+- procedural poster graphics;
+- SVG lighting, smoke, rain, fire and impact overlays;
 - CSS colour treatments, grain, crops and vignette masks;
-- procedural poster typography and layout;
-- lightweight lighting, smoke, rain, fire and impact effects;
-- a small set of essential line icons;
-- minimal SVG or illustrated fallback art only when remote photography cannot load.
-
-Photography is the default visual language. Inline SVG must not become the primary artwork for screenplay cards, talent portraits, office actions, sets or premiere backdrops.
+- line-art icons and interface decoration consistent with Whisker Warriors.
 
 The stock layer must follow these rules:
 
@@ -1295,13 +1270,10 @@ The stock layer must follow these rules:
 4. Request appropriately compressed dimensions from image CDNs where supported; do not hotlink full-resolution originals into small cards.
 5. Apply `loading="lazy"` and `decoding="async"` outside the currently active scene.
 6. Use stable HTTPS URLs and avoid temporary, signed or expiring links.
-7. Every image asset must define an ordered source array rather than a single fragile URL.
-8. The final fallback must render without depending on the same host as the primary image.
-9. A failed image may reduce visual richness but must never block gameplay, obscure controls or corrupt a saved premiere.
-10. Preserve attribution metadata even when visible attribution is not legally required, so the source can be audited or replaced later.
-11. The asset manifest is the single source of truth; raw image URLs should not be scattered throughout UI components.
-12. Picsum and Placehold.co may be used as prototype resilience fallbacks, but they are not substitutes for final curated art provenance.
-13. Before release, test every host from the deployed Vercel origin on mobile Chrome, desktop Chrome and at least one privacy-restricted browser mode.
+7. Every hotlinked image must have a local SVG, inline-art or CSS fallback.
+8. A failed image may reduce visual richness but must never block gameplay, obscure controls or corrupt a saved premiere.
+9. Preserve attribution metadata even when visible attribution is not legally required, so the source can be audited or replaced later.
+10. The asset manifest is the single source of truth; raw image URLs should not be scattered throughout UI components.
 
 Example manifest entry:
 
@@ -1313,12 +1285,8 @@ Example manifest entry:
   creator: "Creator Name",
   licence: "Commercial royalty-free / embedding permitted",
   sourcePage: "https://...",
-  urls: [
-    "https://...compressed-primary-image...",
-    "https://...secondary-fallback-image...",
-    "https://...neutral-placeholder..."
-  ],
-  fallbackArtId: "fallback-rainy-alley",
+  url: "https://...compressed-image...",
+  fallbackArtId: "svg-rainy-alley",
   crop: "50% 42%",
   treatment: "noir-blue",
   creditRequired: false
@@ -1348,7 +1316,7 @@ Talent cards borrow the strong hierarchy of Whisker Warriors:
 - short flavour line;
 - clear selected state.
 
-Cards should feel collectible without becoming a card battler. The portrait area uses stock photography by default; procedural SVG faces are no longer the main art direction.
+Cards should feel collectible without becoming a card battler.
 
 ### Posters
 
@@ -1394,23 +1362,22 @@ The primary playable build is:
 
 Like Whisker Warriors, it can load React, ReactDOM, Babel and GSAP from CDNs and contain its interface, styles, data and gameplay logic in one portable file during the prototype stage.
 
-### Recommended development split
+### Current development split
 
-To keep simulation testable:
+Phase 2 now ships and tests the engine in two forms:
 
 ```text
 public/
-  one-more-take.html
-  one-more-take-seed.js          optional when content becomes large
+  one-more-take.html             playable build; stable engine inlined
 
 lib/
-  one-more-take-engine.mjs       pure simulation functions
+  one-more-take-engine.mjs       source-equivalent pure simulation module
 
 tests/
-  one-more-take-engine.test.mjs
+  one-more-take-engine.test.mjs  Node test suite
 ```
 
-The shipping HTML may inline the stable engine later. Development must not sacrifice testability merely to preserve one physical file.
+The playable HTML remains portable and deployable by itself. The module and test file exist so simulation logic can be exercised outside React and compared against the inlined engine. Any future engine change must be applied to both forms until the build pipeline automates the inlining step.
 
 ### Core state
 
@@ -1418,39 +1385,49 @@ Use one `useReducer` game state rather than dozens of loosely connected state ho
 
 ```js
 {
-  saveVersion: 1,
-  studio: {},
-  talent: {},
-  crew: {},
-  projects: {},
-  franchises: {},
+  saveVersion: 2,
+  build: "0.3-phase2",
+  meta: {
+    createdAt: "ISO timestamp",
+    updatedAt: "ISO timestamp"
+  },
+  studio: {
+    name: "Hammy Pictures",
+    cash: 250000,
+    reputation: 12,
+    trust: 50,
+    prestige: 5,
+    year: 1,
+    quarter: 1
+  },
   archive: [],
-  currentProjectId: null,
-  turn: 1,
-  year: 1,
-  quarter: 1,
+  current: null,
+  franchises: {},
+  history: [],
   rngSeed: 12345,
-  settings: {},
-  history: []
+  settings: { sound: true },
+  sound: true
 }
 ```
 
 ### Pure engine boundary
 
-The following functions remain pure and testable:
+The Phase 2 engine currently exposes these pure and testable functions:
 
-- `generateScriptSlate(state, seed)`
+- `createGameState(name, now)`
+- `createProject(script, game, nowMs)`
 - `calculateChemistry(a, b, context)`
-- `calculateSceneOutcome(project, scene, choice, state)`
-- `applyConsequence(state, consequence)`
-- `calculateFilmScores(project, state)`
-- `calculateRelease(project, state)`
-- `generateAwards(state, year)`
-- `advanceQuarter(state)`
+- `calculateSceneOutcome(context)`
+- `calculateFilmScores(project, script, cast)`
+- `calculateRelease(context)`
+- `advanceQuarter(studio)`
+- `finalizePremiere(game, film, now)`
 - `validateSave(raw)`
-- `migrateSave(raw)`
+- `migrateSave(raw, now)`
+- `hashSeed(value)`
+- `seeded(seed, index)`
 
-React renders results and dispatches actions. It does not contain duplicate business rules.
+React now renders results and dispatches through a root reducer adapter. Script selection, production outcomes, release scoring, quarter advancement and save migration call the engine rather than carrying duplicate formulas inside UI components.
 
 ### Seeded randomness
 
@@ -1474,7 +1451,7 @@ Benefits:
 
 ### Save key
 
-`oneMoreTake_save_v1`
+`oneMoreTake_save_v2`
 
 Save after:
 
@@ -1490,9 +1467,9 @@ Save after:
 
 Keep one backup key:
 
-`oneMoreTake_save_v1_backup`
+`oneMoreTake_save_v2_backup`
 
-Before writing a new save, copy the last valid save to the backup key.
+Before writing a new save, validate and normalize it, then copy the previous valid v2 save to the backup key. Loading checks the v2 key, the v2 backup and the legacy v1 key in that order. A valid v1 save is migrated without deleting the original.
 
 ### Export/import
 
@@ -1508,12 +1485,10 @@ Import validates shape and save version before replacing anything.
 
 - Do not host a large raster library inside the repository.
 - Hotlink compressed, correctly sized royalty-free stock variants rather than full-resolution originals.
-- Keep an ordered URL chain per asset: verified stock primary, independent secondary fallback, neutral final fallback.
 - Preload only the current screen's hero image and the next likely production image.
 - Lazy-load archive, roster and inactive-scene images.
-- Portrait and background components must reserve their final dimensions before loading so failed or delayed images do not cause layout jumps or overlaps.
+- Portrait and background components must render their SVG/CSS fallback immediately, then enhance with stock photography when it loads.
 - Cache successful remote images through normal browser caching; never require an image to be refetched before simulation can continue.
-- Test deployed image loading from the Vercel route itself; local browser success is not sufficient.
 - Animations use transform and opacity.
 - Honour `prefers-reduced-motion`.
 - Keep the active DOM small; archive cards render lazily if necessary.
@@ -1691,9 +1666,9 @@ The game must fail visibly and recoverably, never silently.
 
 Each phase must pass before the next begins.
 
-### Phase 1 — Static shell and design system — COMPLETE
+### Phase 1 — Static shell and design system
 
-Built:
+Build:
 
 - title screen;
 - studio office;
@@ -1711,22 +1686,30 @@ Built:
 
 ### Phase 2 — Data contracts and engine tests
 
-Build:
+**Implementation status: LOCALLY PASSED — deployment smoke test pending.**
 
-- game state;
-- talent object;
-- script object;
-- MovieProject object;
-- seeded RNG;
-- reducer actions;
-- save validation;
-- pure engine test harness.
+Built:
 
-**Passes when:** deterministic scene and save tests are green.
+- version-2 root game state;
+- normalized studio and MovieProject contracts;
+- centralized talent and script data;
+- deterministic seeded RNG;
+- root `useReducer` update flow;
+- v1 → v2 save migration;
+- primary, legacy and backup save recovery;
+- save validation before persistence;
+- pure chemistry, scene, film-score, release and quarter functions;
+- standalone engine module;
+- seven-test Node suite;
+- four-test in-browser diagnostic hook exposed as `window.OMT_PHASE2_TESTS`.
 
-### Phase 3 — One complete film — OPERATIONAL, NOT YET PASSED
+**Current evidence:** seven of seven Node tests green; four of four in-browser self-tests green; TypeScript JSX transpilation reports zero syntax diagnostics; a mocked runtime load completes without error.
 
-The current build completes the full loop with three fixed scripts:
+**Passes when:** the v0.3 files are deployed and one full film is completed in a normal browser with migrated and fresh saves. No further engine work is required before that smoke test unless deployment exposes a defect.
+
+### Phase 3 — One complete film
+
+Build the full loop with one fixed script:
 
 - cast;
 - budget;
@@ -1922,7 +1905,7 @@ The game should discourage save-scumming through humour and continuity, not by h
 
 **Technical template:** Whisker Warriors-style React single-page build with GSAP animation and local saving.
 
-**Art approach:** the interface is stock-photography dominant. Royalty-free compressed images are hotlinked from providers that permit the intended use, with ordered multi-source fallback arrays for resilience. Talent portraits, screenplay cards, office actions, sets and premiere backdrops use photography. SVG is limited to essential interface icons, masks, small effects and last-resort fallback art. Every production asset requires a traceable manifest entry before release.
+**Art approach:** royalty-free compressed stock images are hotlinked rather than stored in the repo. Each visual slot uses a finite multi-source chain—currently Unsplash, Picsum and Placehold.co—before revealing its non-blocking SVG/CSS fallback. Real images are explicitly positioned above fallback art with `position: relative; z-index: 1`; the fallback layer is `z-index: 0` and ignores pointer input. Stock-photo portraits are now locked for actors and directors. SVG is retained mainly for essential controls and last-resort fallback art.
 
 **Premiere:** mandatory generated visual recap, not numbers only.
 
@@ -1934,26 +1917,28 @@ The game should discourage save-scumming through humour and continuity, not by h
 
 **Build priority:** complete one-film loop before progression and content scale.
 
-**Deployment:** the canonical browser build lives at `public/one-more-take.html` and deploys through Vercel from the `main` branch.
 
-**Image resilience:** current v0.2 assets use ordered remote source arrays. Compressed stock URLs are the preferred photographic primary; independent fallbacks prevent one blocked host from blanking the interface.
+**Image rendering:** resolved. The missing-photo problem was CSS paint order, not failed hotlinks. The real `<img>` layer now sits above the absolutely positioned fallback layer.
 
-**Icon posture:** use very few inline SVG icons. Prefer typography, photography and clear layout; reserve icons for navigation, sound state and unambiguous utility actions.
+**Talent portraits:** resolved. Use curated stock-photo portraits with multi-host fallbacks; procedural SVG faces are no longer the primary presentation.
 
-### Still open — resolve during Phase 3 or Phase 4
+**Studio naming:** resolved. The player may name the studio; “Hammy Pictures” remains the default.
 
-1. Final title: **ONE MORE TAKE!** remains the working title.
-2. Whether the fictional studio is named by the player or begins as “Hammy Pictures.”
-3. Whether campaigns use real calendar years or fictional Year 1, Year 2 progression.
-4. Exact starting roster and character names.
-5. RESOLVED: actors and directors use curated stock-photo portraits with deterministic crops and remote fallback chains.
-6. Whether scripts are always shown as three cards or become a scrollable market at higher tiers.
-7. Whether the player may directly rename every film.
-8. How long the unskipped premiere should run; target is 15–25 seconds.
-9. Whether awards season occurs after every four films or strictly at year-end.
-10. Whether a second production slot is an upgrade or only a late-game tier benefit.
-11. Whether the v1 studio can permanently fail or always receives a humiliating rescue.
-12. Whether the first public release includes Sci-Fi or holds it for the first major content update.
+**Campaign calendar:** resolved for v1. Use fictional Year/Quarter progression rather than real historical years.
+
+**Phase 2 engine boundary:** resolved. The browser build inlines the engine for portability while the same pure functions are maintained in an `.mjs` module with Node tests.
+
+### Still open — resolve after the v0.3 deployment smoke test
+
+1. Whether **ONE MORE TAKE!** becomes the permanent final title.
+2. Whether scripts remain a three-card slate or expand into a scrollable market at higher tiers.
+3. Whether the player may directly rename every film.
+4. Whether the unskipped premiere should remain roughly 15–25 seconds.
+5. Whether awards season occurs strictly at year-end or after a fixed number of releases.
+6. Whether a second production slot is purchased as an upgrade or granted by studio tier.
+7. Whether the studio can permanently fail or always receives a humiliating rescue.
+8. How quickly relationships and chemistry should become visible to the player.
+9. Whether Phase 4 adds six more scripts immediately or first deepens the existing three.
 
 ---
 
