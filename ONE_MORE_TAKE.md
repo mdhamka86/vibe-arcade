@@ -2,7 +2,7 @@
 
 Design specification for **ONE MORE TAKE!**, a light, funny, mobile-first web game about running a chaotic movie studio. The game takes the emotional core of *The Movies* and *Stunts & Effects*—discovering stars, casting films, surviving productions, directing stunts and watching the finished result—and compresses it into a fast browser tycoon built on the proven **Whisker Warriors** structure.
 
-**Status:** v0.5 LIVING-STUDIO BUILD PREPARED (20/07/2026). v0.4 is deployed and mobile-tested: story-specific stock photography renders correctly, crops hold across office, screenplay and talent cards, the full film loop works, and rejecting a screenplay slate advances the quarter. v0.5 begins Phase 4 content by expanding the screenplay library from 3 to 9, drawing a deterministic three-card market each quarter, blocking immediate repeats after a rejected slate, exposing a live casting forecast, feeding persistent prior relationships into scene and release calculations, and writing relationship changes back into the save after every premiere. Eight embedded engine tests are green. The remaining Phase 4 gate is the first awards ceremony plus broader weighted production-event variation.
+**Status:** v0.6 AWARDS & ARCHIVE BUILD PREPARED (20/07/2026). v0.5 is deployed and verified: the nine-script quarterly market, rejection flow, casting forecasts and persistent relationships work through a complete film loop. v0.6 completes the core Phase 4 vertical slice with deterministic year-end Golden Backlot Awards, one-ceremony-per-year persistence, studio prestige and talent-career updates, save-version-3 migration, and clickable archive records containing cast, director, production ledger, scene outcomes, incidents, relationship fallout and award wins. Fourteen embedded engine tests are green and JSX/CSS static parsing passes. Weighted contextual production-event pools remain a later content-expansion task rather than a release blocker.
 
 **Owner:** Hammy (hammyLabs)  
 **Repo:** `mdhamka86/vibe-arcade`  
@@ -1734,9 +1734,12 @@ Current implementation status:
 - **Visible casting chemistry — complete in v0.5.** The Casting Room reports screen chemistry, genre fit, director control and a combined forecast before production approval.
 - **Persistent relationships — first pass complete in v0.5.** Co-star and actor/director relationships change after release, survive save/load and affect later chemistry calculations.
 - **Production-event breadth — partial.** All nine scripts currently carry four authored scene crises; a later Phase 4 pass should convert part of this into weighted contextual pools.
-- **Awards ceremony — not yet implemented.** This is the final major Phase 4 system.
+- **Awards ceremony — complete in v0.6.** Year-end advancement triggers a deterministic seven-category Golden Backlot ceremony exactly once per year, including serious and satirical awards. Winners update studio prestige, film records and persistent talent careers.
+- **Expanded archive — complete in v0.6.** Every poster opens a full film record with cast, director, financials, production settings, scene ledger, incidents, relationship fallout and award wins.
 
-**Passes when:** testers voluntarily make several films across multiple quarters, notice that screenplay markets change, and begin making casting decisions based on remembered relationships rather than raw skills alone.
+**Passes when:** testers voluntarily make several films across multiple quarters, notice that screenplay markets change, make casting decisions based on remembered relationships, reach a year-end ceremony, and revisit specific productions through the detailed archive.
+
+**Core Phase 4 status:** passed in v0.6. Weighted contextual incident pools remain desirable, but the complete multi-quarter story loop now exists.
 
 ### Phase 5 — Economy and progression
 
@@ -1939,17 +1942,48 @@ The game should discourage save-scumming through humour and continuity, not by h
 
 **Persistent relationships:** resolved for v0.5. Co-star and actor/director relationship values are stored in the root save, modify future chemistry and are updated after every released film.
 
-### Still open — resolve during the remainder of Phase 4
+**Awards timing:** resolved for v0.6. Awards season runs whenever the calendar crosses from Q4 into the next year, whether the quarter ends through a premiere or rejection. Each year can generate only one ceremony.
+
+**Awards persistence:** resolved for v0.6. Ceremony results, nominations, film wins, talent fame deltas and career records live in save version 3 and migrate safely from v2.
+
+**Archive depth:** resolved for the vertical slice. Archive posters open detailed production records instead of acting as decorative thumbnails.
+
+### Still open — resolve during Phase 5 and later content passes
 
 1. Whether **ONE MORE TAKE!** becomes the permanent final title.
 2. Whether higher studio tiers retain the three-card slate or unlock a broader scrollable script market.
 3. Whether the player may directly rename every film.
 4. Whether the unskipped premiere should remain roughly 15–25 seconds.
-5. Whether awards season occurs strictly at year-end or after a fixed number of releases.
 6. Whether a second production slot is purchased as an upgrade or granted by studio tier.
 7. Whether the studio can permanently fail or always receives a humiliating rescue.
 8. How quickly relationships should move from mild familiarity into friendship, feud or romance labels.
-9. Whether the first awards ceremony should trigger strictly at the end of Year 1 or after the studio has released four eligible films.
+
+---
+
+## v0.6 implementation record — Awards & Archive
+
+Implemented in the deployable single-file build:
+
+- save schema raised from version 2 to version 3;
+- v2, v2 backup and v1 saves migrate into the new root contracts;
+- root state now stores `awards`, `pendingAwardsYear` and `talentCareers`;
+- Q4 premiere or Q4 slate rejection triggers awards for the completed year;
+- ceremonies are deterministic from studio seed, eligible films and completed year;
+- categories: Best Picture, Best Director, Best Performance, Best Stunt, Best Effects, Biggest Flop and Most Questionable Creative Decision;
+- awards can run only once for a given year;
+- serious wins add studio prestige;
+- film credits and award wins modify persistent talent fame and career history;
+- new releases store production budget, department levels, posture, post decision, campaign, marketing and notable incidents;
+- archive posters open a complete film-detail screen;
+- year-end results route directly into the ceremony and pending ceremonies remain recoverable from the office;
+- embedded deterministic checks increased from eight to fourteen.
+
+Validation completed for the prepared build:
+
+- TypeScript JSX parser: zero syntax errors;
+- PostCSS parser: clean;
+- embedded engine suite: 14/14 passed;
+- deployable and versioned HTML byte counts match.
 
 ---
 
