@@ -2,7 +2,7 @@
 
 Design specification for **ONE MORE TAKE!**, a light, funny, mobile-first web game about running a chaotic movie studio. The game takes the emotional core of *The Movies* and *Stunts & Effects*—discovering stars, casting films, surviving productions, directing stunts and watching the finished result—and compresses it into a fast browser tycoon built on the proven **Whisker Warriors** structure.
 
-**Status:** v0.4 ART-DIRECTION + SLATE-CONTROL BUILD PREPARED (20/07/2026). The v0.3 Phase 2 engine is deployed and browser-smoke-tested: real stock photography renders above the SVG fallback layer, the one-film loop completes successfully, v1 saves migrate into the version-2 root state, and deterministic engine calculations remain intact. v0.4 performs a second full art-direction pass with more story-specific hero images, separate crop instructions for wide cards, production backdrops and tall posters, per-asset scale/filter treatment, and improved mobile framing. The Script Desk now supports the intended second decision: greenlight one pitch OR reject all three, advance the quarter, clear the slate and record the rejection in studio history. Five browser self-tests are green, including rejection advancing the calendar. Deployment and a final mobile crop smoke test are the remaining gate before v0.4 is marked deployed.
+**Status:** v0.5 LIVING-STUDIO BUILD PREPARED (20/07/2026). v0.4 is deployed and mobile-tested: story-specific stock photography renders correctly, crops hold across office, screenplay and talent cards, the full film loop works, and rejecting a screenplay slate advances the quarter. v0.5 begins Phase 4 content by expanding the screenplay library from 3 to 9, drawing a deterministic three-card market each quarter, blocking immediate repeats after a rejected slate, exposing a live casting forecast, feeding persistent prior relationships into scene and release calculations, and writing relationship changes back into the save after every premiere. Eight embedded engine tests are green. The remaining Phase 4 gate is the first awards ceremony plus broader weighted production-event variation.
 
 **Owner:** Hammy (hammyLabs)  
 **Repo:** `mdhamka86/vibe-arcade`  
@@ -1725,17 +1725,18 @@ Build the full loop with one fixed script:
 
 ### Phase 4 — Vertical slice content
 
-Add:
+Current implementation status:
 
-- nine scripts;
-- six actors;
-- two directors;
-- fifteen events;
-- three genres;
-- basic relationships;
-- one awards ceremony.
+- **Nine scripts — complete in v0.5.** The original three are joined by Crime Thriller, Drama, Creature Horror, Disaster Action, Workplace Comedy and Romantic Drama projects.
+- **Quarterly screenplay market — complete in v0.5.** Exactly three scripts are selected deterministically from the nine-script library for the current year and quarter.
+- **Rejected-slate memory — complete in v0.5.** Rejecting all three advances the quarter and prevents those same three scripts from immediately returning.
+- **Six actors and two directors — complete.**
+- **Visible casting chemistry — complete in v0.5.** The Casting Room reports screen chemistry, genre fit, director control and a combined forecast before production approval.
+- **Persistent relationships — first pass complete in v0.5.** Co-star and actor/director relationships change after release, survive save/load and affect later chemistry calculations.
+- **Production-event breadth — partial.** All nine scripts currently carry four authored scene crises; a later Phase 4 pass should convert part of this into weighted contextual pools.
+- **Awards ceremony — not yet implemented.** This is the final major Phase 4 system.
 
-**Passes when:** testers voluntarily start multiple studios or make several films in one sitting.
+**Passes when:** testers voluntarily make several films across multiple quarters, notice that screenplay markets change, and begin making casting decisions based on remembered relationships rather than raw skills alone.
 
 ### Phase 5 — Economy and progression
 
@@ -1930,7 +1931,15 @@ The game should discourage save-scumming through humour and continuity, not by h
 
 **Script-slate control:** resolved. The player is never forced to greenlight a pitch. Rejecting all three consumes the current quarter, clears any selection, records `SCRIPT_SLATE_REJECTED` in studio history and returns the player to the office in the next quarter.
 
-### Still open — resolve after the v0.4 deployment smoke test
+**Script-market size:** resolved for Phase 4. The library contains nine authored screenplays, while the player sees a deterministic market of exactly three each quarter.
+
+**Immediate slate repeats:** resolved. A rejected three-script slate is excluded from the following quarter whenever the remaining library can supply three alternatives.
+
+**Casting information:** resolved for the first relationship pass. Once lead, co-lead and director are selected, the game shows overall casting fit, actor chemistry, genre fit, director control and contextual notes before the player commits the budget.
+
+**Persistent relationships:** resolved for v0.5. Co-star and actor/director relationship values are stored in the root save, modify future chemistry and are updated after every released film.
+
+### Still open — resolve during the remainder of Phase 4
 
 1. Whether **ONE MORE TAKE!** becomes the permanent final title.
 2. Whether higher studio tiers retain the three-card slate or unlock a broader scrollable script market.
@@ -1939,8 +1948,8 @@ The game should discourage save-scumming through humour and continuity, not by h
 5. Whether awards season occurs strictly at year-end or after a fixed number of releases.
 6. Whether a second production slot is purchased as an upgrade or granted by studio tier.
 7. Whether the studio can permanently fail or always receives a humiliating rescue.
-8. How quickly relationships and chemistry should become visible to the player.
-9. Whether Phase 4 adds six more scripts immediately or first deepens the existing three.
+8. How quickly relationships should move from mild familiarity into friendship, feud or romance labels.
+9. Whether the first awards ceremony should trigger strictly at the end of Year 1 or after the studio has released four eligible films.
 
 ---
 
