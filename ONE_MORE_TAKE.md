@@ -2,7 +2,7 @@
 
 Design specification for **ONE MORE TAKE!**, a light, funny, mobile-first web game about running a chaotic movie studio. The game takes the emotional core of *The Movies* and *Stunts & Effects*—discovering stars, casting films, surviving productions, directing stunts and watching the finished result—and compresses it into a fast browser tycoon built on the proven **Whisker Warriors** structure.
 
-**Status:** v0.3 PHASE 2 ENGINE BUILD PREPARED (20/07/2026). The image paint-order bug is fixed: loaded stock photography now sits above the SVG fallback layer, while failed URLs continue through a finite Unsplash → Picsum → Placehold.co chain. The playable one-film loop remains intact. Phase 2 is now implemented locally with a version-2 root state, `useReducer` state flow, v1 save migration, backup recovery, deterministic project/scene/release calculations, pure engine functions, seven Node tests green, and four browser self-tests green. Current delivery files: `one-more-take.html`, `one-more-take-engine.mjs`, and `one-more-take-engine.test.mjs`. Deployment and browser smoke testing are the remaining gate before Phase 2 is marked deployed. The binding build order remains in force; content expansion still waits behind loop quality and stability.
+**Status:** v0.4 ART-DIRECTION + SLATE-CONTROL BUILD PREPARED (20/07/2026). The v0.3 Phase 2 engine is deployed and browser-smoke-tested: real stock photography renders above the SVG fallback layer, the one-film loop completes successfully, v1 saves migrate into the version-2 root state, and deterministic engine calculations remain intact. v0.4 performs a second full art-direction pass with more story-specific hero images, separate crop instructions for wide cards, production backdrops and tall posters, per-asset scale/filter treatment, and improved mobile framing. The Script Desk now supports the intended second decision: greenlight one pitch OR reject all three, advance the quarter, clear the slate and record the rejection in studio history. Five browser self-tests are green, including rejection advancing the calendar. Deployment and a final mobile crop smoke test are the remaining gate before v0.4 is marked deployed.
 
 **Owner:** Hammy (hammyLabs)  
 **Repo:** `mdhamka86/vibe-arcade`  
@@ -1905,7 +1905,7 @@ The game should discourage save-scumming through humour and continuity, not by h
 
 **Technical template:** Whisker Warriors-style React single-page build with GSAP animation and local saving.
 
-**Art approach:** royalty-free compressed stock images are hotlinked rather than stored in the repo. Each visual slot uses a finite multi-source chain—currently Unsplash, Picsum and Placehold.co—before revealing its non-blocking SVG/CSS fallback. Real images are explicitly positioned above fallback art with `position: relative; z-index: 1`; the fallback layer is `z-index: 0` and ignores pointer input. Stock-photo portraits are now locked for actors and directors. SVG is retained mainly for essential controls and last-resort fallback art.
+**Art approach:** royalty-free compressed stock images are hotlinked rather than stored in the repo. Each visual slot uses a finite multi-source chain—currently Unsplash, Picsum and Placehold.co—before revealing its non-blocking SVG/CSS fallback. v0.4 adds context-specific art direction: the same asset may define separate crops for a wide pitch card, cinematic production backdrop and tall theatrical poster, plus controlled scale, brightness, saturation and contrast. Key pitch art is now story-specific rather than merely genre-adjacent. Stock-photo portraits remain locked for actors and directors. SVG is retained mainly for essential controls and last-resort fallback art.
 
 **Premiere:** mandatory generated visual recap, not numbers only.
 
@@ -1928,10 +1928,12 @@ The game should discourage save-scumming through humour and continuity, not by h
 
 **Phase 2 engine boundary:** resolved. The browser build inlines the engine for portability while the same pure functions are maintained in an `.mjs` module with Node tests.
 
-### Still open — resolve after the v0.3 deployment smoke test
+**Script-slate control:** resolved. The player is never forced to greenlight a pitch. Rejecting all three consumes the current quarter, clears any selection, records `SCRIPT_SLATE_REJECTED` in studio history and returns the player to the office in the next quarter.
+
+### Still open — resolve after the v0.4 deployment smoke test
 
 1. Whether **ONE MORE TAKE!** becomes the permanent final title.
-2. Whether scripts remain a three-card slate or expand into a scrollable market at higher tiers.
+2. Whether higher studio tiers retain the three-card slate or unlock a broader scrollable script market.
 3. Whether the player may directly rename every film.
 4. Whether the unskipped premiere should remain roughly 15–25 seconds.
 5. Whether awards season occurs strictly at year-end or after a fixed number of releases.
