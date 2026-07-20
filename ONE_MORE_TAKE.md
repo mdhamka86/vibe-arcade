@@ -2,7 +2,7 @@
 
 Design specification for **ONE MORE TAKE!**, a light, funny, mobile-first web game about running a chaotic movie studio. The game takes the emotional core of *The Movies* and *Stunts & Effects*—discovering stars, casting films, surviving productions, directing stunts and watching the finished result—and compresses it into a fast browser tycoon built on the proven **Whisker Warriors** structure.
 
-**Status:** v0.6 AWARDS & ARCHIVE BUILD PREPARED (20/07/2026). v0.5 is deployed and verified: the nine-script quarterly market, rejection flow, casting forecasts and persistent relationships work through a complete film loop. v0.6 completes the core Phase 4 vertical slice with deterministic year-end Golden Backlot Awards, one-ceremony-per-year persistence, studio prestige and talent-career updates, save-version-3 migration, and clickable archive records containing cast, director, production ledger, scene outcomes, incidents, relationship fallout and award wins. Fourteen embedded engine tests are green and JSX/CSS static parsing passes. Weighted contextual production-event pools remain a later content-expansion task rather than a release blocker.
+**Status:** v0.7 STUDIO PROGRESSION & ECONOMY BUILD PREPARED (20/07/2026). v0.6 is deployed and verified through the complete film, awards and archive loop. v0.7 implements the Phase 5 campaign layer: three studio tiers, six permanent facility upgrades, quarterly overhead and debt interest, deterministic market trends, quarterly contract work, two loan products, debt repayment, a recoverable distress/insolvency state and one humiliating rescue package per game year. Facility ownership now feeds casting chemistry, scene quality, post-production, spectacle, audience response and box office. Saves migrate to version 4 while retaining v3, v2 and v1 fallback loading. Nineteen embedded engine tests are green and TypeScript JSX transpilation reports zero errors. Multi-year balance and pacing now require live playtesting.
 
 **Owner:** Hammy (hammyLabs)  
 **Repo:** `mdhamka86/vibe-arcade`  
@@ -1385,8 +1385,8 @@ Use one `useReducer` game state rather than dozens of loosely connected state ho
 
 ```js
 {
-  saveVersion: 2,
-  build: "0.3-phase2",
+  saveVersion: 4,
+  build: "0.7-studio-progression",
   meta: {
     createdAt: "ISO timestamp",
     updatedAt: "ISO timestamp"
@@ -1394,14 +1394,27 @@ Use one `useReducer` game state rather than dozens of loosely connected state ho
   studio: {
     name: "Hammy Pictures",
     cash: 250000,
+    debt: 0,
+    tier: 1,
+    upgrades: [],
+    status: "ACTIVE",
+    rescues: 0,
+    insolvencyStrikes: 0,
     reputation: 12,
     trust: 50,
     prestige: 5,
     year: 1,
-    quarter: 1
+    quarter: 1,
+    lastQuarterlyCosts: null
   },
   archive: [],
   current: null,
+  scriptSlate: null,
+  lastRejectedSlateIds: [],
+  relationships: {},
+  awards: [],
+  pendingAwardsYear: null,
+  talentCareers: {},
   franchises: {},
   history: [],
   rngSeed: 12345,
@@ -1412,22 +1425,22 @@ Use one `useReducer` game state rather than dozens of loosely connected state ho
 
 ### Pure engine boundary
 
-The Phase 2 engine currently exposes these pure and testable functions:
+The inlined engine currently exposes pure and testable functions for:
 
-- `createGameState(name, now)`
-- `createProject(script, game, nowMs)`
-- `calculateChemistry(a, b, context)`
-- `calculateSceneOutcome(context)`
-- `calculateFilmScores(project, script, cast)`
-- `calculateRelease(context)`
-- `advanceQuarter(studio)`
-- `finalizePremiere(game, film, now)`
-- `validateSave(raw)`
-- `migrateSave(raw, now)`
-- `hashSeed(value)`
-- `seeded(seed, index)`
+- game-state creation, validation and v1–v4 migration;
+- project creation and deterministic screenplay slates;
+- casting chemistry and persistent relationships;
+- scene, film and release calculations;
+- quarterly advancement, overhead and debt interest;
+- studio-tier eligibility and promotion;
+- permanent facility purchases and their simulation bonuses;
+- deterministic market trends;
+- contract offer generation and completion;
+- loans, debt repayment and rescue financing;
+- year-end awards and talent-career updates;
+- premiere finalisation and archive normalisation.
 
-React now renders results and dispatches through a root reducer adapter. Script selection, production outcomes, release scoring, quarter advancement and save migration call the engine rather than carrying duplicate formulas inside UI components.
+React remains the interface layer. It renders state, requests engine actions and persists the normalized root object; financial and simulation formulas stay outside UI components.
 
 ### Seeded randomness
 
@@ -1451,7 +1464,7 @@ Benefits:
 
 ### Save key
 
-`oneMoreTake_save_v2`
+`oneMoreTake_save_v4`
 
 Save after:
 
@@ -1467,9 +1480,9 @@ Save after:
 
 Keep one backup key:
 
-`oneMoreTake_save_v2_backup`
+`oneMoreTake_save_v4_backup`
 
-Before writing a new save, validate and normalize it, then copy the previous valid v2 save to the backup key. Loading checks the v2 key, the v2 backup and the legacy v1 key in that order. A valid v1 save is migrated without deleting the original.
+Before writing a new save, validate and normalize it, then copy the previous valid v4 save to the backup key. Loading checks v4, the v4 backup, v3, the v3 backup, v2, the v2 backup and finally the legacy v1 key. Older saves are migrated without deleting their original storage entries.
 
 ### Export/import
 
@@ -1743,18 +1756,21 @@ Current implementation status:
 
 ### Phase 5 — Economy and progression
 
-Add:
+Implemented in v0.7:
 
-- quarters;
-- years;
-- studio tiers;
-- upgrades;
-- contracts;
-- trends;
-- emergency jobs;
-- bankruptcy recovery.
+- quarterly overhead and debt interest after films, slate rejection and contracts;
+- three studio tiers with reputation, prestige and cash gates;
+- six permanent upgrades that feed directly into production formulas;
+- deterministic genre trends that affect audience response and box office;
+- three deterministic contract offers per quarter;
+- small and large loan products plus partial debt repayment;
+- distress and insolvency tracking;
+- one costly, humiliating rescue package per year;
+- save-version-4 migration and financial history events.
 
-**Passes when:** a multi-year campaign remains challenging but recoverable.
+**Implementation status:** complete in v0.7.
+
+**Balance gate:** passes when live testing confirms that a multi-year campaign is challenging but recoverable, contracts do not dominate filmmaking, promotions arrive at a satisfying pace and rescue financing feels painful without becoming a death spiral.
 
 ### Phase 6 — Stunts & Effects
 
@@ -1944,19 +1960,20 @@ The game should discourage save-scumming through humour and continuity, not by h
 
 **Awards timing:** resolved for v0.6. Awards season runs whenever the calendar crosses from Q4 into the next year, whether the quarter ends through a premiere or rejection. Each year can generate only one ceremony.
 
-**Awards persistence:** resolved for v0.6. Ceremony results, nominations, film wins, talent fame deltas and career records live in save version 3 and migrate safely from v2.
+**Awards persistence:** resolved for v0.6. Ceremony results, nominations, film wins, talent fame deltas and career records now live inside save version 4 and migrate safely from v3, v2 and v1.
 
 **Archive depth:** resolved for the vertical slice. Archive posters open detailed production records instead of acting as decorative thumbnails.
 
-### Still open — resolve during Phase 5 and later content passes
+### Still open — resolve during Phase 6 and later content passes
 
 1. Whether **ONE MORE TAKE!** becomes the permanent final title.
 2. Whether higher studio tiers retain the three-card slate or unlock a broader scrollable script market.
 3. Whether the player may directly rename every film.
 4. Whether the unskipped premiere should remain roughly 15–25 seconds.
 6. Whether a second production slot is purchased as an upgrade or granted by studio tier.
-7. Whether the studio can permanently fail or always receives a humiliating rescue.
+7. Whether insolvency should eventually permit permanent failure; v0.7 currently guarantees a costly recovery path.
 8. How quickly relationships should move from mild familiarity into friendship, feud or romance labels.
+9. Whether quarterly overhead should rise with every individual upgrade rather than only with studio tier.
 
 ---
 
@@ -1983,6 +2000,36 @@ Validation completed for the prepared build:
 - TypeScript JSX parser: zero syntax errors;
 - PostCSS parser: clean;
 - embedded engine suite: 14/14 passed;
+- deployable and versioned HTML byte counts match.
+
+---
+
+
+## v0.7 implementation record — Studio Progression & Economy
+
+Implemented in the deployable single-file build:
+
+- save schema raised from version 3 to version 4;
+- v3, v3 backup, v2, v2 backup and v1 saves migrate into the current root contracts;
+- studio state now records tier, debt, owned upgrades, rescue usage, insolvency strikes, financial status and the last quarterly cost ledger;
+- Garage Pictures, Independent Studio and Major Lot tiers use distinct promotion gates and quarterly overhead;
+- Soundstage B, Talent Lounge, Competent Accounting Office, In-house Post Suite, Marketing Wing and Practical Effects Yard are permanent purchasable facilities;
+- upgrade bonuses feed casting chemistry, scene outcomes, craft, coherence, spectacle, audience scoring, box office and overhead;
+- quarterly settlement runs after a film release, script-slate rejection or completed contract;
+- debt accrues 2.5% interest per quarter;
+- deterministic market trends highlight one genre each quarter and provide a visible audience and box-office bonus;
+- deterministic contract boards offer three emergency jobs each quarter, each consuming the production slot;
+- players may take $100,000 or $250,000 loans, repay debt in chunks and access a once-per-year rescue below $75,000 cash;
+- negative cash creates DISTRESSED status, while repeated or severe deficits create INSOLVENT status without deleting the campaign;
+- film records store the studio tier, owned upgrades, market trend and quarterly costs active at release;
+- the Studio Office now surfaces debt, tier, financial status, next-quarter costs and the live market trend;
+- embedded deterministic checks increased from fourteen to nineteen.
+
+Validation completed for the prepared build:
+
+- TypeScript JSX transpilation: zero errors;
+- embedded engine suite: 19/19 passed;
+- deterministic contracts, promotions, upgrades, loans, repayments and quarterly settlement checks passed;
 - deployable and versioned HTML byte counts match.
 
 ---
