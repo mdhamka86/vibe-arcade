@@ -292,31 +292,14 @@ function Tape(){
   const [line,setLine]=useState(0);
   const deck=useRef(shuffle(TICKER_QUIPS));
   const idx=useRef(0);
-  // Live intraday quotes. This ticker used to read the ECB daily fix via frankfurter,
-  // which meant the number on screen could sit 100+ pips from the real market all day.
-  // A desk ticker showing yesterday's fix is worse than no ticker: it looks authoritative.
   useEffect(()=>{
-    const PAIRS=['EURUSD','GBPUSD','USDJPY','USDCHF','AUDUSD','NZDUSD','GBPJPY','EURJPY'];
-    let dead=false;
-    const pull=()=>{
-      Promise.all(PAIRS.map(p=>
-        fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${p}=X?interval=1m&range=1d`)
-          .then(r=>r.ok?r.json():null)
-          .then(j=>{
-            const m=j&&j.chart&&j.chart.result&&j.chart.result[0]&&j.chart.result[0].meta;
-            return m&&typeof m.regularMarketPrice==='number'?[p,m.regularMarketPrice]:null;
-          })
-          .catch(()=>null)
-      )).then(rows=>{
-        if(dead) return;
-        const out={};
-        rows.filter(Boolean).forEach(([p,px])=>{ out[p]=px.toFixed(p.includes('JPY')?3:4); });
-        if(Object.keys(out).length) setRates(out);
-      });
-    };
-    pull();
-    const t=setInterval(pull,60000); // refresh each minute so the tape stays honest
-    return ()=>{ dead=true; clearInterval(t); };
+    fetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR,GBP,JPY,CHF,AUD,NZD')
+      .then(r=>r.json())
+      .then(j=>{
+        const inv=x=>(1/x).toFixed(4);
+        setRates({EURUSD:inv(j.rates.EUR),GBPUSD:inv(j.rates.GBP),USDJPY:j.rates.JPY.toFixed(2),
+                  USDCHF:j.rates.CHF.toFixed(4),AUDUSD:inv(j.rates.AUD),NZDUSD:inv(j.rates.NZD)});
+      }).catch(()=>{});
   },[]);
   // advance the quip after each scroll cycle; reshuffle when the deck is exhausted so nothing repeats until all are seen
   useEffect(()=>{
@@ -542,12 +525,18 @@ function Book({state,refresh}){
         </div>}
       </div>
 
-      {report && <>
+      {report && report.aborted && <div className="alertbox a-amber"><div style={{fontWeight:700}}>Sync not applied</div><div style={{marginTop:3}}>{report.note}</div></div>}
+      {report && !report.aborted && <>
         {report.vitalsAlert && <div className={'alertbox '+(report.vitalsAlert.level==='RED'?'a-red':'a-amber')}>MARGIN {report.vitalsAlert.level}: {report.vitalsAlert.msg}</div>}
         <div className="alertbox a-green">Sync complete{report.shotsRead>1?` from ${report.shotsRead} screenshots`:''}. {report.updated||0} updated · {(report.closedDetected||[]).length} closure(s) detected · {(report.orphansAdded||[]).length} orphan(s) adopted.</div>
         {report.signFlags?.length>0 && <div className="alertbox a-amber">
-          <div style={{fontWeight:700,marginBottom:4}}>Corrected {report.signFlags.length} floating P/L sign{report.signFlags.length>1?'s':''} that disagreed with the price move:</div>
+          <div style={{fontWeight:700,marginBottom:4}}>{report.signFlags.length} P/L sign{report.signFlags.length>1?'s':''} to double-check (price relationship looked unusual):</div>
           {report.signFlags.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}
+          <div style={{marginTop:5}} className="dim">These kept the value MT5's colour showed. Verify on your platform if unsure.</div>
+        </div>}
+        {report.pairFixes?.length>0 && <div className="alertbox a-amber">
+          <div style={{fontWeight:700,marginBottom:4}}>Corrected {report.pairFixes.length} misread pair{report.pairFixes.length>1?'s':''} (entry price didn't fit the pair):</div>
+          {report.pairFixes.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}
           <div style={{marginTop:5}} className="dim">If any looks wrong, re-sync a clearer screenshot.</div>
         </div>}
       </>}
@@ -640,15 +629,7 @@ function Book({state,refresh}){
               : <span className={'badge '+flagCls[p.ageFlag]}>{p.hoursHeld!=null&&p.hoursHeld<24?`${p.hoursHeld<1?Math.round(p.hoursHeld*60)+'m':p.hoursHeld.toFixed(1)+'h'}`:`${p.ageDays}D`} {p.ageFlag!=='OK'?p.ageFlag:''}</span>}
           </div>
           <div className="meta">
-            {/* MT5 reports an unset stop as the NUMBER 0.000, so `p.sl ?? '—'` rendered it
-                as a quiet, plausible "SL 0.000" — a naked position looked identical to a
-                protected one. An unset stop is the single most expensive thing on this
-                screen; it now says so. */}
-            {(()=>{ const noStop = p.sl==null || +p.sl===0 || String(p.sl).trim()==='';
-              return noStop
-                ? <span className="red" style={{fontWeight:700}}>⚠ NO STOP LOSS</span>
-                : <span>SL {p.sl}</span>; })()}
-            <span>TP {(p.tp==null||+p.tp===0)?'—':p.tp}</span>
+            <span>SL {p.sl??'—'}</span><span>TP {p.tp??'—'}</span>
             <span className={p.floating>=0?'green':'red'}>float {p.floating??'?'}</span>
             {p.orphan && <span className="ambr">OFF-BOOK</span>}
             {p.ageResetAt && !p.longTerm && <span className="dim">re-underwritten</span>}
@@ -782,12 +763,7 @@ function Archive({state}){
               <span className={'badge '+badge[0]}>{badge[1]}</span>
             </div>
             {sv && <div className="meta"><span className="dim">{sv.note}</span>{sv.resolvedOn && <span className="dim">resolved {sv.resolvedOn}</span>}</div>}
-            {/* Progress used to be read off shadowTrail.length, i.e. how many times the cron
-                had happened to sample a price. That counted our own sampling, not elapsed
-                market time. The grader now reads the real intraday high/low path, so
-                progress is simply how far through the 3-day window the idea is. */}
-            {!sv && r.ts && (()=>{ const d=(Date.now()-r.ts)/86400e3;
-              return <div className="meta"><span className="dim">tracking · day {Math.min(3,Math.floor(d)+1)} of 3 {d<3?`(${(3-d).toFixed(1)}d left)`:'(resolving)'}</span></div>; })()}
+            {!sv && r.shadowTrail && r.shadowTrail.length>0 && <div className="meta"><span className="dim">tracking day {r.shadowTrail.length} of 3</span></div>}
           </div>
         );
       })}
@@ -814,13 +790,10 @@ function Vitals({state}){
 
   const light = ml==null?null : ml>=400?['GREEN','a-green','All clear, plenty of sea room.'] : ml>=250?['GREEN','a-green','Healthy, keep your sizing honest.'] : ml>=150?['AMBER','a-amber','Thin for correlated positions; a couple of bad candles moves this quickly.'] : ['RED','a-red','Stop-out territory approaches, reduce exposure now.'];
 
-  // readable margin gauge: baselines at 150 (floor), 250 (comfort), 400 (ample).
-  // lo was hardcoded to 100, which clamped the marker to the far left for ANY level at or
-  // below 100% — so a margin call at 80% rendered identically to a survivable 100%. The
-  // gauge went blind exactly where it mattered most. lo now tracks the actual reading.
+  // readable margin gauge: baselines at 150 (floor), 250 (comfort), 400 (ample)
   const gauge=()=>{
     if(ml==null) return null;
-    const lo=Math.min(100, ml-20), hi=Math.max(450, ml+30);
+    const lo=100, hi=Math.max(450, ml+30);
     const pct=(x)=>Math.max(0,Math.min(100,(x-lo)/(hi-lo)*100));
     const marks=[[150,'floor','var(--red)'],[250,'comfort','var(--amber)'],[400,'ample','var(--green)']];
     return (

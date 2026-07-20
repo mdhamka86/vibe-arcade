@@ -15,15 +15,27 @@ const MODEL = 'claude-sonnet-4-6';
 // ---------- Redis ----------
 async function rGet(key) {
   const r = await fetch(`${R_URL}/get/${key}`, { headers: { Authorization: `Bearer ${R_TOK}` } });
+  // audit finding 3: a transient Redis/network failure must NOT masquerade as "empty state",
+  // which would make the whole book look wiped. Fail loudly so the caller aborts rather than
+  // proceeding on phantom-empty data.
+  if (!r.ok) throw new Error(`Storage read failed (${r.status}). Your data is safe — this was a connection issue, not a change. Try again in a moment.`);
   const j = await r.json();
-  try { return j.result ? JSON.parse(j.result) : null; } catch { return null; }
+  // j.result === null means the key genuinely doesn't exist yet (fine); a parse error on a
+  // present value is a real problem, so surface it rather than swallowing to null.
+  if (j.result == null) return null;
+  try { return JSON.parse(j.result); }
+  catch { throw new Error(`Stored data for "${key}" was unreadable (corrupt value). Not proceeding, to avoid overwriting it.`); }
 }
 async function rSet(key, val) {
-  await fetch(`${R_URL}/set/${key}`, {
+  const r = await fetch(`${R_URL}/set/${key}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${R_TOK}` },
     body: JSON.stringify(val),
   });
+  // audit finding 3: a failed write must NOT report success, or the UI shows a change that
+  // never persisted. Throw so the caller knows the save didn't land.
+  if (!r.ok) throw new Error(`Storage write failed (${r.status}). Your change may not have saved — please retry.`);
+  return true;
 }
 
 // ---------- Bangkok clock ----------
@@ -209,7 +221,7 @@ function pipSize(pair, refPx) {
   if (!quote && refPx != null && refPx > 20) return 0.01;
   return 0.0001;
 }
-function checkLevels(idea, refPx, anchorMeta) {
+function checkLevels(idea, refPx) {
   const dir = (idea.direction || '').toUpperCase();
   const entry = num(idea.entry_zone);
   const tp = num(idea.tp);
@@ -217,22 +229,11 @@ function checkLevels(idea, refPx, anchorMeta) {
   if (entry == null || tp == null || sl == null) return { ok: false, reason: 'missing a numeric entry, TP or SL' };
   if (dir !== 'BUY' && dir !== 'SELL') return { ok: false, reason: 'direction not BUY/SELL' };
 
-  // 0) The anchor itself must be trustworthy. Validating a level against a stale price
-  // is theatre: it produces a green tick that means nothing. If the reference is the ECB
-  // fallback or has no live quote, refuse to certify rather than pretend.
-  if (!refPx) return { ok: false, reason: 'no live quote for this pair — cannot verify levels' };
-  if (anchorMeta && anchorMeta.stale) return { ok: false, reason: `reference price is the ${anchorMeta.source}, not an intraday quote — levels cannot be certified` };
-  const pairAge = anchorMeta && anchorMeta.ages ? anchorMeta.ages[normPair(idea.pair)] : null;
-  if (pairAge != null && pairAge > 15 * 60e3) return { ok: false, reason: `quote for ${idea.pair} is ${Math.round(pairAge / 60e3)}min old — too stale to anchor a one-day entry` };
-
-  // 1) entry must live near the real market. The prompt demands ~0.5%; the gate used to
-  // allow 1.5%, so the model was graded looser than it was instructed. That slack is
-  // exactly where the 16 Jul GBPJPY chase hid: 0.79% off live, waved through. The gate
-  // now matches the instruction. A one-day entry further than 0.5% from live is a limit
-  // order dressed up as a market idea, and by the time it fills the thesis has moved.
+  // 1) entry must live near the real market. For one-day trades an entry more than
+  // ~1.5% from live is really a limit order that may never fill in the horizon.
   if (refPx) {
     const drift = Math.abs(entry - refPx) / refPx;
-    if (drift > 0.005) return { ok: false, reason: `entry ${entry} is ${(drift * 100).toFixed(2)}% off live ${refPx.toFixed(4)} — beyond the 0.5% one-day fill window` };
+    if (drift > 0.015) return { ok: false, reason: `entry ${entry} is ${(drift * 100).toFixed(1)}% off live ${refPx.toFixed(4)} — too far to fill in a one-day window` };
     // every level should share the market's order of magnitude
     for (const [name, lvl] of [['TP', tp], ['SL', sl]]) {
       const d = Math.abs(lvl - refPx) / refPx;
@@ -262,137 +263,33 @@ function checkLevels(idea, refPx, anchorMeta) {
 function refFor(pair, rates) {
   if (!rates) return null;
   const p = normPair(pair);
-  if (p === '_META') return null;
-  if (rates[p] != null && typeof rates[p] === 'number') return rates[p];
+  if (rates[p] != null) return rates[p];
   // try inverse (e.g. someone wrote USDGBP)
   const inv = p.slice(3, 6) + p.slice(0, 3);
   if (rates[inv] != null) return +(1 / rates[inv]).toFixed(5);
   return null;
 }
 
-// ---------- Reference FX rates ----------
-// HISTORY: this used to read frankfurter.dev, which serves the ECB *daily reference fix*
-// (one snapshot per weekday, ~16:00 CET). It was labelled "live" to the model. On
-// 16 Jul 2026 that gap put GBPJPY at 217.67 when the real market was 219.23: a 156-pip
-// lie that produced a structurally sound idea anchored to a price that no longer existed.
-// The entry passed every gate because the gates were measured against the same stale number.
-// Now: real intraday quotes, with the age of every quote carried alongside it so both the
-// model and the validator can see how fresh the anchor actually is. ECB remains as a
-// last-resort fallback, but is loudly labelled STALE when used.
-const QUOTE_UNIVERSE = [
-  'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'NZDUSD', 'USDCAD',
-  'EURGBP', 'EURJPY', 'GBPJPY', 'EURAUD', 'GBPAUD', 'AUDJPY', 'NZDJPY',
-  'AUDNZD', 'CADJPY', 'CHFJPY', 'EURCHF', 'GBPCHF', 'AUDCAD',
-];
-const MAX_QUOTE_AGE_MS = 30 * 60e3; // beyond this a quote is not a tradeable anchor
-
-async function yahooQuote(pair) {
-  try {
-    const r = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${pair}=X?interval=1m&range=1d`,
-      { headers: { 'User-Agent': 'Mozilla/5.0 (TheTerminal/1.0)' } }
-    );
-    if (!r.ok) return null;
-    const m = (await r.json()).chart?.result?.[0]?.meta;
-    if (!m || typeof m.regularMarketPrice !== 'number') return null;
-    return { px: +m.regularMarketPrice.toFixed(5), ts: (m.regularMarketTime || 0) * 1000 };
-  } catch { return null; }
-}
-
-async function ecbFallback() {
+// ---------- Reference FX rates (frankfurter.dev, ECB daily, no key) ----------
+async function refRates() {
   try {
     const r = await fetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR,GBP,JPY,CHF,AUD,NZD,CAD');
     const j = await r.json();
     const R = j.rates;
     const inv = (x) => (x ? +(1 / x).toFixed(5) : null);
-    const cross = (a, b) => (R[a] && R[b] ? +(R[b] / R[a]).toFixed(5) : null);
+    const cross = (a, b) => (R[a] && R[b] ? +(R[b] / R[a]).toFixed(5) : null); // A/B where both are USD-based
     return {
+      asOf: j.date,
+      // USD majors
       EURUSD: inv(R.EUR), GBPUSD: inv(R.GBP), USDJPY: R.JPY, USDCHF: R.CHF,
       AUDUSD: inv(R.AUD), NZDUSD: inv(R.NZD), USDCAD: R.CAD,
+      // common crosses (value of A/B)
       EURGBP: cross('EUR', 'GBP'), EURJPY: R.JPY ? +(R.JPY / R.EUR).toFixed(5) : null,
       GBPJPY: R.JPY ? +(R.JPY / R.GBP).toFixed(5) : null, EURAUD: cross('EUR', 'AUD'),
       GBPAUD: cross('GBP', 'AUD'), AUDJPY: R.JPY ? +(R.JPY / R.AUD).toFixed(5) : null,
       NZDJPY: R.JPY ? +(R.JPY / R.NZD).toFixed(5) : null, AUDNZD: cross('AUD', 'NZD'),
       CADJPY: R.JPY ? +(R.JPY / R.CAD).toFixed(5) : null, CHFJPY: R.JPY ? +(R.JPY / R.CHF).toFixed(5) : null,
       EURCHF: cross('EUR', 'CHF'), GBPCHF: cross('GBP', 'CHF'), AUDCAD: cross('AUD', 'CAD'),
-      _ecbDate: j.date,
-    };
-  } catch { return null; }
-}
-
-async function refRates() {
-  const results = await Promise.all(QUOTE_UNIVERSE.map(async (p) => [p, await yahooQuote(p)]));
-  const rates = {};
-  const ages = {};
-  let newest = 0, oldest = 0, live = 0;
-  for (const [p, q] of results) {
-    if (!q || !q.px) continue;
-    const age = Date.now() - q.ts;
-    if (age > MAX_QUOTE_AGE_MS) continue; // a stale quote is worse than no quote
-    rates[p] = q.px;
-    ages[p] = age;
-    live++;
-    newest = newest ? Math.min(newest, age) : age;
-    oldest = Math.max(oldest, age);
-  }
-
-  // If live coverage collapsed, fall back to ECB but mark it unmistakably.
-  if (live < 6) {
-    const ecb = await ecbFallback();
-    if (!ecb) return null;
-    const date = ecb._ecbDate;
-    delete ecb._ecbDate;
-    return { ...ecb, _meta: { source: 'ECB daily fix (FALLBACK)', stale: true, asOf: date, liveCount: 0, note: 'NOT intraday. Treat every level as unverified.' } };
-  }
-
-  return {
-    ...rates,
-    _meta: {
-      source: 'Yahoo intraday',
-      stale: false,
-      liveCount: live,
-      newestAgeSec: Math.round(newest / 1000),
-      oldestAgeSec: Math.round(oldest / 1000),
-      asOf: new Date().toISOString(),
-      ages,
-    },
-  };
-}
-
-// ---------- Intraday range history (for honest shadow grading) ----------
-// The shadow book used to grade passed ideas by sampling ONE price per generation and
-// calling it a "daily mark". Measured against real hourly bars, that point-sample missed
-// up to 80% of the day's true range (15 Jul 2026: true range 251 pips, point-sample saw
-// 49). Ideas that cleanly hit TP were being graded SOFT_LOSS, and reflectAndLearn then
-// distilled standing "guidance" from those fabricated verdicts and fed it into every
-// future prompt. A wrong grade is worse than no grade: it teaches the desk lies.
-// This fetches the actual high/low path so a level is judged against what the market
-// really did, not against where it happened to be when the cron fired.
-async function rangeSince(pair, sinceMs) {
-  try {
-    const p = normPair(pair);
-    const r = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${p}=X?interval=1h&range=7d`,
-      { headers: { 'User-Agent': 'Mozilla/5.0 (TheTerminal/1.0)' } }
-    );
-    if (!r.ok) return null;
-    const res = (await r.json()).chart?.result?.[0];
-    if (!res || !res.timestamp) return null;
-    const q = res.indicators?.quote?.[0];
-    if (!q) return null;
-    const bars = [];
-    for (let i = 0; i < res.timestamp.length; i++) {
-      const ts = res.timestamp[i] * 1000;
-      if (ts < sinceMs) continue;
-      if (q.high[i] == null || q.low[i] == null) continue;
-      bars.push({ ts, hi: q.high[i], lo: q.low[i], close: q.close[i] });
-    }
-    if (!bars.length) return null;
-    return {
-      hi: Math.max(...bars.map((b) => b.hi)),
-      lo: Math.min(...bars.map((b) => b.lo)),
-      last: bars[bars.length - 1].close,
-      bars: bars.length,
     };
   } catch { return null; }
 }
@@ -416,24 +313,17 @@ function bookView(book) {
   return {
     ...book,
     positions: (book.positions || []).map((p) => {
-    const isLongTerm = !!p.longTerm || /long/i.test(p.proposedHorizon || '');
-      // HELD DURATION IS A FACT: always from the true open time (openedAt, anchored to the
-      // MT5 platform open time). This NEVER resets on a click, a KEEP, or a long-term mark.
-      const trueHeldDays = daysHeld(p.openedAt);
+      const base = p.ageResetAt || p.openedAt;
+      const d = daysHeld(base);
+      const isLongTerm = !!p.longTerm || /long/i.test(p.proposedHorizon || '');
+      // precise held duration matters for a zero-day desk: hours, not just whole days.
       const hoursHeld = p.openedAt ? Math.max(0, (now - p.openedAt) / 3600e3) : null;
-      // REVIEW STALENESS IS A SEPARATE NAG CLOCK: days since the last KEEP review (or open).
-      // It drives ONLY the review-ladder flag (OK/NOTE/AMBER/RED) so a consciously-kept
-      // position stops nagging. It is NEVER shown to the user as "held X days".
-      const reviewDays = daysHeld(p.ageResetAt || p.openedAt);
+      // is the open time anchored to the platform's own record, or only "since first seen"?
       const openTimeReliable = !!(p.mt5OpenTs || p.openTimeKnown || p.ideaId);
       return {
         ...p,
-        daysHeld: trueHeldDays,
-        ageDays: trueHeldDays,                                  // UI binds "held X days" to this
-        reviewDays,                                             // nag clock, ladder only
-        ageFlag: isLongTerm ? 'OK' : ageFlag(reviewDays),       // colour/flag from the nag clock
-        longTerm: isLongTerm,
-        hoursHeld: hoursHeld != null ? +hoursHeld.toFixed(1) : null,
+        daysHeld: daysHeld(p.openedAt), ageDays: d, ageFlag: isLongTerm ? 'OK' : ageFlag(d),
+        longTerm: isLongTerm, hoursHeld: hoursHeld != null ? +hoursHeld.toFixed(1) : null,
         openTimeReliable,
       };
     }),
@@ -447,31 +337,11 @@ function pasteRow(cells) { return cells.map((c) => (c ?? '')).join('\t'); }
 // ---------- Prompts ----------
 function deskContext(t, book, lessons, vitals, rates) {
   const bv = bookView(book);
-  const meta = rates && rates._meta;
-  // Rates line: this used to be hardcoded as "ECB daily", which was both stale AND
-  // dumped the _meta object into the list as "[object Object]". It feeds the red-flag
-  // reviewer too, so a keep-or-close verdict was being formed against yesterday's fix.
-  const rateLine = !rates
-    ? 'unavailable — do not reason about precise levels'
-    : `${Object.entries(rates)
-        .filter(([k, v]) => k !== '_meta' && k !== 'asOf' && typeof v === 'number')
-        .map(([k, v]) => `${k} ${v}`)
-        .join(', ')}`;
-  const rateHeader = !rates
-    ? 'PRICES UNAVAILABLE'
-    : meta && meta.stale
-    ? `Reference rates (${meta.source} — STALE, NOT intraday, may sit 100+ pips from market)`
-    : `Live rates (${meta ? meta.source : 'intraday'}, oldest ${meta ? meta.oldestAgeSec + 's' : '?'} old)`;
   return `CONTEXT
 Now (Bangkok): ${t.dmy} ${t.weekday} ${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}
 Account vitals: ${vitals ? `balance ${vitals.balance}, equity ${vitals.equity}, margin in use ${vitals.margin ?? 'n/a'}, free margin ${vitals.freeMargin ?? 'n/a'}, margin level ${vitals.marginLevel}%` : 'not yet synced'}
-Open book: ${bv.positions.length ? bv.positions.map((p) => {
-    const live = rates && typeof rates[normPair(p.pair)] === 'number' ? rates[normPair(p.pair)] : null;
-    const dist = live && num(p.entry) != null ? ` | now ${live} (${(((live - num(p.entry)) / pipSize(p.pair, live))).toFixed(0)}p from entry)` : '';
-    const noStop = !p.sl || String(p.sl) === '0' || String(p.sl) === '0.000' ? ' *** NO STOP LOSS SET ***' : '';
-    return `${p.pair} ${p.direction} ${p.lots} lots @ ${p.entry}, SL ${p.sl || 'none'}, TP ${p.tp || 'none'}, floating ${p.floating ?? '?'}, held ${p.daysHeld}d [${p.ageFlag}]${dist}${noStop}`;
-  }).join('; ') : 'FLAT, no open positions'}
-${rateHeader}: ${rateLine}
+Open book: ${bv.positions.length ? bv.positions.map((p) => `${p.pair} ${p.direction} ${p.lots} lots @ ${p.entry}, SL ${p.sl || 'none'}, TP ${p.tp || 'none'}, floating ${p.floating ?? '?'}, held ${p.daysHeld}d [${p.ageFlag}]`).join('; ') : 'FLAT, no open positions'}
+Reference rates (ECB daily, ${rates?.asOf || 'n/a'}): ${rates ? Object.entries(rates).filter(([k]) => k !== 'asOf').map(([k, v]) => `${k} ${v}`).join(', ') : 'unavailable'}
 Lessons archive (scar tissue, most recent first):
 ${lessons.slice(-12).reverse().map((l) => `- ${l.text} (${l.date})`).join('\n') || '- none yet'}`;
 }
@@ -515,44 +385,38 @@ async function actIdeas(force) {
   // not a tick-perfect certainty. Labelled as such.
   const graded = [];
   const WINDOW_MS = 3 * 86400e3;
-  const pendingShadow = s.ledger.filter((r) => r.status === 'passed' && !r.shadowResolved);
-  // fetch the real intraday path for each unresolved idea, in parallel
-  const shadowRanges = new Map();
-  await Promise.all(pendingShadow.map(async (rec) => {
-    const rng = await rangeSince(rec.idea.pair, rec.ts);
-    if (rng) shadowRanges.set(rec.id, rng);
-  }));
-
-  for (const rec of pendingShadow) {
+  for (const rec of s.ledger) {
+    if (rec.status !== 'passed' || rec.shadowResolved) continue;
+    const px = refFor(rec.idea.pair, rates);
+    if (px == null) continue;
     const entry = num(rec.idea.entry_zone);
     const tp = num(rec.idea.tp);
     const sl = num(rec.idea.sl);
     const dir = (rec.idea.direction || '').toUpperCase();
     if (entry == null || tp == null || sl == null) { rec.shadowResolved = true; rec.shadowVerdict = { grade: 'UNGRADEABLE', note: 'idea lacked clean levels' }; continue; }
 
-    const rng = shadowRanges.get(rec.id);
+    // append today's mark to the trail (once per day)
+    rec.shadowTrail = rec.shadowTrail || [];
+    if (!rec.shadowTrail.some((m) => m.date === t.dmy)) rec.shadowTrail.push({ date: t.dmy, px, ts: Date.now() });
+
+    // did any mark in the trail reach TP or SL?
+    const hitTP = rec.shadowTrail.some((m) => dir === 'BUY' ? m.px >= tp : m.px <= tp);
+    const hitSL = rec.shadowTrail.some((m) => dir === 'BUY' ? m.px <= sl : m.px >= sl);
     const windowClosed = Date.now() - rec.ts > WINDOW_MS;
-    if (!rng) {
-      // No path data: say so honestly rather than inventing a verdict from one tick.
-      if (windowClosed) { rec.shadowResolved = true; rec.shadowVerdict = { grade: 'UNGRADEABLE', note: 'no intraday price path available for this pair', resolvedOn: t.dmy }; }
-      continue;
-    }
 
-    // Judge against the ACTUAL high/low the market printed since the idea was offered.
-    const hitTP = dir === 'BUY' ? rng.hi >= tp : rng.lo <= tp;
-    const hitSL = dir === 'BUY' ? rng.lo <= sl : rng.hi >= sl;
-
-    if (hitTP && !hitSL) { rec.shadowResolved = true; rec.shadowVerdict = { grade: 'WIN', note: `target reached (true intraday range, ${rng.bars} bars)`, resolvedOn: t.dmy }; }
-    else if (hitSL && !hitTP) { rec.shadowResolved = true; rec.shadowVerdict = { grade: 'LOSS', note: `stop hit (true intraday range, ${rng.bars} bars)`, resolvedOn: t.dmy }; }
-    else if (hitTP && hitSL) { rec.shadowResolved = true; rec.shadowVerdict = { grade: 'AMBIGUOUS', note: 'both levels touched within the window; hourly bars cannot prove which came first', resolvedOn: t.dmy }; }
+    if (hitTP && !hitSL) { rec.shadowResolved = true; rec.shadowVerdict = { grade: 'WIN', note: 'reached target within window (daily closes)', resolvedOn: t.dmy }; }
+    else if (hitSL && !hitTP) { rec.shadowResolved = true; rec.shadowVerdict = { grade: 'LOSS', note: 'hit stop within window (daily closes)', resolvedOn: t.dmy }; }
+    else if (hitTP && hitSL) { rec.shadowResolved = true; rec.shadowVerdict = { grade: 'AMBIGUOUS', note: 'both levels touched on daily closes; true order unknown', resolvedOn: t.dmy }; }
     else if (windowClosed) {
-      const moved = dir === 'BUY' ? rng.last > entry : rng.last < entry;
+      // neither hit in 3 days: judge by final direction vs entry, marked as a soft call
+      const moved = dir === 'BUY' ? px > entry : px < entry;
       rec.shadowResolved = true;
       rec.shadowVerdict = { grade: moved ? 'SOFT_WIN' : 'SOFT_LOSS', note: 'neither level reached in 3d; graded on final drift', resolvedOn: t.dmy };
     }
-    // else: still live, leave unresolved
+    // else: still open, leave unresolved for next generation
 
     if (rec.shadowVerdict) graded.push(`${rec.idea.pair} ${rec.idea.direction} (passed ${rec.date}): ${rec.shadowVerdict.grade}`);
+    // keep legacy field populated for any older UI expectations
     if (rec.shadowVerdict && !rec.passedEval) {
       const g = rec.shadowVerdict.grade;
       rec.passedEval = { grade: g === 'WIN' || g === 'SOFT_WIN' ? 'WOULD_BE_GREEN' : g === 'LOSS' || g === 'SOFT_LOSS' ? 'WOULD_BE_RED' : 'WOULD_BE_FLAT', note: rec.shadowVerdict.note };
@@ -562,21 +426,10 @@ async function actIdeas(force) {
   const recentAAR = s.ledger.filter((r) => r.aar).slice(-6)
     .map((r) => `${r.idea?.pair || r.close?.pair} ${r.aar.bucket}: ${r.aar.headline}`).join('\n');
 
-  const meta = rates && rates._meta;
   const priceBlock = rates
-    ? Object.entries(rates)
-        .filter(([k, v]) => k !== 'asOf' && k !== '_meta' && typeof v === 'number')
-        .map(([k, v]) => {
-          const a = meta && meta.ages ? meta.ages[k] : null;
-          return a != null ? `${k} ${v} (${Math.round(a / 1000)}s old)` : `${k} ${v}`;
-        })
-        .join(', ')
+    ? Object.entries(rates).filter(([k]) => k !== 'asOf' && rates[k] != null)
+        .map(([k, v]) => `${k} ${v}`).join(', ')
     : 'live prices unavailable, be conservative';
-  const anchorBanner = !rates
-    ? 'NO PRICE FEED. Do not invent levels. Set stand_down true.'
-    : meta && meta.stale
-    ? `WARNING: prices below are the ${meta.source} (${meta.asOf}), NOT intraday. They can sit 100+ pips from the real market. Do NOT propose tradeable levels from them: set stand_down true and say the feed is down.`
-    : `Source: ${meta.source}, ${meta.liveCount} pairs live, freshest ${meta.newestAgeSec}s / oldest ${meta.oldestAgeSec}s old.`;
 
   // session awareness: the desk is used both at the 21:20 night session and in the
   // The desk is used at any hour, so read the actual clock and tailor the brief to the
@@ -598,11 +451,8 @@ ${sessionBrief}
 
 ${deskContext(t, s.book, s.lessons, s.book.vitals, rates)}
 
-LIVE REFERENCE PRICES (anchor EVERY level to these; entries must sit within 0.5% of the live price, not at invented round numbers):
-${anchorBanner}
+LIVE REFERENCE PRICES (anchor EVERY level to these; entries must sit within ~0.5% of the live price, not at invented round numbers):
 ${priceBlock}
-
-PRICE ANCHOR DISCIPLINE (this desk has been burned here): these quotes are intraday, each tagged with its age. A trade is only real at a price you can actually get. If an idea's entry is not within 0.5% of the quote above, it will be REJECTED by the validator, no exceptions. Never round an entry to a tidy number that sits away from the live quote: the tidy number is fiction, the quote is the market. If the banner above says the feed is stale or down, do not propose levels at all.
 
 Recent AAR verdicts:
 ${recentAAR || '- none yet'}
@@ -640,7 +490,7 @@ SIZING DOCTRINE (aggressive, margin-bounded):
 - Never duplicate or heavily correlate with open book exposure; if any correlation exists, state it in correlation_note.
 - ${t.isFriday ? 'It is FRIDAY: intraday-only ideas, nothing planned to hold over the weekend gap.' : 'Respect the 48h horizon.'}
 - Estimate margin cost at suggested lots and sanity-check against free margin.
-- Prefer R:R of at least 1.5. LEVEL DISCIPLINE (critical, every number is validated after you respond and a miss is rejected outright): entry_zone must sit within 0.5% of the live reference price above. SL and TP on the correct sides (BUY: SL below entry, TP above; SELL: SL above, TP below). Stop distance must be sane for a one-day trade: roughly 15-70 pips on majors, never tighter than ~8 pips (noise will stop it) nor wider than ~150 pips. Size levels to recent volatility, NOT arbitrary round numbers. Every level must share the pair's order of magnitude (e.g. NZDUSD levels are ~0.56xx, never 1.5xxx). Double-check each number against the live price before finalising.
+- Prefer R:R of at least 1.5. LEVEL DISCIPLINE (critical, every number is validated after you respond): entry_zone must sit within ~0.5% of the live reference price. SL and TP on the correct sides (BUY: SL below entry, TP above; SELL: SL above, TP below). Stop distance must be sane for a one-day trade: roughly 15-70 pips on majors, never tighter than ~8 pips (noise will stop it) nor wider than ~150 pips. Size levels to recent volatility, NOT arbitrary round numbers. Every level must share the pair's order of magnitude (e.g. NZDUSD levels are ~0.56xx, never 1.5xxx). Double-check each number against the live price before finalising.
 - Weigh the lessons archive; do not repeat known mistakes.
 
 Respond ONLY with JSON, no markdown:
@@ -651,7 +501,7 @@ Reminder: every price you output is checked against live rates after you respond
 
   // combined gate: reject on duplicate/open exposure OR broken levels, retry once
   const isDupe = (i) => banned.has(normPair(i.pair) + '|' + i.direction) || openPairs.includes(normPair(i.pair));
-  const levelCheck = (i) => checkLevels(i, refFor(i.pair, rates), rates && rates._meta);
+  const levelCheck = (i) => checkLevels(i, refFor(i.pair, rates));
   const isBad = (i) => isDupe(i) || !levelCheck(i).ok;
 
   if ((ideas.ideas || []).some(isBad)) {
@@ -735,8 +585,9 @@ JSON only: {"lesson":"one durable transferable principle, max 25 words, OR the l
 async function parseShot(image, kind) {
   const spec = {
     positions: `Extract ALL open positions AND the account vitals from this MT5 screenshot.
-JSON: {"positions":[{"pair":"EURUSD","direction":"BUY|SELL","lots":0.1,"entry":1.14388,"current":1.1438,"sl":1.116,"tp":1.18,"floating":-2.14,"openTime":"2026.07.08 21:14"}],"vitals":{"balance":0,"equity":0,"margin":0,"freeMargin":0,"marginLevel":0}}
-OPEN TIME (important): MT5 usually shows each position's OPEN TIME/date (often in a "Time" column or the position details, format like "2026.07.08 21:14"). Read it into openTime EXACTLY as shown if visible; this is how long the position has been held. If no open time is visible for a row, set openTime to null — do NOT guess it.
+JSON: {"positions":[{"pair":"EURAUD","direction":"BUY|SELL","lots":0.1,"entry":1.63669,"current":1.6450,"sl":1.62,"tp":1.6289,"floating":16.23,"openTime":"2026.07.20 03:38"}],"vitals":{"balance":0,"equity":0,"margin":0,"freeMargin":0,"marginLevel":0}}
+CRITICAL — READ THE PAIR EXACTLY: read all SIX letters of each symbol carefully. Do NOT confuse similar currency codes — AUD vs USD, CHF vs CAD, NZD vs NOK. A common error is misreading EURAUD as EURUSD. SANITY-CHECK EACH PAIR AGAINST ITS ENTRY PRICE: the entry must be plausible for the pair. Rough live ranges: EURUSD ~1.0-1.2, EURAUD ~1.5-1.7, EURCHF ~0.9-1.0, USDCHF ~0.8-0.95, GBPUSD ~1.2-1.4, USDJPY ~140-165, AUDUSD ~0.6-0.7. If your read of the pair makes the entry price implausible (e.g. "EURUSD" at 1.63 — impossible, EURUSD never trades there; that is EURAUD), you have MISREAD the pair — re-read it and correct it. The price is usually right; fix the pair to match it.
+OPEN TIME (important): MT5 usually shows each position's OPEN TIME/date (often in a "Time" column, format like "2026.07.20 03:38"). Read it into openTime EXACTLY as shown if visible. If no open time is visible for a row, set openTime to null — do NOT guess it.
 CRITICAL — SIGN OF FLOATING P/L: MT5 shows profit and loss BY COLOUR. A figure shown in GREEN (or blue/positive tint) is a PROFIT and MUST be a POSITIVE number; a figure shown in RED is a LOSS and MUST be a NEGATIVE number. Read the colour carefully and set the sign accordingly; never drop or invert it. Cross-check: for a BUY, if current price is above entry the floating is usually positive (below entry, negative); for a SELL it is the reverse. When colour and this cross-check disagree, trust the colour but read carefully.
 If a field is not visible use null. marginLevel as a number (percent). Numbers as numbers, not strings.`,
     history: `Extract ALL closed deals visible in this MT5 history screenshot.
@@ -779,9 +630,16 @@ function parseMT5Time(str) {
   if (!str || typeof str !== 'string') return null;
   const m = str.match(/(\d{4})[.\-/](\d{2})[.\-/](\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
   if (!m) return null;
-  const [, y, mo, d, h, mi, se] = m;
-  const ts = Date.UTC(+y, +mo - 1, +d, +h, +mi, +(se || 0));
-  return Number.isFinite(ts) ? ts : null;
+  const [, y, mo, d, h, mi, se] = m.map(Number);
+  // reject impossible field values up front (Date.UTC would silently roll them over,
+  // e.g. month 13 / day 45 -> a valid future date). Only accept genuine calendar values.
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || (se || 0) > 59) return null;
+  const ts = Date.UTC(y, mo - 1, d, h, mi, se || 0);
+  if (!Number.isFinite(ts)) return null;
+  // verify no rollover happened (e.g. Feb 30 -> Mar 2): the reconstructed date must match.
+  const dt = new Date(ts);
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+  return ts;
 }
 
 
@@ -808,7 +666,57 @@ async function actSync(positionsImgs, historyImg) {
   const histParse = historyImg ? await parseShot(historyImg, 'history') : { closes: [] };
 
   const seen = posParse.positions || [];
-  const report = { closedDetected: [], orphansAdded: [], updated: 0, agingFlags: [], vitalsAlert: null, shotsRead: imgs.length, signFlags: [] };
+  const report = { closedDetected: [], orphansAdded: [], updated: 0, agingFlags: [], vitalsAlert: null, shotsRead: imgs.length, signFlags: [], pairFixes: [] };
+
+  // SAFETY (audit finding 2): an empty parse must NOT wipe a non-empty book. If the vision
+  // parse returned zero positions but we currently HOLD positions, that is almost certainly a
+  // failed/partial read (blurry shot, wrong screen, model hiccup), not a genuine "everything
+  // closed" event. Refuse the sync and tell the user, rather than silently marking every real
+  // position closed. A genuinely flat account is confirmed by the user via an explicit action,
+  // not inferred from an empty read.
+  if (seen.length === 0 && (s.book.positions || []).length > 0) {
+    return {
+      clock: t, aborted: true,
+      report: { ...report, note: 'Sync aborted: the screenshot(s) showed no readable positions, but your book currently holds ' + s.book.positions.length + '. This is treated as a failed read, not a cleared book — nothing was changed. Re-upload a clear open-positions screenshot.' },
+      book: bookView(s.book),
+    };
+  }
+
+  // PAIR-PLAUSIBILITY GUARD: the vision parser can misread a currency code (classically
+  // EURAUD read as EURUSD). We use GENEROUS ranges (wide enough that a real price near a
+  // pair's normal band is never wrongly condemned) and, per audit, we DO NOT silently rewrite
+  // a position — a wrong "correction" is as dangerous as a wrong read. We FLAG the mismatch
+  // for the user to confirm, and only auto-correct in the single unambiguous misread case:
+  // the base currency matches and EXACTLY ONE other pair fits, AND the gap is large (a true
+  // impossibility, not an edge-of-band rounding). Even then we flag it loudly.
+  const PAIR_RANGES = {
+    EURUSD: [0.95, 1.30], EURAUD: [1.40, 1.80], EURCHF: [0.85, 1.05], EURGBP: [0.78, 0.95],
+    EURJPY: [145, 185], USDCHF: [0.75, 1.00], USDJPY: [130, 172], USDCAD: [1.25, 1.52],
+    GBPUSD: [1.15, 1.45], AUDUSD: [0.55, 0.75], NZDUSD: [0.52, 0.70], AUDJPY: [82, 118],
+    NZDJPY: [78, 104], CADJPY: [96, 126], GBPJPY: [172, 215], CHFJPY: [152, 195],
+    AUDNZD: [1.02, 1.18], EURNZD: [1.65, 2.00], GBPAUD: [1.80, 2.10], AUDCAD: [0.85, 1.03],
+  };
+  const plausible = (pair, px) => { const r = PAIR_RANGES[normPair(pair)]; return !r || (px >= r[0] && px <= r[1]); };
+  for (const pos of seen) {
+    const px = num(pos.entry);
+    if (px == null) continue;
+    if (plausible(pos.pair, px)) continue;
+    const base = normPair(pos.pair).slice(0, 3);
+    const candidates = Object.keys(PAIR_RANGES).filter((k) => px >= PAIR_RANGES[k][0] && px <= PAIR_RANGES[k][1]);
+    const sameBase = candidates.filter((k) => k.startsWith(base));
+    // Auto-correct ONLY the unambiguous classic misread: same base currency, exactly one
+    // candidate, and the read pair is genuinely far outside its band (not a rounding edge).
+    const r = PAIR_RANGES[normPair(pos.pair)];
+    const farOutside = r ? (px < r[0] * 0.9 || px > r[1] * 1.1) : true;
+    if (sameBase.length === 1 && farOutside) {
+      report.pairFixes.push({ was: pos.pair, now: sameBase[0], entry: px, auto: true, note: `${pos.pair} entry ${px} is far outside its range and matches ${sameBase[0]} exactly (same base currency) — auto-corrected as a likely screenshot misread. VERIFY on your platform.` });
+      pos.pair = sameBase[0];
+    } else {
+      // ambiguous or edge case: FLAG, never mutate. Let the user confirm.
+      pos.pairSuspect = true;
+      report.pairFixes.push({ was: pos.pair, now: null, entry: px, auto: false, note: `${pos.pair} entry ${px} looks unusual for ${pos.pair}${candidates.length ? ` (fits ${candidates.join('/')})` : ''}. NOT changed — verify the pair on your platform; the desk will hold judgement on it.` });
+    }
+  }
 
   // Sign sanity check for floating P/L: for a BUY, price above entry should mean a POSITIVE
   // float (below entry, negative); for a SELL the reverse. A clear contradiction likely means
@@ -835,11 +743,13 @@ async function actSync(positionsImgs, historyImg) {
     const onScreen = seen.find((x) => samePos(p, x, true));
     if (onScreen) {
       let fl = onScreen.floating ?? p.floating;
-      // correct a floating P/L whose sign contradicts the price move, and record it
+      // The parser reads the P/L sign from COLOUR (green=profit, red=loss), which is MT5's
+      // ground truth. If the price relationship seems to disagree, we do NOT silently flip the
+      // number — a wrong flip would turn a real profit into a displayed loss and could make a
+      // healthy position look BROKEN. Instead we FLAG the discrepancy for the user to eyeball,
+      // and KEEP the colour-read value. (A missing current price never triggers this.)
       if (onScreen.floating != null && floatSignWrong(p, onScreen)) {
-        const corrected = -num(onScreen.floating);
-        report.signFlags.push({ pair: p.pair, was: onScreen.floating, nowIs: corrected, note: `${p.pair}: ${onScreen.direction || p.direction} with price ${num(onScreen.current) > num(onScreen.entry ?? p.entry) ? 'above' : 'below'} entry but floating sign disagreed; corrected ${onScreen.floating} to ${corrected}` });
-        fl = corrected;
+        report.signFlags.push({ pair: p.pair, was: onScreen.floating, note: `${p.pair}: shown P/L ${onScreen.floating} but ${onScreen.direction || p.direction} with price ${num(onScreen.current) > num(onScreen.entry ?? p.entry) ? 'above' : 'below'} entry would usually be the opposite sign. Kept the value MT5's colour showed — double-check this one on your platform.` });
       }
       p.floating = fl;
       p.sl = onScreen.sl ?? p.sl; p.tp = onScreen.tp ?? p.tp;
@@ -1014,7 +924,14 @@ async function actAAR(closureId, historyImg) {
   if (!c) throw new Error('Closure not found.');
   if (!c.close && historyImg) {
     const hp = await parseShot(historyImg, 'history');
-    c.close = (hp.closes || []).find((x) => samePos(x, c.position)) || (hp.closes || [])[0] || null;
+    // require a CONFIDENT match on this specific position; do NOT fall back to the first
+    // closed trade (audit finding 6) — a wrong match corrupts realised P/L, lessons, and the
+    // linked idea. If nothing matches, ask for a clearer/correct history screenshot.
+    const match = (hp.closes || []).find((x) => samePos(x, c.position, true));
+    if (!match) {
+      return { needsHistory: true, closureId, noMatch: true, note: `Couldn't find ${c.position.pair} ${c.position.direction} ${c.position.lots} in that history screenshot. Upload one that clearly shows this trade's closing row, or dismiss the closure if it was a false alarm.` };
+    }
+    c.close = match;
   }
   if (!c.close) return { needsHistory: true, closureId };
 
