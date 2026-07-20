@@ -346,7 +346,7 @@ Rules you must obey:
 - If evidence is thin or conflicting, say FLAT and say why.
 
 Respond with ONLY a JSON object, no markdown fences, exactly these keys:
-{"direction":"BUY|SELL|FLAT","conviction":0-100,"entryZone":{"trigger":number,"maxChase":number},"slPrice":number,"tpPrice":number,"riskPercent":number,"rationale":"one paragraph"}
+{"direction":"BUY|SELL|FLAT","conviction":0-100,"entryZone":{"trigger":number,"maxChase":number},"slPrice":number,"tpPrice":number,"riskPercent":number,"rationale":"one or two sentences, no more than 220 characters"}
 For FLAT, entryZone/slPrice/tpPrice/riskPercent may be null.`;
 }
 
@@ -358,7 +358,7 @@ async function askModel(prompt) {
       "x-api-key": process.env.ANTHROPIC_API_KEY,
       "anthropic-version": "2023-06-01",
     },
-    body: JSON.stringify({ model: CONFIG.model, max_tokens: 700, messages: [{ role: "user", content: prompt }] }),
+    body: JSON.stringify({ model: CONFIG.model, max_tokens: 1000, messages: [{ role: "user", content: prompt }] }),
   });
   const j = await res.json();
   if (!j.content) throw new Error(`anthropic: ${JSON.stringify(j.error || j).slice(0, 200)}`);
