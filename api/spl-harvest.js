@@ -280,7 +280,7 @@ function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 // ?mode=debug&slug=tin-matic  → test one player's parse
 // ?mode=identity              → players + crests, NO stat scraping (fast, always safe)
 // ?mode=full&limit=5          → full harvest, optionally capped for a trial run
-module.exports = async (req, res) => {
+export default async (req, res) => {
   const { mode = 'identity', slug, limit } = req.query || {};
   try {
     if (mode === 'debug') {
@@ -307,10 +307,12 @@ module.exports = async (req, res) => {
 };
 
 // Also export internals for local testing.
-module.exports.fetchAllPlayers = fetchAllPlayers;
-module.exports.fetchCrests = fetchCrests;
-module.exports.parsePlayerStats = parsePlayerStats;
-module.exports.debugSinglePlayer = debugSinglePlayer;
-module.exports.debugRaw = debugRaw;
-module.exports.discoverMatchweeks = discoverMatchweeks;
-module.exports.harvest = harvest;
+export {
+  fetchAllPlayers,
+  fetchCrests,
+  parsePlayerStats,
+  debugSinglePlayer,
+  debugRaw,
+  discoverMatchweeks,
+  harvest,
+};

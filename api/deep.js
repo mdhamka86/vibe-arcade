@@ -68,7 +68,7 @@ function findPdfs(html) {
   return pdfs;
 }
 
-module.exports = async (req, res) => {
+export default async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   try {
     const url = new URL(req.url, "http://localhost");

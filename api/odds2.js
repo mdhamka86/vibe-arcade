@@ -242,9 +242,10 @@ async function handler(req, res) {
   }
 }
 
-// Assign the handler, THEN hang config off it. Doing `module.exports = fn`
-// replaces the whole exports object, so any `module.exports.config` set
-// BEFORE this line would be wiped out - which is what produced Vercel's
+// Under ESM the handler is the default export and the platform config is a
+// separate named export, so the old CommonJS hazard is gone by construction:
+// `module.exports = fn` used to replace the whole exports object and wipe any
+// `module.exports.config` set before it - which is what produced Vercel's
 // plain-text "An error occurred" page and the frontend JSON parse crash.
-module.exports = handler;
-module.exports.config = { maxDuration: 45 };
+export default handler;
+export const config = { maxDuration: 45 };

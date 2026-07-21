@@ -242,7 +242,7 @@ function scoreMeet(s, pdfCount) {
   return { score: total, reason: bits.join(", ") };
 }
 
-module.exports = async (req, res) => {
+export default async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "no-store, max-age=0");
   try {

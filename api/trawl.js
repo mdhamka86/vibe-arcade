@@ -884,7 +884,7 @@ function buildCopyText(pack) {
   return L.join("\n");
 }
 
-module.exports = async (req, res) => {
+export default async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Content-Type", "application/json");
   try {

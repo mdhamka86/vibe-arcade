@@ -28,7 +28,7 @@ const UAS = {
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
 };
 
-module.exports = async (req, res) => {
+export default async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   try {
     const u = new URL(req.url, "http://localhost");

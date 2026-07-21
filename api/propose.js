@@ -13,7 +13,7 @@
 //   POST ?action=seedcharter {force}     -> (re)write the bundled Charter into the vault
 //   POST ?action=run [{date?}]           -> build a betlist from the latest/﻿given pack
 
-const charterSeed = require("./charter-seed.json");
+import charterSeed from "./charter-seed.json" with { type: "json" };
 
 const R_URL =
   process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || "";
@@ -299,7 +299,7 @@ function packBrief(pack) {
   return L.join("\n");
 }
 
-module.exports = async (req, res) => {
+const handler = async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Content-Type", "application/json");
   try {
@@ -1368,7 +1368,11 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports._packBrief = packBrief;
-module.exports._charterText = charterText;
-module.exports._charterHealth = charterHealth;
-module.exports._charterDrift = charterDrift;
+export default handler;
+
+export {
+  packBrief as _packBrief,
+  charterText as _charterText,
+  charterHealth as _charterHealth,
+  charterDrift as _charterDrift,
+};

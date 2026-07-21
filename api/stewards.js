@@ -18,8 +18,8 @@
 // Keys: stw:meta, stw:betlog, stw:daily, stw:notes, stw:running, stw:formulas,
 //       stw:prev:* (rolling pre-write snapshots)
 
-const crypto = require("crypto");
-const seed = require("./stewards-seed.json");
+import crypto from "node:crypto";
+import seed from "./stewards-seed.json" with { type: "json" };
 
 const R_URL =
   process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || "";
@@ -579,7 +579,7 @@ function parseBody(req) {
   }
 }
 
-module.exports = async (req, res) => {
+const handler = async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Content-Type", "application/json");
   try {
@@ -2237,8 +2237,10 @@ module.exports = async (req, res) => {
   }
 };
 
-module.exports.computeAudit = computeAudit; // exposed for test harnesses
-module.exports.computeRuleDecay = computeRuleDecay; // exposed for test harnesses
+export default handler;
+
+// exposed for test harnesses
+export { computeAudit, computeRuleDecay };
 
 // ---- Vercel function configuration ----
 // THE TIMEOUT BUG (fixed): the client set a 115s leash on intake/reconcile and its comment
@@ -2265,7 +2267,7 @@ module.exports.computeRuleDecay = computeRuleDecay; // exposed for test harnesse
 // PLAN NOTE: 120 and trawl's 300 both exceed the classic non-Fluid ceiling of 60s. They
 // deploy, which means Fluid compute is enabled on this project (Fluid: 300s default, 800s
 // max on Pro). If Fluid is ever turned off, both will be rejected at deploy time.
-module.exports.config = {
+export const config = {
   maxDuration: 120,
   api: {
     // the vision endpoints guard their own 4.2MB b64 budget in code; this is the outer

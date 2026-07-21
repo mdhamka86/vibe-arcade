@@ -3,7 +3,7 @@
 // deployment matches the local HEAD. Born of the 19/07 incident where a stale
 // vercel.json broke every build for hours while GitHub byte-checks read green:
 // GitHub-green is not production-green, and this endpoint is how we know.
-module.exports = (req, res) => {
+export default (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.status(200).json({
     sha: process.env.VERCEL_GIT_COMMIT_SHA || null,

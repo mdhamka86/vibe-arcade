@@ -68,7 +68,7 @@ function findPdfs(html) {
   return pdfs;
 }
 
-module.exports = async (req, res) => {
+export default async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cache-Control", "no-store, max-age=0");
   try {
