@@ -8,6 +8,7 @@
 //   UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN  (or KV_REST_API_URL / KV_REST_API_TOKEN)
 
 import { getNews } from './exchange-news.js';
+import { enrichTickers, signalsBlock } from './exchange-massive.js';
 
 const R_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const R_TOK = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
@@ -34,6 +35,14 @@ async function rSet(key, val) {
   if (!r.ok) throw new Error(`Storage write failed (${r.status}). Your change may not have saved — please retry.`);
   return true;
 }
+
+// Best-effort cache adapter for the Massive enrichment layer. Unlike rGet/rSet, this NEVER
+// throws: a cached quant-signal bundle is a nice-to-have, and a cache read/write hiccup must
+// never abort an ideas hunt or a review. Genuine state (the book, ledger) still uses rGet/rSet.
+const massiveCache = {
+  get: async (key) => { try { return await rGet(key); } catch { return null; } },
+  set: async (key, val) => { try { await rSet(key, val); } catch { /* best-effort */ } },
+};
 
 // ---------- Bangkok clock (Hammy trades from Phuket) ----------
 function bkk() {
@@ -283,6 +292,14 @@ async function actIdeas(force) {
   // names the user has confirmed are NOT available on Phillip Nova: never propose again
   const unavailable = new Set((s.universe.unavailable || []).map((u) => (u || '').toUpperCase()));
 
+  // ---- Massive quant enrichment: give the model REAL technicals + insider posture on the
+  // names he actively watches, so "signal convergence" is measured, not guessed. US names
+  // only; regional (SGX/HKEX) tickers are skipped inside the module. Degrades to empty if
+  // the Massive feed is off, so the hunt runs unchanged without a key. ----
+  const watchTickers = (s.book.watchlist || []).map((w) => w.ticker).filter(Boolean);
+  let watchSignals = { lines: [] };
+  try { watchSignals = await enrichTickers(watchTickers, massiveCache); } catch { /* enrichment is a bonus, never fatal */ }
+
   // ---- financial headroom: what the account can honestly afford to take up ----
   // Drawn from the synced NOVA account summary so ideas are sized to reality, not fantasy.
   const acc = s.book.account || {};
@@ -331,6 +348,9 @@ ${recentLessons}
 
 TODAY'S MARKET & COMPANY NEWS WIRE:
 ${digest(news, 28)}
+
+QUANTITATIVE SIGNALS on his watchlist (real technicals + insider filings from Massive; use these to MEASURE convergence rather than infer it from headlines — an oversold RSI, a price reclaiming its 50-day, a MACD turning up, or a cluster of insider purchases is exactly the kind of hard evidence that EARNS an aggressive framing per rule 2):
+${signalsBlock(watchSignals.lines)}
 
 TASK: Propose exactly 2 fresh short-term STEAL ideas that help rebalance his book across sectors and markets. Try to include at least one daytime-tradeable regional name (SGX/HKEX/Asian) where a genuine steal exists. For each, indicate whether it is best taken as a plain SHARE or a more aggressive CFD, letting that follow the conviction. Present each in his journal's language: stock name, ticker, exchange, entry point, current market price, buy or sell, take profit, stop loss, and the reason (naming the converging signals, how it diversifies him, and that it fits his buying power). Only propose where news and recommendation genuinely converge. Be honest: if nothing is a real steal today, say so in desk_note and mark ideas at their true lower conviction rather than inflating them.
 
@@ -869,6 +889,12 @@ async function actReview(holdingId) {
   const sp = sanePrice(live, num(h.lastPrice) != null ? num(h.lastPrice) : num(h.avgCost));
   const priceNow = sp.price != null ? sp.price : num(h.lastPrice);
 
+  // Massive quant enrichment for THIS holding: real technicals + insider posture, so the
+  // hold/trim/close call is validated against hard data, not only the news wire. US names
+  // only (regional tickers are skipped inside the module); empty if the feed is off.
+  let holdingSignals = { lines: [] };
+  try { holdingSignals = await enrichTickers([h.ticker], massiveCache); } catch { /* bonus, never fatal */ }
+
   // profit/loss posture against average cost, for honest framing
   const pl = (priceNow != null && h.avgCost != null)
     ? `currently ${priceNow >= h.avgCost ? 'above' : 'below'} cost: paid ${h.avgCost}, now ${priceNow} (${(((priceNow - h.avgCost) / h.avgCost) * 100).toFixed(1)}%)`
@@ -929,6 +955,9 @@ ${financeBlock}
 
 FRESH COMPANY & MARKET NEWS (each item is source-tagged in [brackets] — real finance/market outlets):
 ${digest(news, 20)}
+
+QUANTITATIVE SIGNALS (real technicals + insider filings from Massive; treat these as hard evidence to validate your hold/trim/close call against — e.g. a deeply oversold RSI may argue against closing at the low, insider selling may corroborate a broken thesis, price back above its 50-day may confirm the story holds):
+${signalsBlock(holdingSignals.lines)}
 
 LESSONS ARCHIVE:
 ${priorLessons}
