@@ -1376,3 +1376,16 @@ export {
   charterHealth as _charterHealth,
   charterDrift as _charterDrift,
 };
+
+// ---- Vercel function configuration ----
+// Declared here for the same reason as trawl.js: the vercel.json "functions" entry for
+// this file was removed in d625ca5 while chasing a build failure, so ?action=run has
+// been executing on the platform default while the client waited the full 120s for it
+// (PROPOSE_MAX_MS in stewards.html). This is the endpoint where that gap bites hardest —
+// a run does a price sweep with its own 70s budget and THEN a max_tokens 8000 Claude
+// call, so it is the one most likely to be killed mid-flight and report a mystery.
+//
+// One source of truth, next to the code it bounds. If a vercel.json entry for this file
+// is ever restored, note that for plain Node /api routes the in-code value wins, so the
+// two must agree. Siblings: trawl 300s, stewards 120s, odds2 45s, all declared inline.
+export const config = { maxDuration: 120 };

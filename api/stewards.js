@@ -2248,21 +2248,31 @@ export { computeAudit, computeRuleDecay };
 // anywhere. The function ran on whatever the platform default happened to be, and the
 // client waited 115s for something that may already have been killed.
 //
-// TWO SOURCES OF TRUTH — READ THIS BEFORE CHANGING EITHER:
-// vercel.json also declares "api/stewards.js": { "maxDuration": 120 }. For plain Node /api
-// routes Vercel accepts BOTH this in-code config export and the vercel.json entry, and the
-// in-code value takes precedence. They currently agree at 120. If you change one, change
-// the other, or the file will say one thing and the platform will do another — which is
-// the exact failure this block was written to fix.
+// THIS EXPORT IS NOW THE ONLY SOURCE OF TRUTH for the timeout. It once had a twin —
+// vercel.json declared "api/stewards.js": { "maxDuration": 120 } — and this block used to
+// warn you to keep the two in step. That entry, along with trawl's and propose's, was
+// removed in d625ca5 while chasing a build failure. vercel.json's "functions" block now
+// declares only mission.js and forex-brain.js, so nothing outside this file bounds this
+// function any more.
 //
-// This export cannot simply be deleted in favour of vercel.json: the bodyParser limit below
-// has no vercel.json equivalent and must live here.
+// The removal is why trawl and propose each spent a stretch running on the platform
+// default while their clients waited on leashes for caps that no longer existed — the
+// same shape of failure as the original bug above, arrived at from the other direction.
+// Both now declare their own config inline, as does odds2. Durations live next to the
+// code they bound; there is no second place to check.
+//
+// If a vercel.json entry for this file is ever restored, note that for plain Node /api
+// routes Vercel accepts both and the in-code value takes precedence — so they must agree,
+// or the file will say one thing and the platform do another.
+//
+// This export cannot simply be deleted in favour of vercel.json in any case: the
+// bodyParser limit below has no vercel.json equivalent and must live here.
 //
 // WHY 120: it covers a fat 8-image vision parse (up to 4.2MB b64, max_tokens 4000, commonly
 // 20-60s) with room to spare, still bounds a runaway, and matches the client's leash.
-// Sibling functions in vercel.json: trawl 300s, propose 120s. The client derives every
-// leash from those numbers (see SERVER_MAX_MS / TRAWL_MAX_MS / PROPOSE_MAX_MS in
-// stewards.html) rather than restating them.
+// Sibling functions, all declared inline: trawl 300s, propose 120s, odds2 45s. The client
+// derives every leash from those numbers (see SERVER_MAX_MS / TRAWL_MAX_MS /
+// PROPOSE_MAX_MS in stewards.html) rather than restating them.
 //
 // PLAN NOTE: 120 and trawl's 300 both exceed the classic non-Fluid ceiling of 60s. They
 // deploy, which means Fluid compute is enabled on this project (Fluid: 300s default, 800s
