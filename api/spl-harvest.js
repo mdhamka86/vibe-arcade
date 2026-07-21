@@ -201,6 +201,22 @@ async function debugSinglePlayer(slug = 'tin-matic') {
   return { slug, filledCount: filled.length, stats };
 }
 
+/** DEBUG RAW: return the collapsed text around the stats so we can see real label/value layout. */
+async function debugRaw(slug = 'tin-matic') {
+  const html = await getText(`${BASE}/advanced-player-stat/${slug}/`);
+  const text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  // Grab a window around the first "Duels" so we see how Defensive Duels / Duels / Duels Won sit.
+  const i = text.indexOf('Defensive Duels');
+  const slice = i >= 0 ? text.slice(Math.max(0, i - 40), i + 220) : text.slice(0, 400);
+  return { slug, textLength: text.length, duelsRegion: slice, head: text.slice(0, 600) };
+}
+
 /** Full harvest. Polite: small delay between page hits to avoid hammering the site. */
 async function harvest({ limit = Infinity, delayMs = 300 } = {}) {
   const [players, clubs] = await Promise.all([fetchAllPlayers(), fetchCrests()]);
@@ -228,6 +244,9 @@ module.exports = async (req, res) => {
     if (mode === 'debug') {
       return res.status(200).json(await debugSinglePlayer(slug || 'tin-matic'));
     }
+    if (mode === 'raw') {
+      return res.status(200).json(await debugRaw(slug || 'tin-matic'));
+    }
     if (mode === 'identity') {
       const [players, clubs] = await Promise.all([fetchAllPlayers(), fetchCrests()]);
       return res.status(200).json({ branding: BRANDING, clubs, players });
@@ -247,4 +266,5 @@ module.exports.fetchAllPlayers = fetchAllPlayers;
 module.exports.fetchCrests = fetchCrests;
 module.exports.parsePlayerStats = parsePlayerStats;
 module.exports.debugSinglePlayer = debugSinglePlayer;
+module.exports.debugRaw = debugRaw;
 module.exports.harvest = harvest;
