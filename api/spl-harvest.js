@@ -200,6 +200,42 @@ async function fetchPlayerStats(slug) {
   return parsePlayerStats(html);
 }
 
+/**
+ * Discover ALL matchweek recap posts by paginating the news API server-side.
+ * No more manual page-by-page fetching — this walks every page itself and returns the full set.
+ * Returns each recap's week number, slug, title, and link, sorted, with any gaps flagged.
+ */
+async function discoverMatchweeks() {
+  const recaps = [];
+  for (let page = 1; page <= 10; page++) {
+    let batch;
+    try {
+      batch = await getJson(`${API}/posts?search=matchweek&per_page=100&page=${page}`);
+    } catch (e) {
+      break; // past the last page → stop
+    }
+    if (!Array.isArray(batch) || batch.length === 0) break;
+    for (const p of batch) {
+      const m = p.slug && p.slug.match(/five-lessons-from-matchweek-(\d+)/i);
+      if (m) {
+        recaps.push({
+          week: parseInt(m[1], 10),
+          slug: p.slug,
+          title: p.title?.rendered || '',
+          link: p.link,
+        });
+      }
+    }
+    if (batch.length < 100) break; // last page reached
+  }
+  recaps.sort((a, b) => a.week - b.week);
+  const weeks = recaps.map((r) => r.week);
+  const maxWeek = weeks.length ? Math.max(...weeks) : 0;
+  const missing = [];
+  for (let i = 1; i <= maxWeek; i++) if (!weeks.includes(i)) missing.push(i);
+  return { count: recaps.length, weeksPresent: weeks, missing, recaps };
+}
+
 /** DEBUG: run this on ONE slug first to verify parsing before the full sweep. */
 async function debugSinglePlayer(slug = 'tin-matic') {
   const stats = await fetchPlayerStats(slug);
@@ -253,6 +289,9 @@ module.exports = async (req, res) => {
     if (mode === 'raw') {
       return res.status(200).json(await debugRaw(slug || 'tin-matic'));
     }
+    if (mode === 'matchweeks') {
+      return res.status(200).json(await discoverMatchweeks());
+    }
     if (mode === 'identity') {
       const [players, clubs] = await Promise.all([fetchAllPlayers(), fetchCrests()]);
       return res.status(200).json({ branding: BRANDING, clubs, players });
@@ -273,4 +312,5 @@ module.exports.fetchCrests = fetchCrests;
 module.exports.parsePlayerStats = parsePlayerStats;
 module.exports.debugSinglePlayer = debugSinglePlayer;
 module.exports.debugRaw = debugRaw;
+module.exports.discoverMatchweeks = discoverMatchweeks;
 module.exports.harvest = harvest;
