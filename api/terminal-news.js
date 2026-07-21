@@ -50,10 +50,18 @@ function parseRSS(xml, srcName) {
   for (const b of blocks) {
     const title = tag(b, 'title');
     if (!title) continue;
+    // Prefer the REAL per-article publisher (audit finding 3): Google News embeds a <source>
+    // tag naming the true outlet (Reuters, FT, Bloomberg...). Read that FIRST so distinct
+    // publishers aren't all flattened to one feed label, which would wreck convergence. For a
+    // direct publisher feed (no <source> tag) use the feed's own name; only then fall back to
+    // the " - Publisher" suffix some titles carry.
+    const embedded = tag(b, 'source');
+    const realSource = embedded || srcName || (title.includes(' - ') ? (title.split(' - ').pop() || '').slice(0, 40) : '');
     items.push({
       title,
       link: tag(b, 'link'),
-      source: srcName || tag(b, 'source') || (title.split(' - ').pop() || '').slice(0, 40),
+      source: realSource || 'wire',
+      feedLabel: srcName || null, // which feed delivered it (for health/debug), kept separate
       pubDate: tag(b, 'pubDate'),
       ts: Date.parse(tag(b, 'pubDate')) || 0,
       desc: tag(b, 'description').slice(0, 280),

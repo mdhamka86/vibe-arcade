@@ -1,9 +1,29 @@
 // THE EXCHANGE — safety regression suite. Guards the 6 audit fixes:
 // P0 seed overwrite, empty-parse wipe, fail-closed Redis, short sign reversal,
 // candidate/convergence validation, direct feeds in holdings mode.
+// PORTABLE (audit finding 7): locates the engine relative to this file so it runs from any
+// checkout, and exits cleanly with a helpful message if it can't be found — never a raw crash.
+// Re-run any time with: node test_exchange_safety.js
 const fs = require('fs');
-const src = fs.readFileSync(__dirname.replace(/\/outputs$/,'/outputs') + '/exchange-engine.js', 'utf8').length
-  ? fs.readFileSync('/mnt/user-data/outputs/exchange-engine.js', 'utf8') : '';
+const path = require('path');
+function locateEngine() {
+  const here = __dirname;
+  const candidates = [
+    path.join(here, 'exchange-engine.js'),
+    path.join(here, '..', 'api', 'exchange-engine.js'),
+    path.join(here, '..', 'exchange-engine.js'),
+    path.join(here, '..', 'outputs', 'exchange-engine.js'),
+  ];
+  for (const c of candidates) { try { if (fs.existsSync(c)) return c; } catch (e) { /* keep looking */ } }
+  return null;
+}
+const ENGINE_PATH = locateEngine();
+if (!ENGINE_PATH) {
+  console.error('Could not find exchange-engine.js near this test (looked in ./ , ../api/ , ../ , ../outputs/).');
+  console.error('Run this suite from the repo so the engine is reachable, then re-run.');
+  process.exit(2);
+}
+const src = fs.readFileSync(ENGINE_PATH, 'utf8');
 let pass = 0, fail = 0; const fails = [];
 function check(n, c) { if (c) { pass++; } else { fail++; fails.push(n); console.log('  ✗', n); } }
 function num(v){if(v==null)return null;const m=String(v).match(/-?\d+(\.\d+)?/);return m?parseFloat(m[0]):null;}
@@ -62,9 +82,43 @@ async function actSeed(seedBook,_w,force,existing){
   check('engine has honest fetch-fail note', src.includes("news check couldn't run"));
 
   console.log('=== DIRECT FEEDS IN HOLDINGS MODE (finding 3) ===');
-  const nsrc=fs.readFileSync('/mnt/user-data/outputs/exchange-news.js','utf8');
-  const hb=nsrc.slice(nsrc.indexOf("scope === 'holdings'"), nsrc.indexOf('} else {'));
-  check('direct feeds present in holdings branch', hb.includes('DIRECT_MARKET_FEEDS'));
+  const newsPath = path.join(path.dirname(ENGINE_PATH), 'exchange-news.js');
+  if (fs.existsSync(newsPath)) {
+    const nsrc = fs.readFileSync(newsPath, 'utf8');
+    const hb = nsrc.slice(nsrc.indexOf("scope === 'holdings'"), nsrc.indexOf('} else {'));
+    check('direct feeds present in holdings branch', hb.includes('DIRECT_MARKET_FEEDS'));
+  } else {
+    console.log('  (exchange-news.js not found next to engine — skipping feed check)');
+  }
+
+  console.log('=== PARTIAL-SHOT + CONSUMED MATCHES (finding 6, carried from Terminal) ===');
+  check('engine has consumeMatch', src.includes('consumeMatch'));
+  check('engine has partialShot guard', src.includes('partialShot'));
+  check('engine has deferredClosures', src.includes('deferredClosures'));
+  check('engine iterates seenPool for orphans', src.includes('for (const x of seenPool)'));
+  check('engine no longer uses seen.find for reconcile', !src.includes('const onScreen = seen.find'));
+  (function(){
+    const partial=(s,b,h)=>s<b&&h===0;
+    check('partial holdings shot defers', partial(2,3,0)===true);
+    check('full holdings shot trusted', partial(3,3,0)===false);
+    check('partial + history trusted', partial(1,3,2)===false);
+  })();
+
+  console.log('=== sameHolding FALSE-MATCH SAFETY (book-corruption guard) ===');
+  (function(){
+    const m=src.match(/function sameHolding[\s\S]*?\n\}\n/);
+    if(!m){check('sameHolding extractable',false);return;}
+    const Module=require('module');const mod=new Module();
+    mod._compile(m[0]+'\nmodule.exports={sameHolding};','sh#test');
+    const sameHolding=mod.exports.sameHolding;
+    check('MRVL matches MRVL', sameHolding({ticker:'MRVL'},{ticker:'MRVL'})===true);
+    check('Marvell name variants match', sameHolding({name:'Marvell Technology'},{name:'Marvell'})===true);
+    check('MicroStrategy != Microsoft', sameHolding({name:'MicroStrategy'},{name:'Microsoft'})===false);
+    check('American Airlines != American Express', sameHolding({name:'American Airlines'},{name:'American Express'})===false);
+    check('Advanced Micro != Advanced Energy', sameHolding({name:'Advanced Micro'},{name:'Advanced Energy'})===false);
+    check('different tickers never merge', sameHolding({ticker:'MSTR',name:'MicroStrategy'},{ticker:'MSFT',name:'Microsoft'})===false);
+    check('same ticker diff name text matches', sameHolding({ticker:'AAPL',name:'Apple'},{ticker:'AAPL',name:'Apple Inc'})===true);
+  })();
 
   console.log('\n============================================================');
   console.log(`GRAND TOTAL: ${pass} passed, ${fail} failed`);

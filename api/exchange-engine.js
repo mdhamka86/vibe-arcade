@@ -485,11 +485,23 @@ JSON: {"closes":[{"name":"Company Name","ticker":"TICK or null","qty":5,"avgCost
 }
 
 function sameHolding(a, b) {
-  const an = (a.ticker || a.name || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const bn = (b.ticker || b.name || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  // Prefer TICKER identity: tickers are precise, so equal tickers = same holding, and two
+  // DIFFERENT tickers = different holdings, full stop (never fall through to fuzzy name match
+  // that could wrongly merge e.g. MicroStrategy with Microsoft). Fixes a real false-match risk.
+  const at = (a.ticker || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const bt = (b.ticker || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (at && bt) return at === bt;
+  // ticker missing on one/both -> fall back to NAME, but require a strong match, not a loose
+  // 5-char prefix. Exact normalised name, or one fully contains the other's significant name.
+  const an = (a.name || a.ticker || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const bn = (b.name || b.ticker || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (!an || !bn) return false;
-  // match on ticker/name stem; tolerate slight name variations by prefix
-  return an === bn || an.startsWith(bn.slice(0, 5)) || bn.startsWith(an.slice(0, 5));
+  if (an === bn) return true;
+  // containment only when the shorter name is substantial (>=6 chars) AND is a real leading
+  // segment of the other — so "MARVELL" matches "MARVELLTECHNOLOGY" but "MICRO..." pairs don't.
+  const shorter = an.length <= bn.length ? an : bn;
+  const longer = an.length <= bn.length ? bn : an;
+  return shorter.length >= 6 && longer.startsWith(shorter);
 }
 
 // ---------- Book sync: read positions (+ optional history), reconcile, review ----------
@@ -525,7 +537,7 @@ async function actSync(positionsImgs, historyImg) {
   if (seen.length === 0 && (s.book.holdings || []).length > 0) {
     return {
       clock: t, aborted: true,
-      report: { ...report, note: 'Sync aborted: the screenshot(s) showed no readable holdings, but your book currently holds ' + s.book.holdings.length + '. Treated as a failed read, not a cleared book — nothing was changed. Re-upload a clear positions screenshot.' },
+      report: { ...report, aborted: true, note: 'Sync aborted: the screenshot(s) showed no readable holdings, but your book currently holds ' + s.book.holdings.length + '. Treated as a failed read, not a cleared book — nothing was changed. Re-upload a clear positions screenshot.' },
       book: bookView(s.book),
     };
   }
@@ -549,14 +561,27 @@ async function actSync(positionsImgs, historyImg) {
     return (shouldBeProfit && upl < 0) || (!shouldBeProfit && upl > 0);
   };
 
+  // Consume matched rows so ONE screen holding can't satisfy TWO book holdings (audit finding 6,
+  // carried across from the Terminal). And guard PARTIAL screenshots: if the parse saw fewer
+  // holdings than the book holds and no history was provided, DEFER the unconfirmed closures
+  // (keep them) rather than marking real holdings sold from an incomplete shot.
+  const seenPool = [...seen];
+  const consumeMatch = (h) => {
+    const idx = seenPool.findIndex((x) => sameHolding(x, h));
+    if (idx === -1) return null;
+    return seenPool.splice(idx, 1)[0];
+  };
+  const partialShot = seen.length < (s.book.holdings || []).length && (histParse.closes || []).length === 0;
+  const deferredClosures = [];
   const still = [];
   report.signFlags = [];
   for (const h of (s.book.holdings || [])) {
-    const onScreen = seen.find((x) => sameHolding(x, h));
+    const onScreen = consumeMatch(h);
     if (onScreen) {
       h.lastPrice = onScreen.lastPrice ?? h.lastPrice;
       h.unrealised = onScreen.unrealised ?? h.unrealised;
       h.qty = onScreen.qty ?? h.qty;
+      h.direction = onScreen.direction ?? h.direction;
       // if the freshly-read sign contradicts the price move (for this position's DIRECTION),
       // FLAG it for the user — do NOT silently flip it. Keep what the platform showed.
       if (signLooksWrong(h)) {
@@ -566,17 +591,26 @@ async function actSync(positionsImgs, historyImg) {
       still.push(h);
     } else {
       const match = (histParse.closes || []).find((c) => sameHolding(c, h));
+      if (!match && partialShot) {
+        deferredClosures.push(h.ticker || h.name);
+        still.push(h);
+        continue;
+      }
       report.closedDetected.push({
         id: `close_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         holding: h, close: match || null, detectedAt: t.iso, needsHistory: !match,
       });
     }
   }
-  // 2) holdings on screen but not in the book => newly seen, adopt them
+  if (deferredClosures.length) {
+    report.partialShotNote = `Only ${seen.length} holding(s) were readable but your book holds ${s.book.holdings.length}, and no closing history was provided. To avoid a false close from a partial screenshot, these were KEPT and not marked sold: ${deferredClosures.join(', ')}. Re-sync a full holdings screenshot (or add a history shot) to confirm any genuine closures.`;
+  }
+  // 2) holdings on screen but not matched to any book holding => newly seen, adopt them.
+  // Iterate the LEFTOVER pool so a row already matched above is never also adopted.
   const pendingFills = s.book.pendingFills || [];
   report.filledFromGems = [];
-  for (const x of seen) {
-    if (!(s.book.holdings || []).find((h) => sameHolding(h, x))) {
+  for (const x of seenPool) {
+    {
       const adopted = {
         id: `hold_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         name: x.name, ticker: x.ticker || null, qty: x.qty, avgCost: x.avgCost,

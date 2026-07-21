@@ -345,6 +345,9 @@ function IdeaCard({idea,rec,onTaken,onPassed}){
       {Array.isArray(idea.sources) && idea.sources.length>0 && <div className="note" style={{marginTop:8}}>
         <span className="steel">SOURCES{idea.sourceConvergence?` · ${idea.sourceConvergence}`:''}</span> {idea.sources.map((s,i)=>`${s.outlet}: ${s.point}`).join('  ·  ')}
       </div>}
+      {Array.isArray(idea.evidence) && idea.evidence.length>0 && <div className="note" style={{marginTop:4}}>
+        <span className="steel">VERIFIED WIRE</span> {idea.evidence.map((e,i)=>`${e.outlet} (${e.strength||'match'}, ${e.age}): ${e.headline}`).join('  ·  ')}
+      </div>}
       {idea.conviction_note && <div className="note" style={{marginTop:4}}><span className="ambr">⚠ CONVICTION</span> {idea.conviction_note}</div>}
       <div className="note" style={{marginTop:8}}><span className="red">RISKS</span> {idea.risks}</div>
       {(idea.sizing_note||idea.margin_note) && <div className="note" style={{marginTop:4}}><span className="ambr">SIZING</span> {idea.sizing_note||idea.margin_note}</div>}
@@ -532,6 +535,7 @@ function Book({state,refresh}){
       {report && !report.aborted && <>
         {report.vitalsAlert && <div className={'alertbox '+(report.vitalsAlert.level==='RED'?'a-red':'a-amber')}>MARGIN {report.vitalsAlert.level}: {report.vitalsAlert.msg}</div>}
         <div className="alertbox a-green">Sync complete{report.shotsRead>1?` from ${report.shotsRead} screenshots`:''}. {report.updated||0} updated · {(report.closedDetected||[]).length} closure(s) detected · {(report.orphansAdded||[]).length} orphan(s) adopted.</div>
+        {report.partialShotNote && <div className="alertbox a-amber"><div style={{fontWeight:700,marginBottom:4}}>Partial screenshot — positions kept, not closed</div><div>{report.partialShotNote}</div></div>}
         {report.signFlags?.length>0 && <div className="alertbox a-amber">
           <div style={{fontWeight:700,marginBottom:4}}>{report.signFlags.length} P/L sign{report.signFlags.length>1?'s':''} to double-check (price relationship looked unusual):</div>
           {report.signFlags.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}

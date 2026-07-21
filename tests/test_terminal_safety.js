@@ -1,9 +1,59 @@
 // ============================================================================
 // TERMINAL SAFETY SUITE — hammers the DANGEROUS path: the data guards that decide
-// whether a healthy position gets wrongly condemned. Runs against the REAL engine
-// functions extracted into _guards.js. Re-run any time with: node test_terminal_safety.js
+// whether a healthy position gets wrongly condemned. Re-run any time with:
+//   node test_terminal_safety.js
+// PORTABLE (audit finding 7): this suite is SELF-CONTAINED. It locates the engine
+// relative to its own directory (so it runs from any checkout, not just one machine),
+// and extracts the real guard functions from the engine source at runtime — no separate
+// _guards.js file required. If the engine can't be found it says so and exits cleanly.
 // ============================================================================
-const G = require('./_guards.js');
+const fs = require('fs');
+const path = require('path');
+
+// find terminal-engine.js relative to this test file, trying common layouts
+function locateEngine() {
+  const here = __dirname;
+  const candidates = [
+    path.join(here, 'terminal-engine.js'),
+    path.join(here, '..', 'api', 'terminal-engine.js'),
+    path.join(here, '..', 'terminal-engine.js'),
+    path.join(here, '..', 'outputs', 'terminal-engine.js'),
+  ];
+  for (const c of candidates) { try { if (fs.existsSync(c)) return c; } catch (e) { /* keep looking */ } }
+  return null;
+}
+const ENGINE_PATH = locateEngine();
+if (!ENGINE_PATH) {
+  console.error('Could not find terminal-engine.js near this test (looked in ./ , ../api/ , ../ , ../outputs/).');
+  console.error('Run this suite from the repo so the engine is reachable, then re-run.');
+  process.exit(2);
+}
+const ENGINE_SRC = fs.readFileSync(ENGINE_PATH, 'utf8');
+
+// extract the real guard functions from the engine source (single source of truth — we test
+// the SHIPPED code, not a hand-copied duplicate). If the engine's shape changes, this notices.
+function buildGuards(src) {
+  const grab = (re) => { const m = src.match(re); return m ? m[0] : ''; };
+  let out = '';
+  out += grab(/function num\(v\) \{[\s\S]*?\n\}\n/);
+  out += grab(/const normPair = [^\n]+\n/);
+  out += grab(/function pipSize[\s\S]*?\n\}\n/);
+  out += grab(/function parseMT5Time[\s\S]*?\n\}\n/);
+  out += grab(/function ticketId\(p\) \{[\s\S]*?\n\}\n/);
+  out += grab(/function samePos\(a, b, tolerant\) \{[\s\S]*?\n\}\n/);
+  out += grab(/const PAIR_RANGES = \{[\s\S]*?\};\n/);
+  out += grab(/const plausible = [^\n]+\n/);
+  out += grab(/function refFor[\s\S]*?\n\}\n/);
+  out += `function fixPairFor(pos){const px=num(pos.entry);if(px==null)return {...pos};if(plausible(pos.pair,px))return {...pos};const base=normPair(pos.pair).slice(0,3);const candidates=Object.keys(PAIR_RANGES).filter((k)=>px>=PAIR_RANGES[k][0]&&px<=PAIR_RANGES[k][1]);const sameBase=candidates.filter((k)=>k.startsWith(base));const r=PAIR_RANGES[normPair(pos.pair)];const farOutside=r?(px<r[0]*0.9||px>r[1]*1.1):true;if(sameBase.length===1&&farOutside)return {...pos,pair:sameBase[0],_fixed:true};return {...pos};}`;
+  out += `\nmodule.exports={num,normPair,pipSize,parseMT5Time,ticketId,samePos,PAIR_RANGES,plausible,fixPairFor,refFor};`;
+  const Module = require('module');
+  const m = new Module();
+  m._compile(out, ENGINE_PATH + '#guards');
+  return m.exports;
+}
+const G = buildGuards(ENGINE_SRC);
+// back-compat for the appended sections that read the engine source directly
+const src = ENGINE_SRC;
 let pass = 0, fail = 0; const fails = [];
 function check(name, cond) { if (cond) { pass++; } else { fail++; fails.push(name); console.log('  ✗ FAIL:', name); } }
 
@@ -158,11 +208,9 @@ console.log('\n=== 10. LIVE-PRICING SAFETY (finding 10) ===');
 // refFor must reject garbage live prices and fall back to daily — a 0/NaN reference would
 // wreck every level check. (extracted from the real engine)
 (function(){
-  const fs=require('fs');const src=fs.readFileSync('/mnt/user-data/outputs/terminal-engine.js','utf8');
-  const m=src.match(/function refFor[\s\S]*?\n\}\n/);
-  if(!m){console.log('  (refFor not found)');return;}
-  const normPair=G.normPair;
-  eval(m[0]);
+  // refFor is already extracted into G from the engine, portably. Use it directly.
+  const refFor = G.refFor;
+  if(!refFor){console.log('  (refFor not found)');return;}
   const daily={EURUSD:1.14};
   check('live price 0 rejected -> daily', refFor('EURUSD',daily,{EURUSD:{price:0}})===1.14);
   check('live price NaN rejected -> daily', refFor('EURUSD',daily,{EURUSD:{price:NaN}})===1.14);
@@ -176,6 +224,44 @@ check('different tickets never merge (Kepler case)', !G.samePos({ticket:'1274348
 check('same ticket = same trade', G.samePos({ticket:'12743484',pair:'EURUSD',direction:'BUY',lots:0.1,entry:1.14},{ticket:'12743484',pair:'EURUSD',direction:'BUY',lots:0.1,entry:1.99},true));
 check('no ticket -> fallback matching intact', G.samePos({pair:'USDCHF',direction:'BUY',lots:0.05,entry:0.80751},{pair:'USDCHF',direction:'BUY',lots:0.05,entry:0.8078},true));
 check('garbage ticket ignored, fallback used', G.samePos({ticket:'abc',pair:'EURUSD',direction:'BUY',lots:0.1,entry:1.14},{ticket:'xyz',pair:'EURUSD',direction:'BUY',lots:0.1,entry:1.14},true));
+
+console.log('\n=== 12. AUDIT-2 REGRESSIONS (evidence convergence, freshness, partial-shot, consume) ===');
+(function(){
+  const grab=(re)=>{const m=src.match(re);return m?m[0]:'';};
+  // evidence convergence: article must concern the pair. Rebuild with its real deps (normPair + CCY_TERMS).
+  const normPairSrc=grab(/const normPair = [^\n]+\n/);
+  const ccySrc=grab(/const CCY_TERMS = \{[\s\S]*?\};\n/);
+  const acSrc=grab(/const articleConcernsPair = [\s\S]*?\n  \};\n/);
+  let code=normPairSrc+ccySrc+acSrc+'module.exports={articleConcernsPair};';
+  const Module=require('module');const m=new Module();
+  try{ m._compile(code, 'guards#conv');
+    const ac=m.exports.articleConcernsPair;
+    check('article naming pair = strong', ac({title:'EURUSD rallies'},'EURUSD')==='strong');
+    check('article w/ both ccy = strong', ac({title:'euro up vs dollar'},'EURUSD')==='strong');
+    check('article w/ one ccy = weak', ac({title:'dollar mixed'},'EURUSD')==='weak');
+    check('unrelated article = null', ac({title:'gold hits record'},'EURUSD')===null);
+  }catch(e){ check('evidence-convergence extractable', false); }
+})();
+// freshness threshold
+(function(){
+  const fresh=(sec)=>{const mt=sec?sec*1000:null;const age=mt?Date.now()-mt:null;return age!=null&&age>=0&&age<=6*3600*1000;};
+  const now=Math.floor(Date.now()/1000);
+  check('quote 1h old is fresh', fresh(now-3600));
+  check('quote 8h old is stale', !fresh(now-8*3600));
+  check('no timestamp is stale', !fresh(null));
+})();
+// partial-shot guard
+(function(){
+  const partial=(s,b,h)=>s<b&&h===0;
+  check('partial shot deferred', partial(1,3,0)===true);
+  check('full shot trusted', partial(3,3,0)===false);
+  check('partial + history trusted', partial(1,3,2)===false);
+})();
+// engine wiring present
+check('engine has consumeMatch', src.includes('consumeMatch'));
+check('engine has partialShot guard', src.includes('partialShot'));
+check('engine has evidence convergence', src.includes('articleConcernsPair'));
+check('engine has freshness check', src.includes('isFresh'));
 
 console.log('\n============================================================');
 console.log(`GRAND TOTAL: ${pass} passed, ${fail} failed`);

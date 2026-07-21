@@ -489,6 +489,7 @@ function Portfolio({state,refresh}){
 
       {report && report.aborted && <div className="alertbox a-amber"><div style={{fontWeight:700}}>Sync not applied</div><div style={{marginTop:3}}>{report.note}</div></div>}
       {report && !report.aborted && <div className="alertbox a-green">Synced{report.shotsRead>1?` from ${report.shotsRead} screenshots`:''}. {report.updated} updated, {report.newAdded?.length||0} newly adopted, {report.closedDetected?.length||0} closure(s) detected.</div>}
+      {report && report.partialShotNote && <div className="alertbox a-amber"><div style={{fontWeight:700}}>Partial screenshot — holdings kept, not closed</div><div style={{marginTop:3}}>{report.partialShotNote}</div></div>}
       {report?.signFlags?.length>0 && <div className="alertbox a-amber">
         <div style={{fontWeight:700,marginBottom:4}}>{report.signFlags.length} P/L sign{report.signFlags.length>1?'s':''} to double-check (price relationship looked unusual):</div>
         {report.signFlags.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}

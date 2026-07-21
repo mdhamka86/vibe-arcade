@@ -308,11 +308,20 @@ async function yahooQuote(pair) {
     }
     const atr = trs.length ? trs.slice(-14).reduce((a, b) => a + b, 0) / Math.min(14, trs.length) : null;
     const pip = pipSize(pair, price);
+    // FRESHNESS (audit finding 5): don't call a quote "live" just because the price is positive.
+    // Check how old regularMarketTime is. FX trades ~24/5, so a quote more than ~6h old (or with
+    // no timestamp) is treated as STALE — usable as a rough reference, but NOT trusted to validate
+    // a one-day entry to the pip. Weekend/cached data therefore can't masquerade as current.
+    const mt = m.regularMarketTime ? m.regularMarketTime * 1000 : null;
+    const ageMs = mt ? Date.now() - mt : null;
+    const FRESH_MS = 6 * 3600 * 1000;
+    const isFresh = ageMs != null && ageMs >= 0 && ageMs <= FRESH_MS;
     return {
-      pair: normPair(pair), price: +price, asOf: m.regularMarketTime ? new Date(m.regularMarketTime * 1000).toISOString() : null,
+      pair: normPair(pair), price: +price, asOf: mt ? new Date(mt).toISOString() : null,
+      ageMinutes: ageMs != null ? Math.round(ageMs / 60000) : null,
       dayLow: m.regularMarketDayLow ?? null, dayHigh: m.regularMarketDayHigh ?? null,
       atr: atr != null ? +atr.toFixed(6) : null, atrPips: atr != null && pip ? Math.round(atr / pip) : null,
-      live: true,
+      live: isFresh, stale: !isFresh,
     };
   } catch { return null; }
 }
@@ -333,7 +342,9 @@ function formatPrices(prices) {
   if (!rows.length) return 'no live pricing available this run';
   return rows.map((r) => {
     if (r.live) return `${r.pair}: ${r.price} (LIVE ${r.asOf ? r.asOf.slice(11, 16) + 'Z' : ''}${r.atrPips != null ? `, daily ATR ~${r.atrPips} pips` : ''}${r.dayLow != null ? `, today ${r.dayLow}-${r.dayHigh}` : ''})`;
-    return `${r.pair}: ${r.price} (⚠ STALE daily ref ${r.asOf || ''} — no live quote this run, treat cautiously)`;
+    // stale-but-present Yahoo quote vs a pure daily-rate fallback: describe honestly
+    if (r.stale && r.price != null) return `${r.pair}: ${r.price} (⚠ STALE${r.ageMinutes != null ? ` ~${Math.round(r.ageMinutes / 60)}h old` : ''}${r.atrPips != null ? `, ATR ~${r.atrPips} pips` : ''} — not current, likely weekend/closed; validate levels on your own chart)`;
+    return `${r.pair}: ${r.price} (⚠ daily ref only — no live quote this run, treat cautiously)`;
   }).join('\n');
 }
 
@@ -480,14 +491,19 @@ async function actIdeas(force) {
   const s = await loadAll();
   // major pairs to pull real per-symbol pattern setups for (TradingView trader ideas).
   // This gives the desk genuine technical/pattern context, not just news headlines.
+  // TradingView pattern feeds: kept to the liquid majors + DXY to control request volume.
   const PATTERN_PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCHF', 'USDCAD', 'NZDUSD', 'DXY'];
+  // LIVE-PRICE coverage is WIDER (audit finding 4): the prompt surveys crosses too, so they
+  // must get live prices + ATR, not just the daily ECB fallback. These are batched Yahoo calls,
+  // all verified fetchable, so covering them doesn't balloon the pattern-feed request count.
+  const PRICE_PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCHF', 'USDCAD', 'NZDUSD', 'DXY',
+    'EURGBP', 'EURJPY', 'GBPJPY', 'EURAUD', 'GBPAUD', 'AUDJPY', 'NZDJPY', 'CADJPY', 'CHFJPY', 'EURCHF', 'GBPCHF', 'AUDCAD', 'AUDNZD'];
   const [news, rates, cal, patternSets] = await Promise.all([
     getNews('forex'), refRates(), getCalendar(),
     Promise.all(PATTERN_PAIRS.map(async (sym) => ({ sym, ideas: await getSymbolIdeas(sym).catch(() => []) }))),
   ]);
-  // LIVE prices + volatility for the majors (audit finding 10): current quotes and real ATR
-  // so the desk validates entries against NOW and sizes stops to genuine volatility.
-  const live = await livePrices(PATTERN_PAIRS, rates);
+  // LIVE prices + volatility across majors AND crosses (audit finding 4/10).
+  const live = await livePrices(PRICE_PAIRS, rates);
   // build a compact pattern-desk digest: a few freshest trader setups per pair
   const patternDigest = patternSets
     .filter((p) => p.ideas.length)
@@ -657,30 +673,79 @@ Reminder: every price you output is checked against live rates after you respond
   ideas.generatedAt = t.iso;
   ideas.dateKey = t.dateKey;
 
-  // CONVERGENCE GATE (audit finding 1): "MED-HIGH"/"HIGH" is not taken on trust. An idea
-  // only keeps a top-two rung if it genuinely cites >=2 DIFFERENT outlets that ACTUALLY
-  // appeared in tonight's wire. Hallucinated or thin-sourced high conviction is downgraded
-  // to MED in code, so a confident-sounding idea with no real convergence can never qualify.
-  const realOutlets = new Set((news || []).map((n) => outletFamily(n.source)).filter(Boolean));
+  // CONVERGENCE GATE (audit findings 1 + 2): "MED-HIGH"/"HIGH" is not taken on trust. We now
+  // verify EVIDENCE, not just outlet names. For each cited source, we require a REAL article in
+  // tonight's wire that (a) is from that outlet family, AND (b) genuinely concerns the proposed
+  // pair — its text mentions the pair or at least one of its two currencies / central banks.
+  // Two such articles from DIFFERENT families = genuine convergence. This blocks the previous
+  // hole where two unrelated outlets, cited about anything, kept HIGH conviction.
+  // HONEST LIMIT: we verify the article is real, from the cited outlet, and on-topic for the
+  // pair; we do NOT fully verify it supports the stated DIRECTION (bull vs bear is a nuance no
+  // keyword check settles reliably) — that judgement still rests with the model, so we surface
+  // the matched headlines for the user rather than claiming directional proof.
+  const CCY_TERMS = {
+    EUR: ['eur', 'euro', 'ecb', 'lagarde', 'eurozone'], USD: ['usd', 'dollar', 'fed', 'fomc', 'powell', 'warsh'],
+    GBP: ['gbp', 'pound', 'sterling', 'boe', 'bailey'], JPY: ['jpy', 'yen', 'boj', 'ueda', 'japan'],
+    CHF: ['chf', 'franc', 'snb', 'swiss'], AUD: ['aud', 'aussie', 'rba', 'australia'],
+    NZD: ['nzd', 'kiwi', 'rbnz', 'zealand'], CAD: ['cad', 'loonie', 'boc', 'canada'], DXY: ['dxy', 'dollar index'],
+  };
+  const pairTerms = (pair) => {
+    const p = normPair(pair);
+    const a = p.slice(0, 3), b = p.slice(3, 6);
+    const terms = new Set([p.toLowerCase(), `${a}/${b}`.toLowerCase(), `${a}${b}`.toLowerCase()]);
+    for (const t of (CCY_TERMS[a] || [])) terms.add(t);
+    for (const t of (CCY_TERMS[b] || [])) terms.add(t);
+    return [...terms];
+  };
+  const articleConcernsPair = (article, pair) => {
+    const hay = ((article.title || '') + ' ' + (article.desc || '')).toLowerCase();
+    const p = normPair(pair);
+    const a = p.slice(0, 3), b = p.slice(3, 6);
+    // strongest: the pair itself named. Then: both currencies present. Then: one currency.
+    const namesPair = hay.includes(p.toLowerCase()) || hay.includes(`${a}/${b}`.toLowerCase());
+    const aHit = (CCY_TERMS[a] || []).some((tm) => hay.includes(tm));
+    const bHit = (CCY_TERMS[b] || []).some((tm) => hay.includes(tm));
+    if (namesPair || (aHit && bHit)) return 'strong';
+    if (aHit || bHit) return 'weak';
+    return null;
+  };
   const convergenceOf = (i) => {
     const cited = Array.isArray(i.sources) ? i.sources : [];
-    // keep only cited outlets that genuinely exist in tonight's wire, de-duped by family
-    const verified = new Set();
+    const verifiedFamilies = new Set();
+    const evidence = [];
+    let strongCount = 0;
     for (const s of cited) {
       const fam = outletFamily(s && s.outlet);
-      if (fam && realOutlets.has(fam)) verified.add(fam);
+      if (!fam || verifiedFamilies.has(fam)) continue;
+      // find the BEST real article from this outlet family for the proposed pair
+      let best = null, bestStrength = null;
+      for (const n of (news || [])) {
+        if (outletFamily(n.source) !== fam) continue;
+        const str = articleConcernsPair(n, i.pair);
+        if (str === 'strong') { best = n; bestStrength = 'strong'; break; }
+        if (str === 'weak' && !best) { best = n; bestStrength = 'weak'; }
+      }
+      if (best) {
+        verifiedFamilies.add(fam);
+        if (bestStrength === 'strong') strongCount++;
+        evidence.push({ outlet: fam, strength: bestStrength, headline: (best.title || '').slice(0, 90), age: ageLabel(best.ts) });
+      }
     }
-    return verified;
+    return { verified: verifiedFamilies, evidence, strongCount };
   };
+  const realOutlets = new Set((news || []).map((n) => outletFamily(n.source)).filter(Boolean));
   (ideas.ideas || []).forEach((i) => {
-    const verified = convergenceOf(i);
+    const { verified, evidence, strongCount } = convergenceOf(i);
     i.verifiedSources = [...verified];
-    i.sourceConvergence = verified.size >= 2 ? 'CONVERGENT' : verified.size === 1 ? 'SINGLE' : 'UNSOURCED';
-    // hard downgrade: no top-two conviction without >=2 verified independent outlets
-    if (['MED-HIGH', 'HIGH'].includes((i.conviction || '').toUpperCase()) && verified.size < 2) {
+    i.evidence = evidence; // the actual matched headlines, shown to the user
+    // genuine convergence = 2+ independent outlets AND at least one STRONG match (pair or both
+    // currencies named), so two weak single-currency brushes can't alone mint top conviction.
+    const trulyConvergent = verified.size >= 2 && strongCount >= 1;
+    i.sourceConvergence = trulyConvergent ? 'CONVERGENT' : verified.size >= 1 ? 'SINGLE/WEAK' : 'UNSOURCED';
+    if (['MED-HIGH', 'HIGH'].includes((i.conviction || '').toUpperCase()) && !trulyConvergent) {
       i.convictionClaimed = i.conviction;
       i.conviction = 'MED';
-      i.conviction_note = `Auto-capped to MED: claimed ${i.convictionClaimed} but only ${verified.size} independent wire source(s) verified. Top conviction needs 2+.`;
+      i.conviction_note = `Auto-capped to MED: claimed ${i.convictionClaimed}, but verified evidence is thin (${verified.size} outlet(s), ${strongCount} strong match on this pair). Top conviction needs 2+ independent outlets with at least one solidly on this pair.`;
     }
   });
 
@@ -852,7 +917,9 @@ async function actSync(positionsImgs, historyImg) {
   if (seen.length === 0 && (s.book.positions || []).length > 0) {
     return {
       clock: t, aborted: true,
-      report: { ...report, note: 'Sync aborted: the screenshot(s) showed no readable positions, but your book currently holds ' + s.book.positions.length + '. This is treated as a failed read, not a cleared book — nothing was changed. Re-upload a clear open-positions screenshot.' },
+      // aborted ALSO goes inside report, because the front end keeps only r.report and checks
+      // report.aborted (audit finding 8 — a top-level-only flag rendered as success).
+      report: { ...report, aborted: true, note: 'Sync aborted: the screenshot(s) showed no readable positions, but your book currently holds ' + s.book.positions.length + '. This is treated as a failed read, not a cleared book — nothing was changed. Re-upload a clear open-positions screenshot.' },
       book: bookView(s.book),
     };
   }
@@ -913,9 +980,24 @@ async function actSync(positionsImgs, historyImg) {
   // 1) positions in book but missing on screen -> closed; match against history.
   // Use TOLERANT matching: a held position must be recognised as itself even if the entry
   // price was re-read slightly differently, so we never flush a live trade to closures.
+  // Track which seen rows have been consumed, so ONE screen row can't satisfy TWO different
+  // book positions (audit finding 6). Once a row matches a position it's removed from the pool.
+  const seenPool = [...seen];
+  const consumeMatch = (p) => {
+    const idx = seenPool.findIndex((x) => samePos(p, x, true));
+    if (idx === -1) return null;
+    return seenPool.splice(idx, 1)[0]; // remove and return, so it can't match again
+  };
+  // PARTIAL-SCREENSHOT GUARD (audit finding 6): a shot showing only SOME of the book (e.g. 1 of
+  // 3 rows) would otherwise mark the unseen positions closed. A closure is only trustworthy when
+  // EITHER a history screenshot confirms it, OR the parse plausibly covered the whole book. If
+  // the parse saw fewer rows than the book holds AND no history was provided, we DEFER the
+  // unconfirmed closures (hold the positions, flag for review) rather than closing them blind.
+  const partialShot = seen.length < (s.book.positions || []).length && (histParse.closes || []).length === 0;
   const still = [];
+  const deferredClosures = [];
   for (const p of s.book.positions) {
-    const onScreen = seen.find((x) => samePos(p, x, true));
+    const onScreen = consumeMatch(p);
     if (onScreen) {
       let fl = onScreen.floating ?? p.floating;
       // The parser reads the P/L sign from COLOUR (green=profit, red=loss), which is MT5's
@@ -928,20 +1010,22 @@ async function actSync(positionsImgs, historyImg) {
       }
       p.floating = fl;
       p.sl = onScreen.sl ?? p.sl; p.tp = onScreen.tp ?? p.tp;
-      // PRESERVE HELD DURATION: keep the original openedAt. If the screenshot now reveals a
-      // real MT5 open time we hadn't captured before, adopt it as the truer anchor (it is
-      // the platform's own record of when the trade actually opened).
       const screenTs = parseMT5Time(onScreen.openTime);
       if (screenTs != null) {
         p.mt5OpenTs = screenTs;
         p.openTime = onScreen.openTime;
         p.openedAt = screenTs; // anchor held-duration to the platform truth
       }
-      // (if no MT5 time available, openedAt is left untouched, so the clock never resets)
       report.updated++;
       still.push(p);
     } else {
       const match = (histParse.closes || []).find((c) => samePos(c, p));
+      if (!match && partialShot) {
+        // unconfirmed closure on a partial screenshot — DEFER, don't close. Keep the position.
+        deferredClosures.push(p.pair);
+        still.push(p);
+        continue;
+      }
       const closure = {
         id: `close_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         position: p,
@@ -953,10 +1037,14 @@ async function actSync(positionsImgs, historyImg) {
       report.closedDetected.push(closure);
     }
   }
-  // 2) on screen but not in book -> genuine off-book orphan, adopt it. Tolerant match here
-  // too, so a position already held (and matched above) is never also adopted as an orphan.
-  for (const x of seen) {
-    if (!still.find((p) => samePos(p, x, true))) {
+  if (deferredClosures.length) {
+    report.partialShotNote = `Only ${seen.length} position(s) were readable but your book holds ${s.book.positions.length}, and no closing history was provided. To avoid a false close from a partial screenshot, these were KEPT and not marked closed: ${deferredClosures.join(', ')}. Re-sync a full positions screenshot (or add a history shot) to confirm any genuine closures.`;
+  }
+  // 2) on screen but not matched to any book position -> genuine off-book orphan, adopt it.
+  // We iterate the LEFTOVER pool (rows not consumed by any position above), so a row already
+  // matched to a held position can never also be adopted as an orphan (audit finding 6).
+  for (const x of seenPool) {
+    {
       // anchor the open time to the platform's own record if the screenshot showed it;
       // otherwise fall back to now, but flag that the held duration is only "since first seen".
       const screenTs = parseMT5Time(x.openTime);
