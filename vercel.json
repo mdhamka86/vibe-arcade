@@ -1,55 +1,15 @@
 {
   "outputDirectory": "public",
-  "regions": [
-    "syd1"
-  ],
+  "regions": ["syd1"],
   "crons": [
-    {
-      "path": "/api/trawl?action=run&stage=all",
-      "schedule": "15 0 * * *"
-    },
-    {
-      "path": "/api/forex-brain?action=run&stage=all",
-      "schedule": "0 23 * * 0-4"
-    },
-    {
-      "path": "/api/forex-brain?action=run&stage=all",
-      "schedule": "0 0-4 * * 1-5"
-    },
-    {
-      "path": "/api/forex-brain?action=run&stage=all",
-      "schedule": "0 8-11 * * 1-5"
-    },
-    {
-      "path": "/api/forex-brain?action=run&stage=all",
-      "schedule": "0 12-17 * * 1-5"
-    }
+    { "path": "/api/trawl?action=run&stage=all", "schedule": "15 0 * * *" },
+    { "path": "/api/forex-brain?action=run&stage=all", "schedule": "0 23 * * 0-4" },
+    { "path": "/api/forex-brain?action=run&stage=all", "schedule": "0 0-4 * * 1-5" },
+    { "path": "/api/forex-brain?action=run&stage=all", "schedule": "0 8-11 * * 1-5" },
+    { "path": "/api/forex-brain?action=run&stage=all", "schedule": "0 12-17 * * 1-5" }
   ],
   "functions": {
-    "api/deep.cjs": {
-      "maxDuration": 10,
-      "memory": 1024
-    },
-    "api/odds2.cjs": {
-      "maxDuration": 45
-    },
-    "api/mission.js": {
-      "maxDuration": 10
-    },
-    "api/stewards.cjs": {
-      "maxDuration": 120
-    },
-    "api/trawl.cjs": {
-      "maxDuration": 300
-    },
-    "api/propose.cjs": {
-      "maxDuration": 120
-    },
-    "api/probe.cjs": {
-      "maxDuration": 60
-    },
-    "api/forex-brain.js": {
-      "maxDuration": 300
-    }
+    "api/mission.js": { "maxDuration": 10 },
+    "api/forex-brain.js": { "maxDuration": 300 }
   }
 }
