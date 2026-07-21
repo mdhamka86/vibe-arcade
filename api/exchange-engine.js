@@ -295,8 +295,8 @@ async function actIdeas(force) {
   // ---- Massive quant enrichment: give the model REAL technicals + insider posture on the
   // names he actively watches, so "signal convergence" is measured, not guessed. US names
   // only; regional (SGX/HKEX) tickers are skipped inside the module. Degrades to empty if
-  // the Massive feed is off, so the hunt runs unchanged without a key. ----
-  const watchTickers = (s.book.watchlist || []).map((w) => w.ticker).filter(Boolean);
+  // the Massive feed is off, so the hunt runs unchanged without a key. Reuses watchTickers
+  // declared earlier in this function (do NOT redeclare — same scope). ----
   let watchSignals = { lines: [] };
   try { watchSignals = await enrichTickers(watchTickers, massiveCache); } catch { /* enrichment is a bonus, never fatal */ }
 
