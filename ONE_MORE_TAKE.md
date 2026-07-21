@@ -2,7 +2,7 @@
 
 Design specification for **ONE MORE TAKE!**, a light, funny, mobile-first web game about running a chaotic movie studio. The game takes the emotional core of *The Movies* and *Stunts & Effects*—discovering stars, casting films, surviving productions, directing stunts and watching the finished result—and compresses it into a fast browser tycoon built on the proven **Whisker Warriors** structure.
 
-**Status:** v0.9 STUNTS, EFFECTS & PRODUCTION CHAOS BUILD PREPARED (21/07/2026). The complete v0.8 studio economy remains intact. Relevant action scenes now offer five explicit stunt approaches; productions choose practical, digital or hybrid effects; and up to two named specialists may be hired from five disciplines. Deterministic risk combines approach, actor willingness, coordinator skill, department funding, posture, fatigue and prior incidents. Contextual weighted events react to genre, traits, relationships, approaches, budget, upgrades, market trends and previous set history. Injuries persist across saves, remove performers from casting for defined quarters and recover as the calendar advances. Signature scenes, delays, specialists, stunt choices, effects methods and consequences now appear in premieres and archive records. Saves migrate to version 6 while retaining v5, v4, v3, v2 and v1 fallback loading. Twenty-eight embedded engine tests, JSX transpilation and component-screen runtime smoke checks are green.
+**Status:** v1.0 PHASE 7 — STARS, SCANDALS & SEQUELS COMPLETE (21/07/2026). All v0.9 stunt, effects, injury, economy, awards, relationship, image-fallback and archive systems remain intact. Talent now ages at year-end and progresses every quarter through persistent morale, loyalty, fatigue, momentum, specialisation, goals, availability, sabbaticals and retirement risk. Training and Rest are proper quarter-consuming office actions. Successful releases can create deterministic franchise opportunities for sequels, reboots, spin-offs, rights sales or a deliberate leave-alone decision. Franchise records preserve lineage, cast and director continuity, goodwill, fatigue, rights, best and worst entries, scores and history. Demands, refusals, walkouts, recasting consequences, mild fictional publicity scandals, relationship labels and signature roles turn long campaigns into career stories. Saves now use version 7 while retaining non-destructive fallback loading and migration from v6, v5, v4, v3, v2 and v1. Forty-five embedded deterministic tests, in-browser Babel transpilation, runtime navigation and image-layout checks are green.
 
 **Owner:** Hammy (hammyLabs)  
 **Repo:** `mdhamka86/vibe-arcade`  
@@ -1362,22 +1362,16 @@ The primary playable build is:
 
 Like Whisker Warriors, it can load React, ReactDOM, Babel and GSAP from CDNs and contain its interface, styles, data and gameplay logic in one portable file during the prototype stage.
 
-### Current development split
+### Current development shape
 
-Phase 2 now ships and tests the engine in two forms:
+The v1.0 deliverable remains one self-contained playable file:
 
 ```text
 public/
-  one-more-take.html             playable build; stable engine inlined
-
-lib/
-  one-more-take-engine.mjs       source-equivalent pure simulation module
-
-tests/
-  one-more-take-engine.test.mjs  Node test suite
+  one-more-take.html             UI, data, pure engine and deterministic self-tests
 ```
 
-The playable HTML remains portable and deployable by itself. The module and test file exist so simulation logic can be exercised outside React and compared against the inlined engine. Any future engine change must be applied to both forms until the build pipeline automates the inlining step.
+The engine is defined before the React components and exposes its pure functions plus the 45-test report through `window.OMT_ENGINE` and `window.OMT_V10_TESTS` for diagnostics. React remains a consumer of that engine. No serverless function or separate module is required for deployment.
 
 ### Core state
 
@@ -1385,8 +1379,8 @@ Use one `useReducer` game state rather than dozens of loosely connected state ho
 
 ```js
 {
-  saveVersion: 4,
-  build: "0.7-studio-progression",
+  saveVersion: 7,
+  build: "1.0-stars-scandals-sequels",
   meta: {
     createdAt: "ISO timestamp",
     updatedAt: "ISO timestamp"
@@ -1415,7 +1409,11 @@ Use one `useReducer` game state rather than dozens of loosely connected state ho
   awards: [],
   pendingAwardsYear: null,
   talentCareers: {},
+  talentStatus: {},
+  injuryHistory: [],
   franchises: {},
+  franchiseOpportunities: [],
+  scandals: [],
   history: [],
   rngSeed: 12345,
   settings: { sound: true },
@@ -1427,7 +1425,7 @@ Use one `useReducer` game state rather than dozens of loosely connected state ho
 
 The inlined engine currently exposes pure and testable functions for:
 
-- game-state creation, validation and v1–v4 migration;
+- game-state creation, validation and v1–v7 migration;
 - project creation and deterministic screenplay slates;
 - casting chemistry and persistent relationships;
 - scene, film and release calculations;
@@ -1438,6 +1436,10 @@ The inlined engine currently exposes pure and testable functions for:
 - contract offer generation and completion;
 - loans, debt repayment and rescue financing;
 - year-end awards and talent-career updates;
+- quarterly career progression, ageing, training, rest, sabbaticals and retirement risk;
+- talent demands, refusal/walkout resolution and fictional scandal outcomes;
+- relationship labels, signature roles and persistent collaborator records;
+- sequel eligibility, franchise choices, continuity, recasting, goodwill and fatigue;
 - premiere finalisation and archive normalisation.
 
 React remains the interface layer. It renders state, requests engine actions and persists the normalized root object; financial and simulation formulas stay outside UI components.
@@ -1464,7 +1466,7 @@ Benefits:
 
 ### Save key
 
-`oneMoreTake_save_v4`
+`oneMoreTake_save_v7`
 
 Save after:
 
@@ -1480,9 +1482,9 @@ Save after:
 
 Keep one backup key:
 
-`oneMoreTake_save_v4_backup`
+`oneMoreTake_save_v7_backup`
 
-Before writing a new save, validate and normalize it, then copy the previous valid v4 save to the backup key. Loading checks v4, the v4 backup, v3, the v3 backup, v2, the v2 backup and finally the legacy v1 key. Older saves are migrated without deleting their original storage entries.
+Before writing a new save, validate and normalize it, then copy the previous valid v7 save to the backup key. Loading checks v7 and its backup, then v6, v5, v4, v3, v2 and their supported backups before finally checking the legacy v1 key. Older saves are migrated without deleting their original storage entries. This non-destructive rule is binding: a successful migration writes the new v7 save but never erases the source key.
 
 ### Export/import
 
@@ -1787,18 +1789,24 @@ Add:
 
 ### Phase 7 — Careers and franchises
 
-Add:
+**Implementation status:** complete in v1.0.
 
-- ageing;
-- career summaries;
-- signature roles;
-- sequels;
-- fatigue;
-- recasting;
-- scandals;
-- deeper relationships.
+Implemented:
 
-**Passes when:** players can tell stories about specific stars and franchises from their save.
+- year-end ageing and deterministic quarterly career progression;
+- persistent morale, loyalty, fatigue, momentum, goals, availability, sabbaticals and retirement risk;
+- skill growth, genre specialisation and quarter-consuming Training and Rest actions;
+- career summaries covering hits, flops, awards, injuries, signature roles and frequent collaborators;
+- sequel opportunities driven by audience response, profit, awards and cult status;
+- sequels, reboots, spin-offs, rights sales and leave-alone decisions;
+- franchise goodwill, fatigue, rights, lineage, instalment scoring, cast/director continuity and best/worst entries;
+- recasting bonuses and penalties;
+- salary, billing, creative-control, preferred-co-star and genre demands;
+- deterministic refusals, walkouts and fictional publicity scandals;
+- friendship, feud, mentorship and romance relationship labels;
+- signature roles for successful actor–film combinations.
+
+**Passed because:** multi-year saves now preserve enough causal career and franchise history for players to tell stories about specific stars, collaborators, incidents and instalments.
 
 ### Phase 8 — Content expansion and polish
 
@@ -1982,8 +1990,14 @@ The game should discourage save-scumming through humour and continuity, not by h
 4. Whether the unskipped premiere should remain roughly 15–25 seconds.
 6. Whether a second production slot is purchased as an upgrade or granted by studio tier.
 7. Whether insolvency should eventually permit permanent failure; v0.7 currently guarantees a costly recovery path.
-8. How quickly relationships should move from mild familiarity into friendship, feud or romance labels.
+8. Whether relationship-label thresholds should move more slowly in long campaigns; v1.0 starts friendship at +35, romance at +52, mentorship at +45 for actor/director pairs and feud at -35.
 9. Whether quarterly overhead should rise with every individual upgrade rather than only with studio tier.
+10. Whether the current retirement curve creates enough late-career jeopardy without making beloved veterans disappear too abruptly.
+11. Whether Training at $15,000 plus quarterly costs and Rest at $6,000 plus quarterly costs are meaningful alternatives to making a film.
+12. How much familiarity should protect sequels before originality loss and franchise fatigue dominate.
+13. Whether recasting should ever create a positive discovery bonus rather than only reducing continuity and goodwill.
+14. Whether publicity scandals occur often enough to create stories without overwhelming production outcomes.
+15. Whether selling franchise rights pays too much for early studios or too little for established hits.
 
 ---
 
@@ -2173,3 +2187,75 @@ The current numbers should still be watched during live play. The next tuning pa
 ### Next phase
 
 Phase 7 should deepen careers rather than widen production risk again: ageing, availability beyond injuries, role specialisation, franchises, sequels, recasting, scandals and long-term star/director career arcs.
+
+---
+
+## v1.0 implementation record — Stars, Scandals & Sequels
+
+### Living careers
+
+- Every actor and director has a normalized career record with age delta, fame delta, morale, loyalty, momentum, skill growth, genre specialisations, career goal, current status, retirement risk, hits, flops, injuries, awards, signature roles, collaborators, scandals and demand history.
+- Quarter advancement updates fatigue, availability, morale, loyalty, momentum, inactivity and retirement risk. Q4 advancement also ages all talent by one year.
+- Retirement and sabbatical outcomes are deterministic from the save seed, talent ID and quarter index. Existing injury recovery remains authoritative and continues to advance through releases, contract work, rejected slates, Training and Rest.
+- Training costs $15,000 before quarterly studio costs, consumes the quarter and adds two points of persistent skill growth in the selected discipline.
+- Rest costs $6,000 before quarterly studio costs, consumes the quarter, sharply reduces fatigue and improves morale and loyalty.
+- The Studio Office links to a dedicated Career Center. The roster presents current age, status, goal, morale, loyalty, momentum, hits, flops, awards, injuries, specialisation, signature roles and frequent collaborator.
+
+### Franchises and sequels
+
+- `evaluateSequelEligibility()` checks strong audience response, profit, awards and cult-status divergence without asking React to reproduce the formula.
+- Eligible films generate one persistent open opportunity. The archive offers Sequel, Reboot, Spin-off, Sell Rights and Leave Alone choices.
+- Ordering a continuation creates a normal `MovieProject` carrying franchise ID, type, instalment number, parent film and preferred returning cast. The original film receives explicit ORIGINAL lineage in the archive.
+- Franchise records store original film, instalment IDs, original cast, original director, goodwill, fatigue, rights status, entry audience scores, best entry, worst entry and an append-only history.
+- Returning cast and director create familiarity and marketing advantages. Recasting reduces continuity and audience goodwill. Every new instalment increases fatigue, with successful audience response reducing part of that rise.
+- Selling rights pays a deterministic share of known gross with a floor, changes the rights status to SOLD and prevents later in-house continuation.
+- Results, Archive and Film Detail surface lineage, returning cast, recasts, goodwill, fatigue, rights and franchise history.
+
+### Demands, walkouts and scandals
+
+- Casting can generate seeded salary, billing, creative-control, preferred-co-star or genre-change demands from current morale, loyalty, momentum, fame, goal and the proposed role.
+- Accepting a demand records its cost or creative consequence. Refusing it reduces morale and loyalty; sufficiently unhappy talent walks out and is removed from that casting slot.
+- Mild fictional scandals are selected from an authored set about spoilers, props, method acting, billing and publicity feuds. They affect fame, studio trust, audience response and relationships without targeting real celebrities or protected classes.
+- Relationship scores now resolve to Friendship, Feud, Mentorship or Romance labels when their deterministic thresholds are crossed.
+- Successful actor–film combinations become signature roles, including strong originals before a franchise exists.
+
+### Save version 7
+
+New root fields:
+
+- `franchiseOpportunities[]` — persistent development decisions and their resolution state;
+- `scandals[]` — studio-wide publicity history;
+- expanded `talentCareers{}` — normalized career progress, specialisation and personal history;
+- expanded `franchises{}` — lineage, rights, fatigue, goodwill, entry scores and history.
+
+New project fields:
+
+- `baseTitle`;
+- `demands[]` and `demandCosts`;
+- `franchise` with ID, type, instalment, parent and preferred cast.
+
+New film fields:
+
+- `scandals[]`;
+- franchise lineage, returning cast, recast IDs and calculated modifiers;
+- relationship changes with their resulting label.
+
+The loader reads the v7 primary and backup first, then supported v6, v5, v4, v3, v2 and v1 keys. Migration normalizes new collections and career records while retaining every legacy key. No migration deletes the source save.
+
+### Validation
+
+- Embedded deterministic engine suite: **45/45 passed**.
+- New coverage includes ageing, retirement risk, Training, Rest, sequel eligibility, franchise fatigue, recasting, demands, walkouts, scandal generation and effects, relationship labels, v6-to-v7 migration, franchise choices, rights sales, archive lineage and signature roles.
+- In-browser Babel React transpilation completed with no current syntax or runtime error.
+- Runtime smoke covered new-studio creation, Studio Office, Career Center, Training quarter settlement, screenplay selection and Casting.
+- Remote images loaded with natural dimensions in the exercised screens and no card or panel overflow was detected.
+
+### Remaining Phase 8 work
+
+- multi-year economy and career balance passes;
+- onboarding and contextual help for career status, demands and franchise decisions;
+- accessibility audit, keyboard focus and reduced-motion treatment;
+- save export/import and recovery UI;
+- archive filtering and clearer franchise navigation;
+- more reviews, publicity incidents, demands and career-goal reactions;
+- poster variation, additional audio and final mobile polish.
