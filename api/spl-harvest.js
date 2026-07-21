@@ -168,10 +168,17 @@ function parsePlayerStats(html) {
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Strategy: process labels LONGEST-FIRST, and for each match, BLANK OUT the matched span in
-  // the working text. That way once "Defensive Duels 57" is consumed, the bare "Duels" search
-  // can no longer see it and correctly finds "Duels 302" further along. This removes all
-  // substring-collision risk (Duels/Defensive Duels, Goals/Conceded Goals, Passes/Key Passes...).
+  // CRITICAL: the page renders TWO stat blocks in one document — the OVERVIEW/averages block
+  // first, then the full "Total Statistics" block. Labels repeat across both (e.g. "Defensive
+  // Duels" appears in both, with different numbers). We must parse ONLY the Total Statistics
+  // block, so slice the text from that marker onward and discard everything above it.
+  const marker = 'Total Statistics';
+  const mIdx = text.indexOf(marker);
+  if (mIdx >= 0) text = text.slice(mIdx + marker.length);
+  // else: fall through and parse whole text (defensive fallback if marker text ever changes)
+
+  // Process labels LONGEST-FIRST, blanking each matched span so shorter labels can't re-match
+  // inside a longer phrase already consumed (Duels vs Defensive Duels, Goals vs Conceded Goals).
   const labels = Object.keys(LABEL_TO_KEY).sort((a, b) => b.length - a.length);
   for (const label of labels) {
     const re = new RegExp(escapeRe(label) + '\\s*:?\\s*(\\d+(?:\\.\\d+)?)');
@@ -179,7 +186,6 @@ function parsePlayerStats(html) {
     if (m) {
       const key = LABEL_TO_KEY[label];
       stats[key] = key === 'xg' ? parseFloat(m[1]) : parseInt(m[1], 10);
-      // Blank the consumed span so shorter labels can't re-match inside it.
       text = text.slice(0, m.index) + ' '.repeat(m[0].length) + text.slice(m.index + m[0].length);
     }
   }
