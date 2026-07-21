@@ -2,7 +2,7 @@
 
 Design specification for **ONE MORE TAKE!**, a light, funny, mobile-first web game about running a chaotic movie studio. The game takes the emotional core of *The Movies* and *Stunts & Effects*—discovering stars, casting films, surviving productions, directing stunts and watching the finished result—and compresses it into a fast browser tycoon built on the proven **Whisker Warriors** structure.
 
-**Status:** v0.7 STUDIO PROGRESSION & ECONOMY BUILD PREPARED (20/07/2026). v0.6 is deployed and verified through the complete film, awards and archive loop. v0.7 implements the Phase 5 campaign layer: three studio tiers, six permanent facility upgrades, quarterly overhead and debt interest, deterministic market trends, quarterly contract work, two loan products, debt repayment, a recoverable distress/insolvency state and one humiliating rescue package per game year. Facility ownership now feeds casting chemistry, scene quality, post-production, spectacle, audience response and box office. Saves migrate to version 4 while retaining v3, v2 and v1 fallback loading. Nineteen embedded engine tests are green and TypeScript JSX transpilation reports zero errors. Multi-year balance and pacing now require live playtesting.
+**Status:** v0.8 ECONOMY BALANCE & PRESSURE BUILD PREPARED (21/07/2026). v0.7 established studio tiers, upgrades, quarterly overhead, debt, market trends, contracts and rescue financing. v0.8 performs the first multi-year balance pass: repeated contract farming now creates contract fatigue, falling client fees and worsening professional standing; completing a film resets that fatigue. Every contract shows projected net cash after overhead and interest. The Studio Office and Finance screen now display cash runway, lifetime overhead and clearer financial pressure. Insolvent studios cannot begin new productions until contracts or financing restore stability, preventing debt from becoming decorative. Saves migrate to version 5 while retaining v4, v3, v2 and v1 fallback loading. Twenty-two embedded engine tests are green and TypeScript JSX transpilation reports zero errors. A deterministic twelve-quarter contract audit leaves cash positive but collapses reputation and prestige, making contract work a recovery tool rather than the optimal long-term strategy.
 
 **Owner:** Hammy (hammyLabs)  
 **Repo:** `mdhamka86/vibe-arcade`  
@@ -2054,3 +2054,55 @@ It is:
 > “Mate, my washed-up romance actor insisted on doing his own fire stunt, broke the set, accidentally created the best scene of the year, won an award, then refused to return for the sequel.”
 
 That is **ONE MORE TAKE!**
+
+
+---
+
+## v0.8 implementation record — Economy Balance & Pressure
+
+### Balance goals
+
+- Contract work must rescue a weak quarter without replacing filmmaking as the best long-term strategy.
+- Debt must create visible pressure while remaining recoverable through good films, contracts or one annual rescue package.
+- Studio promotions must feel earned, and higher tiers must carry meaningfully higher fixed costs.
+- Insolvency must change available choices rather than exist as a cosmetic status label.
+
+### Implemented systems
+
+- Added a persistent `contractStreak` to the studio state.
+- Consecutive contract quarters reduce fees through a bounded fatigue multiplier.
+- Low reputation and audience trust further reduce available contract fees.
+- Repeated contract work applies increasing reputation, trust and prestige penalties.
+- Completing a feature film resets contract fatigue to zero.
+- Rejecting a screenplay slate also breaks the contract streak, but still charges quarterly costs.
+- Contract cards now show gross payment and projected net cash after overhead and debt interest.
+- Added `calculateFinancialRunway()` with HEALTHY, WATCH, TIGHT and CRITICAL states.
+- Studio Office now shows projected quarterly costs and remaining cash runway.
+- Studio & Finance now records lifetime overhead and interest paid.
+- Insolvent studios cannot start another film until their finances recover. Contract work and financing remain accessible.
+- Added cumulative contract and overhead counters for future analytics and achievements.
+
+### Automated balance audit
+
+The deterministic audit selected the best-paying available contract for twelve consecutive quarters. The studio remained solvent and accumulated cash, but reputation and prestige collapsed to zero and trust fell sharply. This confirms the intended trade-off: contract work can keep the doors open, but a contract-only studio sacrifices the standing required for tier promotion and prestigious long-term growth.
+
+The current numbers should still be watched during live play. The next tuning pass should compare three player profiles over five game years:
+
+1. film-first with no borrowing;
+2. balanced films and occasional contracts;
+3. aggressive expansion funded by debt.
+
+### Save compatibility
+
+- Current save version: **5**.
+- Automatically migrates save versions 4, 3, 2 and 1.
+- New fields default safely when absent: `contractStreak`, `completedContracts`, and `lifetimeOverhead`.
+
+### Validation
+
+- TypeScript JSX transpilation diagnostics: **0**.
+- Embedded engine tests: **22/22 passed**.
+- Contract-fatigue test: passed.
+- Film-resets-fatigue test: passed.
+- Financial-runway test: passed.
+- Twelve-quarter deterministic contract audit: completed.
