@@ -111,8 +111,11 @@ export async function getNews(scope, tickers) {
       const [tk, nm] = entry.split('|');
       return fetchTicker(tk.trim(), nm ? nm.trim() : null);
     });
-    // always add a market backdrop so the desk sees the wider tape too
+    // market backdrop AND the direct premium feeds (audit finding 3): holdings/idea-hunting
+    // mode previously skipped WSJ/CNBC/Seeking Alpha, so the desk hunted without the best
+    // market coverage. Include them here too so convergence has real material to draw on.
     feeds.push(...SCOPE_QUERIES.market.map(fetchFeed));
+    feeds.push(...DIRECT_MARKET_FEEDS.map(([u, n]) => fetchXml(u, n)));
   } else {
     const queries = SCOPE_QUERIES[scope] || SCOPE_QUERIES.market;
     feeds = [

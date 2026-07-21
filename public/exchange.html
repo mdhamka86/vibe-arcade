@@ -158,24 +158,9 @@ function Ic({n}){
 }
 
 // ---------- helpers ----------
-// WHY THIS IS NOT JUST fetch().json(): when the function crashes, Vercel replies with a
-// PLAIN TEXT page ("A server error has occurred / FUNCTION_INVOCATION_FAILED"), not JSON.
-// The old code called r.json() unconditionally, which choked on the "A" of "A server
-// error" and threw "Unexpected token 'A'... is not valid JSON". The banner then blamed the
-// API key and Upstash variables — both of which were completely fine. The real fault (the
-// deployed file was truncated, so it had no exports) was invisible for an hour.
-// Read the body ONCE as text, then decide. An honest error names what actually happened.
 async function eng(action,payload={}){
   const r=await fetch(API_ENG,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...payload})});
-  const raw=await r.text();
-  let j=null;
-  try{ j=raw?JSON.parse(raw):null; }catch(_){ /* not JSON: handled below */ }
-  if(j===null){
-    const snip=String(raw||'').trim().split('\n').filter(Boolean).slice(0,2).join(' — ').slice(0,160);
-    if(!r.ok) throw new Error('Server error '+r.status+' on "'+action+'": '+(snip||'empty reply')+'. This is the function itself failing, not your API keys — check the Vercel function logs for /api/exchange-engine.');
-    throw new Error('The server replied with something that is not JSON on "'+action+'": '+(snip||'empty reply'));
-  }
-  if(!r.ok) throw new Error(j.error||('Server error '+r.status+' on "'+action+'"'));
+  const j=await r.json();
   if(j.error) throw new Error(j.error);
   return j;
 }
@@ -233,6 +218,10 @@ function GemCard({idea,ledgerId,onPass,onFlag,onTake}){
       {Array.isArray(idea.signals)&&idea.signals.length>0&&
         <div className="signal-row">{idea.signals.map((s,i)=><span key={i} className="sig">{s}</span>)}</div>}
       <div className="thesis">{idea.reason}</div>
+      {Array.isArray(idea.candidateNews)&&idea.candidateNews.length>0&&<div className="note" style={{marginTop:8}}><span className="steel">NEWS ON THIS NAME ({idea.newsSupport})</span> {idea.candidateNews.join('  ·  ')}</div>}
+      {idea.newsSupport===0&&idea.newsChecked!==false&&<div className="note" style={{marginTop:8}}><span className="ambr">⚠ NO DIRECT NEWS</span> the wire had nothing specifically on this name this run — thesis unconfirmed by fetched coverage.</div>}
+      {idea.newsChecked===false&&<div className="note" style={{marginTop:8}}><span className="ambr">⚠ NEWS CHECK UNAVAILABLE</span> the news trawl couldn't run this session, so this name's coverage is unverified — confirm before trading.</div>}
+      {idea.conviction_note&&<div className="note" style={{marginTop:4}}><span className="ambr">⚠ CONVICTION</span> {idea.conviction_note}</div>}
       {idea.diversifies && <div className="note" style={{marginTop:8}}><span className="steel">REBALANCES</span> {idea.diversifies}</div>}
       {idea.level_warning && <div className="alertbox a-amber" style={{marginTop:10,marginBottom:0}}>{idea.level_warning}</div>}
       <div className="note" style={{marginTop:10}}><Ic n="target"/> {idea.availability||'Confirm availability on your NOVA platform'}</div>
@@ -270,7 +259,16 @@ function Desk({state,refresh}){
     setSeeding(true);
     try{
       const mod=await import('./exchange-seed.js').catch(()=>null);
-      if(mod&&mod.SEED_BOOK){ await eng('seed',{seedBook:mod.SEED_BOOK,seedWatchlist:mod.SEED_WATCHLIST}); await refresh(); }
+      if(mod&&mod.SEED_BOOK){
+        const r=await eng('seed',{seedBook:mod.SEED_BOOK,seedWatchlist:mod.SEED_WATCHLIST});
+        if(r&&r.refused){
+          // book already populated — never overwrite silently; require explicit confirmation
+          if(confirm(`${r.note}\n\nOverwrite your existing ${r.existingHoldings} holding(s) with the seed anyway?`)){
+            await eng('seed',{seedBook:mod.SEED_BOOK,seedWatchlist:mod.SEED_WATCHLIST,force:true});
+            await refresh();
+          }
+        } else { await refresh(); }
+      }
       else alert('Seed file not reachable. Deploy exchange-seed.js alongside, or sync a screenshot instead.');
     }catch(e){ alert(e.message); }
     setSeeding(false);
@@ -475,52 +473,8 @@ function Portfolio({state,refresh}){
   const winners=holdings.filter(h=>(h.unrealised||0)>0).sort((a,b)=>(b.unrealised||0)-(a.unrealised||0));
   const laggards=holdings.filter(h=>(h.unrealised||0)<0).sort((a,b)=>(a.unrealised||0)-(b.unrealised||0));
 
-  // ---- Level watch: NOVA closes nothing for you, so this is the only tripwire ----
-  // Split deliberately: `fresh` are NEW, unacknowledged crossings and get the loud banner.
-  // Everything else sits in a quiet standing-decisions list. Acknowledging clears the
-  // banner but keeps the item in the list, so it stays visible without shouting — which
-  // is the difference between a warning you act on and wallpaper you stop seeing.
-  const lw = state?.levelWatch;
-  const fresh = (lw?.fresh)||[];
-  const standing = ((lw?.queue)||[]).filter(q=>q.acknowledged);
-  const [ackBusy,setAckBusy]=useState(null);
-  const ack=async(id)=>{ setAckBusy(id); try{ await eng('acklevel',{holdingId:id}); await refresh(); }catch(e){ alert(e.message); } setAckBusy(null); };
-  const resolve=async(id)=>{ setAckBusy(id); try{ await eng('resolvelevel',{holdingId:id}); await refresh(); }catch(e){ alert(e.message); } setAckBusy(null); };
-  const evWord=(t)=> t==='TP'?'Take-profit reached':t==='SL'?'Stop-loss breached':t==='RECOVERY'?'Recovery reclaimed':'Give-up breached';
-
   return (
     <div className="wrap">
-      {/* LOUD: new, unacknowledged level crossings only */}
-      {fresh.map(q=>(
-        <div key={q.holdingId} className={'alertbox '+((q.type==='TP'||q.type==='RECOVERY')?'a-green':'a-red')} style={{marginBottom:10}}>
-          <div style={{fontWeight:700,marginBottom:4}}>{evWord(q.type)} · {q.ticker||q.name}</div>
-          <div style={{fontSize:12}}>Your locked {q.type==='TP'?'take-profit':q.type==='SL'?'stop-loss':q.type==='RECOVERY'?'recovery level':'give-up level'} of {fmt(q.level)} was crossed — live {fmt(q.price)}. NOVA has no automatic exit, so nothing has acted on this but you.</div>
-          <div className="row" style={{marginTop:8,gap:8}}>
-            <button className="pri" disabled={ackBusy===q.holdingId} onClick={()=>ack(q.holdingId)}>{ackBusy===q.holdingId?<span className="spin">◐</span>:'Acknowledge'}</button>
-          </div>
-        </div>
-      ))}
-
-      {/* QUIET: acknowledged but still standing, so it stays visible without shouting */}
-      {standing.length>0 && <div className="card">
-        <div className="eyebrow">Standing decisions · {standing.length}</div>
-        <div className="note" style={{marginBottom:8}}>Levels that are still crossed. Acknowledged, so they no longer interrupt, but they stay here until you act or clear them.</div>
-        {standing.map(q=>(
-          <div key={q.holdingId} className="between" style={{padding:'7px 0',borderTop:'1px solid var(--line)'}}>
-            <span style={{fontSize:13}}>
-              <span className="mono">{q.ticker||q.name}</span>
-              <span className={(q.type==='TP'||q.type==='RECOVERY')?'green':'red'} style={{marginLeft:8,fontSize:11}}>{evWord(q.type)}</span>
-              <span className="dim" style={{marginLeft:6,fontSize:11}}>{fmt(q.level)} · live {fmt(q.price)}</span>
-              {q.bornBreached && <span className="dim" style={{marginLeft:6,fontSize:10}}>(already through when locked)</span>}
-            </span>
-            <button className="ghost" disabled={ackBusy===q.holdingId} onClick={()=>resolve(q.holdingId)} style={{fontSize:11,padding:'3px 8px'}}>Clear</button>
-          </div>
-        ))}
-      </div>}
-
-      {lw && lw.checked>0 && lw.priced<lw.checked && <div className="note" style={{marginBottom:8}}>
-        <span className="ambr">Note</span> {lw.checked-lw.priced} of {lw.checked} holdings with locked levels could not be priced this load, so their levels were not checked.
-      </div>}
       <div className="card">
         <div className="eyebrow"><Ic n="camera"/>Sync your NOVA book</div>
         <div className="note">Upload your NOVA open-positions screenshot to read your book by sight. On mobile the NOVA app shows only part of your book per screen, so add as many screenshots as you need — they'll be merged into one book. The desk reconciles holdings, spots closures, adopts new names, and tracks your net liquidity.</div>
@@ -533,14 +487,12 @@ function Portfolio({state,refresh}){
         {posImgs.length>1 && <div className="note" style={{marginTop:8}}><span className="green">{posImgs.length} screenshots loaded</span> — they'll be read together and merged into one book on sync.</div>}
       </div>
 
-      {report && <div className="alertbox a-green">Synced{report.shotsRead>1?` from ${report.shotsRead} screenshots`:''}. {report.updated} updated, {report.newAdded?.length||0} newly adopted, {report.closedDetected?.length||0} closure(s) detected.</div>}
-      {report?.dedupedHoldings?.length>0 && <div className="alertbox a-amber">
-        <div style={{fontWeight:700,marginBottom:4}}>Folded {report.dedupedHoldings.length} duplicate holding{report.dedupedHoldings.length>1?'s':''} back together:</div>
-        {report.dedupedHoldings.map((d,i)=><div key={i} style={{marginTop:2}}>· “{d.dropped}” was the same position as {d.kept} — a clipped screenshot name had been logged as a separate holding. Locked levels and thesis kept on the surviving row.</div>)}
-      </div>}
+      {report && report.aborted && <div className="alertbox a-amber"><div style={{fontWeight:700}}>Sync not applied</div><div style={{marginTop:3}}>{report.note}</div></div>}
+      {report && !report.aborted && <div className="alertbox a-green">Synced{report.shotsRead>1?` from ${report.shotsRead} screenshots`:''}. {report.updated} updated, {report.newAdded?.length||0} newly adopted, {report.closedDetected?.length||0} closure(s) detected.</div>}
       {report?.signFlags?.length>0 && <div className="alertbox a-amber">
-        <div style={{fontWeight:700,marginBottom:4}}>Corrected {report.signFlags.length} P/L sign{report.signFlags.length>1?'s':''} that disagreed with the price move:</div>
+        <div style={{fontWeight:700,marginBottom:4}}>{report.signFlags.length} P/L sign{report.signFlags.length>1?'s':''} to double-check (price relationship looked unusual):</div>
         {report.signFlags.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}
+        <div style={{marginTop:5}} className="dim">These kept the value your platform showed. Verify on NOVA if unsure.</div>
         <div style={{marginTop:5}} className="dim">If any of these looks wrong, re-sync a clearer screenshot.</div>
       </div>}
 
@@ -561,50 +513,19 @@ function Portfolio({state,refresh}){
   );
 }
 function HoldingRow({h,cls}){
-  // `(h.unrealised||0)>=0` rendered a MISSING P/L as green with a "+" — absent data
-  // displayed as a small win. Distinguish unknown from flat from positive.
-  const pl = (h.unrealised==null||h.unrealised==='')?null:Number(h.unrealised);
-  const up = pl!=null && pl>=0;
-  const impaired = h.levelRegime==='IMPAIRED';
-  const ev = h.levelEvent && !h.levelEvent.resolved ? h.levelEvent : null;
-  const has = (v)=> v!=null && v!=='' && +v!==0;
-  // The TP/SL row used to be gated on `(h.mentalTP||h.mentalSL)`, so a holding with
-  // NEITHER set rendered nothing at all — and every seeded holding has both null.
-  // A position with no exit plan showed identically to one carefully bracketed: silence
-  // read as "nothing to report" when it meant "this is completely unmanaged". Same shape
-  // as the terminal's `SL 0.000`. An unset level is now stated, not hidden.
-  const lo = impaired ? h.lockedGiveUp : h.lockedSL;
-  const hi = impaired ? h.lockedRecovery : h.lockedTP;
-  const loLabel = impaired ? 'GIVE-UP' : 'SL';
-  const hiLabel = impaired ? 'RECOVERY' : 'TP';
-  const evCls = ev ? (ev.type==='TP'||ev.type==='RECOVERY' ? 'a-green' : 'a-red') : '';
+  const up=(h.unrealised||0)>=0;
   return (
-    <div className="card" style={{padding:13, borderColor: ev && !ev.acknowledged ? 'var(--red)' : undefined}}>
+    <div className="card" style={{padding:13}}>
       <div className="between">
         <span className="hl" style={{fontSize:15}}>{h.name} {h.ticker&&<span className="dim mono" style={{fontSize:12}}>{h.ticker}</span>}</span>
         <span className={'badge '+cls(h.assetClass)}>{h.leveraged?'CFD':h.assetClass||'EQ'}</span>
       </div>
       <div className="meta">
         <span>{fmt(h.qty)} @ {fmt(h.avgCost)}</span>
-        <span>now {fmt(h.livePrice ?? h.lastPrice)}{h.livePrice!=null&&<span className="dim" style={{fontSize:10}}> live</span>}</span>
-        {pl==null
-          ? <span className="dim" style={{fontWeight:600}}>P/L —</span>
-          : <span className={up?'green':'red'} style={{fontWeight:600}}>{up?'+':''}{fmt(pl)}</span>}
+        <span>now {fmt(h.lastPrice)}</span>
+        <span className={up?'green':'red'} style={{fontWeight:600}}>{up?'+':''}{fmt(h.unrealised)}</span>
       </div>
-      {/* levels, in the regime this holding actually lives in */}
-      {h.levelsLockedAt
-        ? <div className="meta">
-            {impaired && <span className="badge b-note" style={{fontSize:9}}>IMPAIRED</span>}
-            <span className={has(hi)?'green':'dim'}>{hiLabel} {has(hi)?fmt(hi):'—'}</span>
-            <span className={has(lo)?'red':'dim'}>{loLabel} {has(lo)?fmt(lo):'—'}</span>
-            <span className="dim" style={{fontSize:10}}>locked</span>
-          </div>
-        : <div className="meta"><span className="ambr" style={{fontWeight:600}}>⚠ no levels set — run a review to lock them</span></div>}
-      {ev && <div className={'alertbox '+evCls} style={{marginTop:8,fontSize:12}}>
-        {ev.type==='TP'?'Take-profit reached':ev.type==='SL'?'Stop-loss breached':ev.type==='RECOVERY'?'Recovery level reclaimed':'Give-up level breached'} at {fmt(ev.level)} · live {fmt(ev.price)}
-        {ev.bornBreached && <span className="dim"> · already through when locked</span>}
-        {ev.acknowledged && <span className="dim"> · acknowledged</span>}
-      </div>}
+      {(h.mentalTP||h.mentalSL)&&<div className="meta"><span className="green">TP {fmt(h.mentalTP)}</span><span className="red">SL {fmt(h.mentalSL)}</span></div>}
     </div>
   );
 }

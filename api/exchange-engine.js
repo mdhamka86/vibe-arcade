@@ -16,15 +16,23 @@ const MODEL = 'claude-sonnet-4-6';
 // ---------- Redis ----------
 async function rGet(key) {
   const r = await fetch(`${R_URL}/get/${key}`, { headers: { Authorization: `Bearer ${R_TOK}` } });
+  // audit finding 7: a transient failure must NOT masquerade as empty state (which would make
+  // the whole book look wiped). Fail loudly so callers abort rather than proceed on phantom data.
+  if (!r.ok) throw new Error(`Storage read failed (${r.status}). Your data is safe — a connection issue, not a change. Try again shortly.`);
   const j = await r.json();
-  try { return j.result ? JSON.parse(j.result) : null; } catch { return null; }
+  if (j.result == null) return null; // genuinely absent key is fine
+  try { return JSON.parse(j.result); }
+  catch { throw new Error(`Stored data for "${key}" was unreadable (corrupt value). Not proceeding, to avoid overwriting it.`); }
 }
 async function rSet(key, val) {
-  await fetch(`${R_URL}/set/${key}`, {
+  const r = await fetch(`${R_URL}/set/${key}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${R_TOK}` },
     body: JSON.stringify(val),
   });
+  // audit finding 7: a failed write must NOT report success, or the UI shows a change that never saved.
+  if (!r.ok) throw new Error(`Storage write failed (${r.status}). Your change may not have saved — please retry.`);
+  return true;
 }
 
 // ---------- Bangkok clock (Hammy trades from Phuket) ----------
@@ -47,120 +55,37 @@ function bkk() {
 }
 const daysHeld = (openedAt) => Math.max(0, Math.floor((Date.now() - openedAt) / 86400000));
 
-// ---------- Live stock prices ----------
-// HISTORY, three real bugs lived here:
-//  1. Finnhub was gated behind FINNHUB_API_KEY. Unset, every quote returned null, and the
-//     validator then had nothing to check against — so it fell back to marking the model's
-//     homework against the model's own stated price. A fabricated CRDO at $58 (real: $226)
-//     passed clean. A price source that silently returns nothing is worse than none at all,
-//     because the code downstream cannot tell "no data" from "checked and fine".
-//  2. The symbol sanitiser stripped digits: `replace(/[^A-Z.]/g,'')`. SGX tickers C6L and
-//     ES3 became "CL" and "ES" — which are real, DIFFERENT US listings (Colgate-Palmolive
-//     and Eversource Energy). The book would price Singapore Airlines as Colgate.
-//  3. No exchange awareness at all, so SGX names could never resolve correctly anyway.
-// Now: Yahoo, no key, exchange-aware symbol mapping, and every quote carries its currency
-// and age so nothing downstream has to guess.
-const EXCHANGE_SUFFIX = {
-  SGX: '.SI', SES: '.SI',
-  HKEX: '.HK', HKG: '.HK',
-  LSE: '.L', LON: '.L',
-  ASX: '.AX', TSE: '.T', TYO: '.T',
-};
-// Seeded books sometimes carry a company NAME where a symbol belongs (the NOVA screenshot
-// transcription wrote "MARVELL" and "NETAPP"). Neither resolves on any feed. Map them.
-const SYMBOL_ALIAS = {
-  MARVELL: 'MRVL', NETAPP: 'NTAP', TESLA: 'TSLA',
-  AMBARELLA: 'AMBA', CAMTEK: 'CAMT', MAGNITE: 'MGNI', COHERENT: 'COHR',
-};
+// ---------- Live stock prices (Finnhub free tier, real-time US quotes) ----------
+// Gives the desk genuine eyes onto the market so ideas anchor to real prices and the
+// validator can catch a mispriced idea. Degrades gracefully: no key, an unreachable
+// feed, or an unknown ticker simply returns null and the desk carries on honestly.
+const FINNHUB_KEY = process.env.FINNHUB_API_KEY || process.env.FINNHUB_KEY || '';
 
-function yahooSymbol(ticker, exchange) {
-  if (!ticker) return null;
-  // Preserve digits: SGX tickers are literally C6L / ES3. Stripping them silently
-  // retargets the quote at an unrelated company.
-  let t = String(ticker).toUpperCase().trim().replace(/[^A-Z0-9.\-]/g, '');
-  if (!t) return null;
-  if (SYMBOL_ALIAS[t]) t = SYMBOL_ALIAS[t];
-  if (/\.[A-Z]+$/.test(t)) return t; // already suffixed
-  const suf = EXCHANGE_SUFFIX[String(exchange || '').toUpperCase().replace(/[^A-Z]/g, '')] || '';
-  return t + suf;
-}
-
-async function livePrice(ticker, exchange) {
-  const sym = yahooSymbol(ticker, exchange);
+async function livePrice(ticker) {
+  if (!FINNHUB_KEY || !ticker) return null;
+  const sym = String(ticker).toUpperCase().replace(/[^A-Z.]/g, '');
   if (!sym) return null;
   try {
-    const r = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`,
-      { headers: { 'User-Agent': 'Mozilla/5.0 (TheExchange/1.0)' } }
-    );
+    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`);
     if (!r.ok) return null;
-    const m = (await r.json()).chart?.result?.[0]?.meta;
-    if (!m || typeof m.regularMarketPrice !== 'number' || m.regularMarketPrice <= 0) return null;
-    return {
-      price: +m.regularMarketPrice.toFixed(4),
-      currency: m.currency || null,
-      name: m.longName || m.shortName || null,
-      symbol: sym,
-      ts: (m.regularMarketTime || 0) * 1000,
-    };
-  } catch { return null; }
+    const j = await r.json();
+    // Finnhub returns c = current price. 0 means the symbol was not recognised.
+    const c = typeof j.c === 'number' ? j.c : null;
+    return c && c > 0 ? +c.toFixed(2) : null;
+  } catch {
+    return null;
+  }
 }
 
-// Fetch many holdings at once. Accepts plain tickers OR {ticker, exchange} objects so the
-// SGX names resolve properly. Returns a map keyed by the ORIGINAL ticker as the book knows it.
+// Fetch many tickers at once, returning a map keyed by uppercased ticker.
 async function livePrices(tickers) {
-  const list = (tickers || [])
-    .map((t) => (typeof t === 'string' ? { ticker: t } : t))
-    .filter((t) => t && t.ticker);
-  const seen = new Set();
-  const uniq = list.filter((t) => {
-    const k = String(t.ticker).toUpperCase();
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
+  const list = [...new Set((tickers || []).map((t) => String(t || '').toUpperCase()).filter(Boolean))];
   const out = {};
-  await Promise.all(uniq.map(async (t) => {
-    const q = await livePrice(t.ticker, t.exchange);
-    if (q) out[String(t.ticker).toUpperCase()] = q;
+  await Promise.all(list.map(async (t) => {
+    const p = await livePrice(t);
+    if (p != null) out[t] = p;
   }));
   return out;
-}
-
-// Convenience: just the number, for callers that only want a price.
-function priceOf(quoteMap, ticker) {
-  const q = quoteMap && quoteMap[String(ticker || '').toUpperCase()];
-  return q ? q.price : null;
-}
-
-// ---------- FX (the book is not single-currency) ----------
-// Hammy's book holds SGX names (C6L, ES3) quoted in SGD alongside US names in USD.
-// The platform reports lastPrice in the LOCAL currency but securitiesValue in USD:
-// C6L shows 100 x 7.82 SGD yet a securitiesValue of 605.03, i.e. converted at ~1.29.
-// Any code doing qty*price and summing across the book was adding SGD to USD at 1:1.
-// Conservative fallbacks: if FX is unreachable we return null and callers keep local
-// values rather than silently applying a made-up rate.
-async function fxRates() {
-  try {
-    const r = await fetch('https://query1.finance.yahoo.com/v8/finance/chart/SGD=X?interval=1d&range=1d',
-      { headers: { 'User-Agent': 'Mozilla/5.0 (TheExchange/1.0)' } });
-    if (!r.ok) return null;
-    const m = (await r.json()).chart?.result?.[0]?.meta;
-    const usdsgd = m && typeof m.regularMarketPrice === 'number' ? m.regularMarketPrice : null;
-    if (!usdsgd || usdsgd <= 0) return null;
-    return { USD: 1, SGD: usdsgd, asOf: (m.regularMarketTime || 0) * 1000 };
-  } catch { return null; }
-}
-
-// Convert a local-currency amount into USD. Unknown currency or missing FX => unchanged,
-// flagged by the caller rather than quietly fudged.
-function toUsd(amount, currency, fx) {
-  const a = num(amount);
-  if (a == null) return null;
-  const c = String(currency || 'USD').toUpperCase();
-  if (c === 'USD') return a;
-  if (!fx || !fx[c]) return a; // no rate: return as-is rather than invent one
-  return +(a / fx[c]).toFixed(4);
 }
 
 // Guard against a US-focused feed returning a bogus price for a regional ticker (e.g. an
@@ -254,23 +179,15 @@ function checkLevels(idea, realPrice) {
   // price disagree by a huge margin (e.g. a regional ticker colliding with a US listing),
   // we cannot trust EITHER blindly, so we fail and ask for manual confirmation rather than
   // display a figure we cannot stand behind.
-  //
-  // WITHOUT a live price there is NOTHING to check against. This used to fall through and
-  // validate the entry against `idea.current_price` — a number the model itself invented.
-  // The model stated a price, then was graded against its own statement, and a fabricated
-  // CRDO at $58 (real market: $226.74) passed clean with rr 1.6. A validator that marks its
-  // own homework is not a validator; it is a rubber stamp that looks like one. No price,
-  // no certification.
-  if (realPrice == null || !(realPrice > 0)) {
-    return { ok: false, reason: 'no live price available for this ticker — levels cannot be verified against the real market', noQuote: true };
+  if (realPrice != null && realPrice > 0) {
+    if (cur != null) {
+      const gap = Math.abs(cur - realPrice) / realPrice;
+      if (gap > 0.6) return { ok: false, reason: `the live feed (${realPrice}) and the stated price (${cur}) disagree wildly — likely a wrong-instrument feed hit for this ticker; confirm the real price on your platform`, realPrice, feedSuspect: true };
+      if (gap > 0.06) return { ok: false, reason: `stated price ${cur} is ${(gap * 100).toFixed(1)}% off the live price ${realPrice} — levels are anchored to a wrong price`, realPrice };
+    }
+    // trust the live price as the reference for the entry-proximity check below
+    cur = realPrice;
   }
-  if (cur != null) {
-    const gap = Math.abs(cur - realPrice) / realPrice;
-    if (gap > 0.6) return { ok: false, reason: `the live feed (${realPrice}) and the stated price (${cur}) disagree wildly — likely a wrong-instrument feed hit for this ticker; confirm the real price on your platform`, realPrice, feedSuspect: true };
-    if (gap > 0.06) return { ok: false, reason: `stated price ${cur} is ${(gap * 100).toFixed(1)}% off the live price ${realPrice} — levels are anchored to a wrong price`, realPrice };
-  }
-  // trust the live price as the reference for the entry-proximity check below
-  cur = realPrice;
 
   // 1) entry should sit within ~8% of the current price. A week-long swing
   // entry further out than that is really a limit order that may never fill.
@@ -337,7 +254,24 @@ async function actIdeas(force) {
   // watchlist for the news trawl: the holdings plus any names the desk has been tracking
   const heldTickers = (s.book.holdings || []).map((h) => h.ticker || h.name).filter(Boolean);
   const tickerParam = heldTickers.join(',');
-  const news = await getNews('holdings', tickerParam);
+  // (a) news on CURRENT holdings, and (b) BROAD market news (audit finding 4): so the hunter
+  // proposes fresh names from stories it has ACTUALLY seen, not blind. Watchlist names get
+  // their own trawl too if the desk has been tracking any.
+  const watchTickers = (s.book.watchlist || []).map((w) => w.ticker || w.name).filter(Boolean);
+  const [holdNews, marketNews, watchNews] = await Promise.all([
+    getNews('holdings', tickerParam),
+    getNews('market').catch(() => []),
+    watchTickers.length ? getNews('holdings', watchTickers.join(',')).catch(() => []) : Promise.resolve([]),
+  ]);
+  // merge, de-duped by headline, holdings + market + watchlist
+  const news = (() => {
+    const seen = new Set(); const out = [];
+    for (const it of [...holdNews, ...marketNews, ...watchNews]) {
+      const k = (it.title || '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 50);
+      if (!k || seen.has(k)) continue; seen.add(k); out.push(it);
+    }
+    return out;
+  })();
 
   // freshness memory: names proposed in the last 10 days must not be repeated, and
   // names already held should not be proposed as fresh swing ideas either.
@@ -356,36 +290,9 @@ async function actIdeas(force) {
   const netLiq = num(s.book.netLiq) ?? num(acc.netLiquidityValue);
   const initialMargin = num(acc.initialMargin);
   const marginUtilPct = (initialMargin != null && netLiq) ? (initialMargin / netLiq) * 100 : null;
-  // BOARD LOTS. "Affordable" is not price-vs-buying-power: it is MINIMUM TICKET vs
-  // buying power, and the minimum ticket depends on the venue's board lot.
-  //
-  // 17/07/2026: the desk proposed Jardine Matheson (J36, SGX) at 62.88 and wrote that it
-  // "fits comfortably within $342 buying power at 1 share". SGX trades in board lots of
-  // 100 units, so the real minimum ticket was $6,288 — eighteen times the buying power.
-  // Hammy took the idea to his platform, found the NewOrder screen locked at 100 shares,
-  // and the trade was impossible. The idea was not merely mis-sized; it was never takeable.
-  //
-  // The rule per venue:
-  //   SGX   board lot 100 units. Minimum ticket = price x 100. (SGX RegCo reduces this to
-  //         10 units for instruments above S$10 from October 2026, starting with 11 stocks
-  //         — until that lands, assume 100.)
-  //   HKEX  board lot varies BY STOCK (100/200/500/1000/2000...). Never assume; if the lot
-  //         is unknown, the name is not proposable as a share.
-  //   US    (NASDAQ/NYSE/NYSE American) 1 share. Minimum ticket = price x 1.
-  //   CFD   not board-lot bound, but leveraged: a different risk decision, not a loophole
-  //         for affording a name that fails as a share.
-  const maxSgxPrice = buyingPower != null ? buyingPower / 100 : null;
   const affordLine = buyingPower != null
-    ? `Your genuine buying power right now is about $${buyingPower.toFixed(0)}${netLiq != null ? ` on net liquidity of $${netLiq.toFixed(0)}` : ''}${marginUtilPct != null ? `, with roughly ${marginUtilPct.toFixed(0)}% of the account already committed as margin` : ''}.
-
-AFFORDABILITY IS DECIDED BY THE MINIMUM TICKET, NOT THE SHARE PRICE. Work it out before you propose anything:
-- SGX shares trade in board lots of 100 units. Minimum ticket = price x 100. With $${buyingPower.toFixed(0)} of buying power, the HIGHEST SGX share price you can actually trade is about $${maxSgxPrice.toFixed(2)}. An SGX name priced above that is NOT AFFORDABLE no matter how good the thesis — do not propose it, and never describe it as fitting "at 1 share", because SGX will not sell you 1 share.
-- HKEX board lots vary by stock (100, 200, 500, 1000, 2000). If you do not know the lot for a specific HK name, do not propose it as a share.
-- US shares (NASDAQ/NYSE/NYSE American) trade in single shares. Minimum ticket = price x 1, so anything under $${buyingPower.toFixed(0)} is reachable.
-- CFDs are not board-lot bound, but leverage is a risk decision and never a way to squeeze in a name that fails the share test.
-
-For EVERY idea, state the minimum ticket in the reason (e.g. "1 SGX lot = 100 x $2.90 = $290, inside your $${buyingPower.toFixed(0)}") and confirm it fits. An idea he cannot physically place on his platform is worse than no idea: it wastes his morning and costs the desk his trust.`
-    : 'Account buying power is not yet synced, so size ideas conservatively and note that he should confirm affordability on his platform before taking anything. Remember SGX shares trade in board lots of 100 units, so the minimum SGX ticket is price x 100, never price x 1.';
+    ? `Your genuine buying power right now is about $${buyingPower.toFixed(0)}${netLiq != null ? ` on net liquidity of $${netLiq.toFixed(0)}` : ''}${marginUtilPct != null ? `, with roughly ${marginUtilPct.toFixed(0)}% of the account already committed as margin` : ''}. EVERY idea you propose must be genuinely affordable inside this buying power at a sensible position size; never recommend something that would need more firepower than he has.`
+    : 'Account buying power is not yet synced, so size ideas conservatively and note that he should confirm affordability on his platform before taking anything.';
 
   const historyLines = recent.map((r) => `- ${r.date}: ${r.idea.name}${r.idea.ticker ? ' (' + r.idea.ticker + ')' : ''} ${r.idea.direction} (${r.status})`).join('\n') || '- none';
   const priorGuidance = (s.guidance || []).map((g) => `- ${g.text}${g.basis ? ' [' + g.basis + ']' : ''}`).join('\n') || '- none yet; not enough resolved history';
@@ -441,9 +348,9 @@ Respond ONLY with JSON, no markdown:
 
   // fetch genuine live prices for whatever the model proposed, so the validator can
   // check each idea against reality and the cards show the true market price.
-  const proposedTickers = (ideas.ideas || []).map((i) => ({ ticker: i.ticker || i.name, exchange: i.exchange })).filter((x) => x.ticker);
+  const proposedTickers = (ideas.ideas || []).map((i) => i.ticker || i.name).filter(Boolean);
   let priceMap = await livePrices(proposedTickers);
-  const realFor = (i) => priceOf(priceMap, i.ticker || i.name);
+  const realFor = (i) => priceMap[(i.ticker || i.name || '').toUpperCase()] ?? null;
 
   // validation + no-dupe + tradeability gate, with one retry, mirroring The Terminal
   const isBanned = (i) => {
@@ -451,77 +358,25 @@ Respond ONLY with JSON, no markdown:
     return bannedList.map((b) => b.toUpperCase()).includes(nm) || unavailable.has(nm) || heldNames.has(nm);
   };
   const badLevels = (i) => !checkLevels(i, realFor(i)).ok;
-  // AFFORDABILITY GATE. The prompt now teaches board lots, but a prompt is guidance and
-  // this is arithmetic: check it in code, against the LIVE price rather than whatever the
-  // model claimed, and reject rather than hope.
-  //
-  // Born 17/07/2026: the desk proposed Jardine Matheson (J36, SGX) at 62.88 with the note
-  // "fits comfortably within $342 buying power at 1 share". SGX board lots are 100 units,
-  // so the true minimum ticket was $6,288 against $342 of buying power. Hammy only found
-  // out when his platform's NewOrder screen refused to let him buy fewer than 100 shares.
-  //
-  // Only SHARE ideas are gated. CFDs are not board-lot bound, and an idea with no price
-  // is left to the existing level checks rather than being failed twice for the same gap.
-  const LOT = { SGX: 100 };            // HKEX lots vary per stock; see hkexUnknownLot below
-  const lotFor = (i) => {
-    const ex = String(i.exchange || '').toUpperCase().trim();
-    if (ex === 'SGX') return LOT.SGX;
-    return 1;                          // US venues trade single shares
-  };
-  const minTicket = (i) => {
-    const px = realFor(i) ?? num(i.current_price);
-    if (px == null) return null;       // unknown price: not this gate's business
-    return px * lotFor(i);
-  };
-  // An HK share whose board lot we cannot know is not proposable as a share: guessing the
-  // lot is exactly the kind of assumption that produced the J36 card.
-  const hkexUnknownLot = (i) =>
-    String(i.instrument || 'SHARE').toUpperCase() === 'SHARE' &&
-    String(i.exchange || '').toUpperCase().trim() === 'HKEX';
-  const unaffordable = (i) => {
-    if (String(i.instrument || 'SHARE').toUpperCase() !== 'SHARE') return false;
-    if (buyingPower == null) return false;   // nothing to measure against
-    if (hkexUnknownLot(i)) return true;
-    const t = minTicket(i);
-    return t != null && t > buyingPower;
-  };
-  const affordWhy = (i) => {
-    if (hkexUnknownLot(i))
-      return `${i.ticker || i.name}: HKEX board lot varies by stock and is unknown here, so the minimum ticket cannot be verified`;
-    const px = realFor(i) ?? num(i.current_price);
-    const lot = lotFor(i);
-    const t = minTicket(i);
-    return `${i.ticker || i.name}: ${lot} x $${px} = $${t.toFixed(0)} minimum ticket, but buying power is only $${buyingPower.toFixed(0)}`;
-  };
-  const isBad = (i) => isBanned(i) || badLevels(i) || unaffordable(i);
+  const isBad = (i) => isBanned(i) || badLevels(i);
 
   if ((ideas.ideas || []).some(isBad)) {
     const dupes = (ideas.ideas || []).filter(isBanned).map((i) => i.ticker || i.name);
     const lvl = (ideas.ideas || []).filter((i) => !isBanned(i) && badLevels(i)).map((i) => `${i.ticker || i.name}: ${checkLevels(i, realFor(i)).reason}`);
-    const afford = (ideas.ideas || []).filter(unaffordable).map(affordWhy);
     // tell the model the true live prices so its retry is anchored to reality
     const priceHints = Object.entries(priceMap).map(([k, v]) => `${k} is really trading at ~$${v}`).join('; ');
     try {
       const second = await claude(prompt +
-        `\n\nREJECTED, fix and resubmit two clean ideas:\n${dupes.length ? 'Duplicate/held/unavailable: ' + dupes.join(', ') + '\n' : ''}${lvl.length ? 'Broken levels: ' + lvl.join('; ') + '\n' : ''}${afford.length ? 'NOT AFFORDABLE — the minimum ticket exceeds his buying power. This is arithmetic, not a matter of conviction, and these names cannot be placed at all: ' + afford.join('; ') + '. Replace them with names whose MINIMUM TICKET fits: SGX shares need price x 100' + (maxSgxPrice != null ? ' (so under $' + maxSgxPrice.toFixed(2) + ' a share)' : '') + ', US shares need only price x 1.\n' : ''}${priceHints ? 'LIVE PRICES (anchor to these exactly): ' + priceHints : ''}`, 2600);
+        `\n\nREJECTED, fix and resubmit two clean ideas:\n${dupes.length ? 'Duplicate/held/unavailable: ' + dupes.join(', ') + '\n' : ''}${lvl.length ? 'Broken levels: ' + lvl.join('; ') + '\n' : ''}${priceHints ? 'LIVE PRICES (anchor to these exactly): ' + priceHints : ''}`, 2600);
       if (second.ideas) {
         // price the fresh names too before accepting
-        const secondTickers = second.ideas.map((i) => ({ ticker: i.ticker || i.name, exchange: i.exchange })).filter((x) => x.ticker);
+        const secondTickers = second.ideas.map((i) => i.ticker || i.name).filter(Boolean);
         priceMap = { ...priceMap, ...(await livePrices(secondTickers)) };
         if (!second.ideas.some(isBad)) ideas = second;
       }
     } catch { /* fall through to flagging */ }
     (ideas.ideas || []).forEach((i) => {
       if (isBanned(i)) i.reason = ((i.reason || '') + ' [DUPLICATE/HELD WARNING]').trim();
-      // Last line of defence. If the retry failed and an unaffordable name still made it
-      // this far, it must NOT reach the card looking takeable. Say the arithmetic out loud,
-      // drop the conviction to its floor, and make the availability line refuse it — the
-      // "Take position" button is not a suggestion, it is where real money goes.
-      if (unaffordable(i)) {
-        i.reason = ((i.reason || '') + ` [NOT AFFORDABLE — ${affordWhy(i)}. Board lots make this impossible to place, whatever the thesis says.]`).trim();
-        i.conviction = 'LOW';
-        i.availability = 'NOT AFFORDABLE — minimum board lot exceeds your buying power';
-      }
       const real = realFor(i);
       let lc = checkLevels(i, real);
       // only trust the feed price for display when it is NOT flagged as a wrong-instrument hit
@@ -555,6 +410,45 @@ Respond ONLY with JSON, no markdown:
 
   ideas.generatedAt = t.iso;
   ideas.dateKey = t.dateKey;
+
+  // CANDIDATE VALIDATION (audit finding 4): the model proposed fresh names — now fetch news
+  // for THOSE specific tickers and check the thesis is actually supported, rather than trusting
+  // a claim built on news the model never saw. And enforce CONVERGENCE in code (audit finding
+  // 1): a MED-HIGH/HIGH idea must have >=2 headlines genuinely mentioning it; otherwise cap it.
+  const proposed = (ideas.ideas || []).filter((i) => i.ticker || i.name);
+  if (proposed.length) {
+    const tickers = proposed.map((i) => i.ticker || i.name).filter(Boolean).join(',');
+    // distinguish a genuine "no news on this name" from a FETCH FAILURE — capping an idea for
+    // lack of news is only fair if we actually managed to look. On a failed trawl we still cap
+    // (cautious), but we say so honestly rather than claiming the name is unsupported.
+    let candNews = null, newsFetchOk = true;
+    try { candNews = await getNews('holdings', tickers); }
+    catch { candNews = []; newsFetchOk = false; }
+    const mentions = (idea) => {
+      const tick = (idea.ticker || '').toUpperCase();
+      const name = (idea.name || '').toLowerCase();
+      const nameKey = name.split(/\s+/)[0]; // first word of company name
+      return (candNews || []).filter((n) => {
+        const hay = ((n.title || '') + ' ' + (n.desc || '')).toLowerCase();
+        return (tick && hay.includes(tick.toLowerCase())) || (nameKey && nameKey.length > 3 && hay.includes(nameKey));
+      });
+    };
+    (ideas.ideas || []).forEach((i) => {
+      const hits = mentions(i);
+      i.candidateNews = hits.slice(0, 4).map((n) => `[${n.source}] ${n.title}`);
+      i.newsSupport = hits.length; // how many headlines actually mention this name
+      i.newsChecked = newsFetchOk;
+      // convergence gate: top-two conviction needs >=2 independent supporting headlines
+      if (['MED-HIGH', 'HIGH'].includes((i.conviction || '').toUpperCase()) && hits.length < 2) {
+        i.convictionClaimed = i.conviction;
+        i.conviction = hits.length === 1 ? 'MED' : 'LOW';
+        i.conviction_note = newsFetchOk
+          ? `Auto-capped from ${i.convictionClaimed}: only ${hits.length} news item(s) actually mention this name — not enough verified convergence for top conviction.`
+          : `Held at ${i.conviction} (claimed ${i.convictionClaimed}): the news check couldn't run this session, so convergence is unverified — treat cautiously and confirm before trading.`;
+      }
+    });
+  }
+
   const clears = (c) => ['MED-HIGH', 'HIGH'].includes((c || '').toUpperCase());
   (ideas.ideas || []).forEach((i) => { i.qualifies = clears(i.conviction) && !i.level_warning; });
   ideas.qualifyingCount = (ideas.ideas || []).filter((i) => i.qualifies).length;
@@ -575,7 +469,8 @@ async function parseShot(image, kind) {
   const spec = {
     positions: `This is a screenshot of a Phillip Nova (NOVA) equities account showing stock holdings and an account summary bar.
 Extract EVERY holding, note whether each is Leveraged (CFD) or Non-Leveraged (EQ/ETF), and read the account summary figures along the bottom.
-JSON: {"holdings":[{"name":"Company Name","ticker":"TICK or null","qty":5,"avgCost":192.02,"lastPrice":195.02,"unrealised":11.59,"assetClass":"CFD|EQ|ETF","leveraged":true,"status":"Open"}],"netLiq":3864.04,"account":{"ledgerBalance":null,"equityBalance":null,"unrealizedPL":null,"initialMargin":null,"buyingPowerETD":null,"netLiquidityValue":null}}
+JSON: {"holdings":[{"name":"Company Name","ticker":"TICK or null","qty":5,"direction":"LONG|SHORT","avgCost":192.02,"lastPrice":195.02,"unrealised":11.59,"assetClass":"CFD|EQ|ETF","leveraged":true,"status":"Open"}],"netLiq":3864.04,"account":{"ledgerBalance":null,"equityBalance":null,"unrealizedPL":null,"initialMargin":null,"buyingPowerETD":null,"netLiquidityValue":null}}
+DIRECTION (important for CFDs): most stock holdings are LONG. But a CFD can be SHORT (a sell/short position that profits when price FALLS). Read the direction if the platform shows it (a "sell"/"short" label, a negative quantity, or a short indicator). If it's a plain long-only share holding or you can't tell, use "LONG". This matters: for a SHORT, a price rise is a LOSS, the opposite of a long.
 CRITICAL — SIGN OF UNREALISED P/L: the platform shows profit and loss BY COLOUR, often without a printed + or - sign. A figure shown in GREEN (or any up/positive tint) is a PROFIT and MUST be a POSITIVE number. A figure shown in RED is a LOSS and MUST be a NEGATIVE number. Read the colour carefully and set the sign accordingly; never drop or invert it. As a cross-check, if lastPrice is above avgCost on a normal long holding the unrealised is usually positive, and if below it is usually negative (leveraged/CFD and currency effects can shift the magnitude but rarely flip a clear move). When colour and this cross-check disagree, trust the colour but it is worth a second look.
 Use null for anything not visible. Numbers as numbers, not strings. Fractional qty is allowed (e.g. 0.1). leveraged is true only for CFD/Leveraged rows.`,
     history: `This is a screenshot of Phillip Nova (NOVA) trade history / closed positions.
@@ -589,178 +484,12 @@ JSON: {"closes":[{"name":"Company Name","ticker":"TICK or null","qty":5,"avgCost
   ], 2000);
 }
 
-// ---------- Holding identity ----------
-// This is the load-bearing function for the whole app. If it says two records are the
-// same holding, locked levels and thesis survive a sync. If it says they differ, the old
-// record is declared CLOSED and the position is re-adopted as brand new — wiping levels,
-// resetting the age clock to day 0, and firing a false closure into pendingAAR.
-//
-// The old implementation was `an.startsWith(bn.slice(0,5)) || bn.startsWith(an.slice(0,5))`.
-// For a 3-4 character ticker, slice(0,5) IS the whole ticker, so it degraded into raw
-// prefix matching, and it failed in BOTH directions:
-//   FALSE POSITIVE (levels cross-contaminate onto the wrong position):
-//     VOO ~ VOOG, SMH ~ SMHX, ES3 ~ ES, C6L ~ C6, CAMT ~ CAMT4
-//   FALSE NEGATIVE (levels erased, position reborn):
-//     MARVELL vs MRVL, NETAPP vs NTAP, "Singapore Airlines (SIA)" vs C6L
-// Both are silent. The false negative is the "it forgot my position" symptom.
-//
-// Identity is now resolved in strict order: an explicit stable id, then a canonical
-// symbol (alias-resolved, exchange-qualified), then an exact normalised ticker, and only
-// then a conservative full-name comparison. Prefix guessing is gone entirely: it is better
-// to ask than to silently merge two different companies or orphan a real one.
-function canonKey(x) {
-  if (!x) return null;
-  const raw = String(x.ticker || '').toUpperCase().trim().replace(/[^A-Z0-9.\-]/g, '');
-  if (raw) {
-    const aliased = SYMBOL_ALIAS[raw] || raw;
-    // strip any exchange suffix so C6L and C6L.SI are one identity
-    return aliased.replace(/\.[A-Z]+$/, '');
-  }
-  return null;
-}
-// Normalise a company name for comparison: drop punctuation, legal suffixes and the
-// parenthetical asides the NOVA screenshots carry ("Singapore Airlines (SIA)").
-function canonName(x) {
-  if (!x || !x.name) return null;
-  let n = String(x.name).toUpperCase();
-  n = n.replace(/\([^)]*\)/g, ' ');                    // drop "(SIA)", "(SpaceX)"
-  n = n.replace(/\b(INC|CORP|CORPORATION|LTD|LIMITED|PLC|CO|COMPANY|GROUP|HOLDINGS?|TECHNOLOGIES|TECHNOLOGY|GLOBAL|ETF|NV|SA|AG)\b/g, ' ');
-  n = n.replace(/[^A-Z0-9]/g, '');
-  return n || null;
-}
 function sameHolding(a, b) {
-  if (!a || !b) return false;
-  // 1) explicit stable id wins outright
-  if (a.id && b.id && a.id === b.id) return true;
-  // 2) canonical symbol: the strongest real-world identity we have
-  const ak = canonKey(a), bk = canonKey(b);
-  if (ak && bk) return ak === bk;
-  // 3) one side has no ticker (OCR missed it): fall back to a STRICT full-name match.
-  const an = canonName(a), bn = canonName(b);
-  if (an && bn) {
-    if (an === bn) return true;
-    // allow containment only when the shorter name is substantial, so "SPACEEXPLORATION"
-    // matches "SPACEEXPLORATIONSPACEX" but "AMD" never swallows "AMDOCS".
-    const [short, long] = an.length <= bn.length ? [an, bn] : [bn, an];
-    if (short.length >= 8 && long.startsWith(short)) return true;
-  }
-  // 4) a name on one side vs a ticker on the other cannot be resolved safely here;
-  //    resolveIdentity() below handles that case using the book's own alias table.
-  return false;
-}
-
-// Resolve a freshly-parsed record against the existing book, using the book's own learned
-// alias table to bridge the name<->ticker gap that OCR creates. When a match is found by
-// name, the ticker is remembered so the next sync matches on the strong key instead.
-function resolveIdentity(candidate, book) {
-  const holdings = book.holdings || [];
-  // strongest first
-  let hit = holdings.find((h) => sameHolding(h, candidate));
-  if (hit) return hit;
-  // learned aliases: { "SINGAPOREAIRLINES": "C6L" }
-  const aliases = book.tickerAliases || {};
-  const cn = canonName(candidate);
-  if (cn && aliases[cn]) {
-    hit = holdings.find((h) => canonKey(h) === aliases[cn]);
-    if (hit) return hit;
-  }
-  // candidate has a ticker but the book record was stored name-only
-  const ck = canonKey(candidate);
-  if (ck) {
-    hit = holdings.find((h) => !canonKey(h) && canonName(h) && aliases[canonName(h)] === ck);
-    if (hit) return hit;
-  }
-  return null;
-}
-
-// Remember that this name maps to this ticker, so future syncs match on the strong key.
-function learnAlias(book, record) {
-  const n = canonName(record), k = canonKey(record);
-  if (!n || !k) return;
-  book.tickerAliases = book.tickerAliases || {};
-  book.tickerAliases[n] = k;
-}
-
-// ---------- Level state: two genuinely different kinds of holding ----------
-// A stop-loss answers "at what price is the thesis dead?", decided BEFORE you are
-// emotionally invested so the exit is mechanical. That job only exists while the position
-// is still near cost. On a holding already 27% underwater the moment has passed: an "SL"
-// there is not protection, it is a label on a loss already taken. Measured against the
-// real book, FIVE of sixteen holdings would be born already-breached (MARVELL -27.7%,
-// SPCX -21.4%, COHR -17.3%, NETAPP -11.4%, CAMT -11.1%). A naive breach check would
-// therefore paint five permanent red banners on day one, and a permanent alert is
-// functionally identical to no alert: you learn to scroll past it, including past the one
-// real breach that matters.
-//
-// So a holding gets ONE of two level regimes, chosen from its actual P/L when levels are
-// first locked:
-//   PROTECTED  — near/above cost. sl + tp. A breach is a genuine, rare event.
-//   IMPAIRED   — already meaningfully underwater. giveUp + recovery. "Would I buy this
-//                today?" is the honest question, so the levels ask it: recovery proves the
-//                story is working again, giveUp admits it is dead money.
-const IMPAIRED_THRESHOLD_PCT = -8; // below this vs avgCost, a forward stop is fiction
-
-function levelRegimeFor(h, priceNow) {
-  const avg = num(h.avgCost), px = num(priceNow) ?? num(h.lastPrice);
-  if (avg == null || px == null || avg <= 0) return 'PROTECTED';
-  const plPct = ((px - avg) / avg) * 100;
-  return plPct <= IMPAIRED_THRESHOLD_PCT ? 'IMPAIRED' : 'PROTECTED';
-}
-
-// Which levels does this holding actually carry, and has one been crossed?
-// Returns { regime, levels, crossing } where crossing is null or {type, level, price}.
-// This is a pure read of state; it does NOT decide whether to alert (see levelEvents).
-function readLevels(h, priceNow) {
-  const px = num(priceNow);
-  const regime = h.levelRegime || 'PROTECTED';
-  const out = { regime, levels: {}, crossing: null };
-  if (regime === 'IMPAIRED') {
-    const giveUp = num(h.lockedGiveUp), recovery = num(h.lockedRecovery);
-    out.levels = { giveUp, recovery };
-    if (px == null) return out;
-    if (recovery != null && px >= recovery) out.crossing = { type: 'RECOVERY', level: recovery, price: px };
-    else if (giveUp != null && px <= giveUp) out.crossing = { type: 'GIVEUP', level: giveUp, price: px };
-    return out;
-  }
-  const sl = num(h.lockedSL), tp = num(h.lockedTP);
-  out.levels = { sl, tp };
-  if (px == null) return out;
-  if (tp != null && px >= tp) out.crossing = { type: 'TP', level: tp, price: px };
-  else if (sl != null && px <= sl) out.crossing = { type: 'SL', level: sl, price: px };
-  return out;
-}
-
-// A level hit is an EVENT, not a state. It fires once when the price CROSSES, is
-// acknowledged once, and then goes quiet — it does not scream on every page load for the
-// rest of its life. It stays in the decisions queue after acknowledgement so it remains
-// visible without being loud. If price recovers back across the level and later crosses
-// again, that is a genuinely NEW event and fires afresh.
-function updateLevelEvent(h, priceNow) {
-  const { regime, levels, crossing } = readLevels(h, priceNow);
-  h.levelRegime = regime;
-  if (!crossing) {
-    // price is back on the safe side: re-arm so a future cross fires again
-    if (h.levelEvent && h.levelEvent.type) h.levelEvent = null;
-    return null;
-  }
-  const existing = h.levelEvent;
-  if (existing && existing.type === crossing.type) {
-    // same event still standing: refresh the price, keep the ack state, stay quiet
-    existing.price = crossing.price;
-    return existing;
-  }
-  // a new crossing
-  h.levelEvent = {
-    ...crossing,
-    at: new Date().toISOString(),
-    acknowledged: false,
-    // bornBreached: levels were locked while ALREADY through the line. Not news, so it
-    // never gets a loud banner; it goes straight into the queue as a standing decision.
-    bornBreached: !!h._bornBreached,
-    resolved: false,
-  };
-  if (h._bornBreached) h.levelEvent.acknowledged = true;
-  return h.levelEvent;
+  const an = (a.ticker || a.name || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const bn = (b.ticker || b.name || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!an || !bn) return false;
+  // match on ticker/name stem; tolerate slight name variations by prefix
+  return an === bn || an.startsWith(bn.slice(0, 5)) || bn.startsWith(an.slice(0, 5));
 }
 
 // ---------- Book sync: read positions (+ optional history), reconcile, review ----------
@@ -789,69 +518,54 @@ async function actSync(positionsImgs, historyImg) {
   const seen = posParse.holdings || [];
   const report = { closedDetected: [], newAdded: [], updated: 0, netLiq: posParse.netLiq ?? null, shotsRead: imgs.length };
 
+  // SAFETY (audit finding 7): an empty parse must NOT wipe a non-empty book. If the vision
+  // read returned zero holdings but the book currently holds positions, that's almost
+  // certainly a failed/partial screenshot, not a genuine "everything sold" event. Abort and
+  // tell the user rather than silently marking every real holding closed.
+  if (seen.length === 0 && (s.book.holdings || []).length > 0) {
+    return {
+      clock: t, aborted: true,
+      report: { ...report, note: 'Sync aborted: the screenshot(s) showed no readable holdings, but your book currently holds ' + s.book.holdings.length + '. Treated as a failed read, not a cleared book — nothing was changed. Re-upload a clear positions screenshot.' },
+      book: bookView(s.book),
+    };
+  }
+
   // 1) reconcile: holdings in the book but absent on screen => sold; match to history
-  // Sign sanity check: on a normal long, price above cost should mean a POSITIVE unrealised
-  // and below cost a NEGATIVE one. A clear contradiction likely means a misread sign.
+  // Sign sanity check, DIRECTION-AWARE (audit finding 8): for a LONG, price above cost should
+  // mean a POSITIVE unrealised; for a SHORT, price above cost should mean a NEGATIVE one (a
+  // short profits when price falls). We only FLAG a clear contradiction for the user to eyeball
+  // — we do NOT silently flip the number (a wrong flip would turn a real profit into a phantom
+  // loss and could wrongly trigger a sell). The platform's shown P/L is kept.
   const signLooksWrong = (h) => {
     const q = num(h.qty), avg = num(h.avgCost), last = num(h.lastPrice), upl = num(h.unrealised);
     if (q == null || avg == null || last == null || upl == null || avg === 0) return false;
     if (Math.abs(upl) < 0.01) return false;
-    const priceUp = last > avg;
-    // only flag a clear, meaningful contradiction (ignore tiny gaps and leverage/fx noise)
     const gapPct = Math.abs(last - avg) / avg;
-    if (gapPct < 0.02) return false;
-    return (priceUp && upl < 0) || (!priceUp && upl > 0);
+    if (gapPct < 0.02) return false; // ignore tiny gaps and leverage/fx noise
+    const isShort = (h.direction || 'LONG').toUpperCase() === 'SHORT';
+    const priceUp = last > avg;
+    // profit expectation: LONG profits when priceUp; SHORT profits when price DOWN
+    const shouldBeProfit = isShort ? !priceUp : priceUp;
+    return (shouldBeProfit && upl < 0) || (!shouldBeProfit && upl > 0);
   };
 
   const still = [];
   report.signFlags = [];
-  const matchedScreen = new Set();
   for (const h of (s.book.holdings || [])) {
-    const onScreen = seen.find((x) => {
-      if (matchedScreen.has(x)) return false;
-      return sameHolding(x, h) || resolveIdentity(x, { holdings: [h], tickerAliases: s.book.tickerAliases }) === h;
-    });
+    const onScreen = seen.find((x) => sameHolding(x, h));
     if (onScreen) {
-      matchedScreen.add(onScreen);
-      // If the platform shows a real ticker where the book only had a name (or an alias
-      // like MARVELL), upgrade the record and remember the mapping. Without this the
-      // NEXT sync fails to match, declares a false closure, and re-adopts the position
-      // as brand new with no levels — the "it forgot my position" bug.
-      if (onScreen.ticker && canonKey(onScreen) && canonKey(onScreen) !== canonKey(h)) {
-        h.tickerWas = h.ticker || null;
-        h.ticker = onScreen.ticker;
-      }
-      learnAlias(s.book, h);
       h.lastPrice = onScreen.lastPrice ?? h.lastPrice;
       h.unrealised = onScreen.unrealised ?? h.unrealised;
       h.qty = onScreen.qty ?? h.qty;
-      // NOTE: locked levels, regime, thesis, openedAt and levelEvent are deliberately NOT
-      // touched here. Sync reads the market; it never re-opens a decision you already made.
+      // if the freshly-read sign contradicts the price move (for this position's DIRECTION),
+      // FLAG it for the user — do NOT silently flip it. Keep what the platform showed.
       if (signLooksWrong(h)) {
-        const corrected = -num(h.unrealised);
-        report.signFlags.push({ name: h.name, ticker: h.ticker, was: h.unrealised, nowIs: corrected, note: `${h.ticker || h.name}: price ${num(h.lastPrice) > num(h.avgCost) ? 'above' : 'below'} cost but P/L sign disagreed; corrected ${h.unrealised} to ${corrected}` });
-        h.unrealised = corrected;
+        report.signFlags.push({ name: h.name, ticker: h.ticker, was: h.unrealised, note: `${h.ticker || h.name} (${(h.direction || 'LONG').toUpperCase()}): shown P/L ${h.unrealised} but price ${num(h.lastPrice) > num(h.avgCost) ? 'above' : 'below'} cost would usually be the opposite sign for a ${(h.direction || 'LONG').toLowerCase()}. Kept the platform value — double-check this one.` });
       }
       report.updated++;
       still.push(h);
     } else {
-      // Absent from the screen. Before declaring a closure, be careful: a holding carrying
-      // locked levels or a thesis represents real decisions, and a mis-parse should never
-      // silently destroy them. If the screenshots plainly did not cover this name (nothing
-      // on screen resembles it AND no history row confirms a sale), keep it and say so.
-      const match = (histParse.closes || []).find((c) => sameHolding(c, h) || resolveIdentity(c, { holdings: [h], tickerAliases: s.book.tickerAliases }) === h);
-      const hasDecisions = h.levelsLockedAt || h.lockedSL != null || h.lockedTP != null || h.lockedGiveUp != null || h.gemThesis;
-      if (!match && hasDecisions) {
-        h.unseenSyncs = (h.unseenSyncs || 0) + 1;
-        // two consecutive syncs without a sighting, still no history row: surface it as a
-        // QUESTION rather than a silent deletion.
-        if (h.unseenSyncs >= 2) {
-          report.unconfirmed = report.unconfirmed || [];
-          report.unconfirmed.push({ name: h.name, ticker: h.ticker, syncs: h.unseenSyncs, note: `${h.ticker || h.name} has not appeared in ${h.unseenSyncs} syncs and no sale was found in history. It still carries your locked levels. Did you sell it, or did the screenshots simply not cover it?` });
-        }
-        still.push(h); // preserved, not destroyed
-        continue;
-      }
+      const match = (histParse.closes || []).find((c) => sameHolding(c, h));
       report.closedDetected.push({
         id: `close_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         holding: h, close: match || null, detectedAt: t.iso, needsHistory: !match,
@@ -862,15 +576,13 @@ async function actSync(positionsImgs, historyImg) {
   const pendingFills = s.book.pendingFills || [];
   report.filledFromGems = [];
   for (const x of seen) {
-    if (matchedScreen.has(x)) continue;
-    if (!resolveIdentity(x, s.book) && !(s.book.holdings || []).find((h) => sameHolding(h, x))) {
+    if (!(s.book.holdings || []).find((h) => sameHolding(h, x))) {
       const adopted = {
         id: `hold_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         name: x.name, ticker: x.ticker || null, qty: x.qty, avgCost: x.avgCost,
         lastPrice: x.lastPrice ?? null, unrealised: x.unrealised ?? null,
         openedAt: Date.now(), firstSeen: t.dmy,
       };
-      learnAlias(s.book, adopted);
       // if this newly-appeared holding was a gem you took up, carry its thesis and
       // proposed levels across so the reasoning travels into the book with the position.
       const nm = (x.ticker || x.name || '').toUpperCase();
@@ -880,13 +592,12 @@ async function actSync(positionsImgs, historyImg) {
         adopted.gemThesis = match.reason || null;
         adopted.mentalTP = match.tp || null;
         adopted.mentalSL = match.sl || null;
+        report.filledFromGems.push(adopted.name);
       }
       still.push(adopted);
       report.newAdded.push(adopted);
     }
   }
-  // clear the unseen counter for everything we did see
-  for (const h of still) if (report.updated && h.unseenSyncs && seen.some((x) => sameHolding(x, h))) h.unseenSyncs = 0;
   s.book.holdings = still;
   // clear any pending fills that have now genuinely appeared in the book
   if (pendingFills.length) {
@@ -970,7 +681,7 @@ Respond ONLY with JSON, no markdown:
 
     // validate the proposed levels against a genuine live price, exactly like the gem hunt
     if (prop && prop.ticker) {
-      const real = priceOf(await livePrices([{ ticker: prop.ticker, exchange: prop.exchange }]), prop.ticker);
+      const real = (await livePrices([prop.ticker]))[prop.ticker.toUpperCase()] ?? null;
       const lc = checkLevels(prop, real);
       if (real != null && !lc.feedSuspect) prop.current_price = String(real);
       if (!lc.ok) { prop.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; }
@@ -995,16 +706,15 @@ async function actRebalance() {
   if (!holdings.length) return { clock: t, empty: true, note: 'No holdings to rebalance. Seed or sync your book first.' };
 
   // 1) pull genuine live prices for every held name, so every judgement is current
-  const tickers = holdings.map((h) => ({ ticker: h.ticker || h.name, exchange: h.exchange })).filter((x) => x.ticker);
-  const [priceMap, fx] = await Promise.all([livePrices(tickers), fxRates()]);
+  const tickers = holdings.map((h) => h.ticker || h.name).filter(Boolean);
+  const priceMap = await livePrices(tickers);
   // fold live prices into a working copy so weights and P/L reflect the real market.
-  // SANITY GUARD: quotes are now exchange-aware (C6L -> C6L.SI), so the old US-collision
-  // problem is fixed at the source. This guard stays as a second line of defence: if the
-  // feed price still wildly disagrees with the platform's last synced price, DISTRUST the
+  // SANITY GUARD: the feed (Finnhub) is US-focused and can return a bogus price for a
+  // regional ticker (e.g. an SGX symbol like C6L that collides with a different US listing).
+  // If the "live" price wildly disagrees with the platform's last synced price, DISTRUST the
   // feed and keep the platform price — the platform is the truth for what he actually holds.
   const live = holdings.map((h) => {
-    const q = priceMap[(h.ticker || h.name || '').toUpperCase()];
-    const feed = q ? q.price : null;
+    const feed = priceMap[(h.ticker || h.name || '').toUpperCase()];
     const synced = num(h.lastPrice);
     const avg = num(h.avgCost);
     // reference is the platform's last price, or failing that avg cost
@@ -1012,19 +722,7 @@ async function actRebalance() {
     const lastPrice = sp.price;
     const qty = num(h.qty) || 0;
     const plPct = (avg && lastPrice) ? ((lastPrice - avg) / avg) * 100 : null;
-    // CURRENCY: SGX names (C6L, ES3) are quoted in SGD while the rest of the book is USD.
-    // _value used to be a raw qty*price, so an SGD position was added to a USD total as if
-    // 1 SGD = 1 USD, inflating its weight by ~29%. Every sector/geo/chip concentration
-    // percentage below is built on _value, so they all inherited the skew. Normalise first.
-    const ccy = (q && q.currency) || (/SGX/i.test(h.exchange || '') ? 'SGD' : 'USD');
-    const rawValue = Math.abs(qty * (lastPrice || avg || 0));
-    return {
-      ...h, lastPrice, _sector: sectorOf(h),
-      _ccy: ccy,
-      _value: toUsd(rawValue, ccy, fx),
-      _valueLocal: rawValue,
-      _plPct: plPct, _hasLive: sp.usedFeed, _feedRejected: sp.rejected,
-    };
+    return { ...h, lastPrice, _sector: sectorOf(h), _value: Math.abs(qty * (lastPrice || avg || 0)), _plPct: plPct, _hasLive: sp.usedFeed, _feedRejected: sp.rejected };
   });
 
   // 2) measure concentration: by sector, by chip-exposure, by geography (exchange)
@@ -1132,8 +830,7 @@ async function actReview(holdingId) {
   const priorLessons = (s.lessons || []).slice(-8).map((l) => `- ${l.text}`).join('\n') || '- none yet';
 
   // fetch the genuine live price so proposed levels can be checked against reality
-  const liveQ = await livePrice(h.ticker, h.exchange);
-  const live = liveQ ? liveQ.price : null;
+  const live = await livePrice(h.ticker);
   // guard against a bogus feed price for a regional ticker; the platform price is the truth
   const sp = sanePrice(live, num(h.lastPrice) != null ? num(h.lastPrice) : num(h.avgCost));
   const priceNow = sp.price != null ? sp.price : num(h.lastPrice);
@@ -1159,45 +856,26 @@ async function actReview(holdingId) {
     : 'No prior reviews. This is the first review of this holding.';
 
   // ---- LOCKED levels: set once on the first review, then immutable (only a manual
-  // override, or an explicit re-lock verdict, can change them). ----
-  // A holding gets ONE of two regimes, chosen from its real P/L at lock time. See the
-  // levelRegimeFor comment block: a forward stop on a position already 27% underwater is
-  // not protection, it is a label on a loss already taken, and it would paint a permanent
-  // red banner that trains him to ignore ALL banners.
+  // override by the user can change them). Reviews never re-propose them. ----
   const lockedSL = num(h.lockedSL);
   const lockedTP = num(h.lockedTP);
-  const lockedGiveUp = num(h.lockedGiveUp);
-  const lockedRecovery = num(h.lockedRecovery);
-  const hasLocked = lockedSL != null || lockedTP != null || lockedGiveUp != null || lockedRecovery != null;
+  const hasLocked = lockedSL != null || lockedTP != null;
   const isFirstReview = !hasLocked;
-  // regime is decided ONCE, at lock time, from the posture then. It does not flip later
-  // just because price wobbled across the threshold.
-  const regime = h.levelRegime || levelRegimeFor(h, priceNow);
-  const plPctNow = (priceNow != null && num(h.avgCost)) ? ((priceNow - num(h.avgCost)) / num(h.avgCost)) * 100 : null;
 
+  // ---- has a LOCKED level actually been hit? (NOVA has no auto SL/TP, so this note is
+  // his manual trigger to act) ----
   let levelEvent;
-  let levelHit = null;
-  if (isFirstReview) {
-    levelEvent = regime === 'IMPAIRED'
-      ? `This is the FIRST review, and this holding is ALREADY ${plPctNow != null ? Math.abs(plPctNow).toFixed(1) + '% ' : ''}below cost. A conventional stop-loss is meaningless here: the moment to exit mechanically has already passed, and a stop set above the live price would simply be a label on a loss he has already taken. So do NOT propose a stop-loss. Instead propose TWO honest levels for an impaired position: a RECOVERY level (the price that would genuinely prove the story is working again, so he knows the thesis is repairing rather than hoping) and a GIVE-UP level (the price below which he accepts this is dead money and stops tying up capital in it). Both will be LOCKED permanently. The real question you are helping him answer is "would I buy this today at ${priceNow ?? 'this price'}?" — let that discipline the levels.`
-      : 'This is the FIRST review: propose the stop-loss and take-profit now. They will be LOCKED permanently after this — you will never set them again, only judge hold or close against them.';
+  let levelHit = null; // { type:'SL'|'TP', level, price } for persisting a flag on the holding
+  if (!hasLocked) {
+    levelEvent = 'This is the FIRST review: propose the stop-loss and take-profit now. They will be LOCKED permanently after this — you will never set them again, only judge hold or close against them.';
   } else if (priceNow != null) {
-    const rl = readLevels(h, priceNow);
-    if (rl.crossing) {
-      const c = rl.crossing;
-      const wording = c.type === 'TP' ? `the LOCKED take-profit of ${c.level} has been REACHED`
-        : c.type === 'SL' ? `the LOCKED stop-loss of ${c.level} has been BREACHED`
-        : c.type === 'RECOVERY' ? `the LOCKED recovery level of ${c.level} has been RECLAIMED — the impaired story may genuinely be repairing`
-        : `the LOCKED give-up level of ${c.level} has been BREACHED — this was the price at which he agreed to call it dead money`;
-      levelHit = { type: c.type, level: c.level, price: c.price };
-      levelEvent = `IMPORTANT — ${wording} (live ${c.price}). NOVA has no automatic stop/target, so nothing closed this for him. Advise clearly and directly: hold on regardless, or act now, with your reasoning.`;
-    } else {
-      levelEvent = regime === 'IMPAIRED'
-        ? `Impaired-regime levels (give-up ${lockedGiveUp ?? 'none'}, recovery ${lockedRecovery ?? 'none'}); live ${priceNow}. Neither has been reached.`
-        : `Locked levels (SL ${lockedSL ?? 'none'}, TP ${lockedTP ?? 'none'}); live ${priceNow}. Neither has been hit yet.`;
-    }
+    const events = [];
+    if (lockedTP != null && priceNow >= lockedTP) { events.push(`the LOCKED take-profit of ${lockedTP} has been REACHED (live ${priceNow})`); levelHit = { type: 'TP', level: lockedTP, price: priceNow }; }
+    if (lockedSL != null && priceNow <= lockedSL) { events.push(`the LOCKED stop-loss of ${lockedSL} has been BREACHED (live ${priceNow})`); levelHit = { type: 'SL', level: lockedSL, price: priceNow }; }
+    if (events.length) levelEvent = 'IMPORTANT — ' + events.join('; ') + '. NOVA has no automatic stop/target, so nothing closed this for him. Advise clearly and directly: hold on regardless, or close now, with your reasoning.';
+    else levelEvent = `Locked levels (SL ${lockedSL ?? 'none'}, TP ${lockedTP ?? 'none'}); live ${priceNow}. Neither has been hit yet.`;
   } else {
-    levelEvent = `Locked levels present but no live price to check against right now.`;
+    levelEvent = `Locked levels (SL ${lockedSL ?? 'none'}, TP ${lockedTP ?? 'none'}); no live price to check against right now.`;
   }
 
   const verdict = await claude(`You are THE EXCHANGE's position analyst, reviewing ONE long-term equity holding in a Phuket investor's Phillip Nova (NOVA) portfolio. These are his considered long-term convictions, NOT week-long swings, so judge with patience, like a seasoned analyst rather than a jumpy trader. Run a zero-based review (Peter Lynch's test: if he held none of this today, would buying it right now at this price be justified?).
@@ -1224,9 +902,7 @@ ${priorLessons}
 Your job, honest judgements that CONTINUE the story from your prior reviews:
 1. HOLD, TRIM or CLOSE: is the original reason for owning this still intact? A holding being down is NOT itself a reason to close; a broken thesis is. A holding being up is not itself a reason to sell; a spent thesis, a hit target, or a better use of the capital might be. If a LOCKED level was hit (see the level check above), give a direct hold-or-close call on that basis — NOVA won't have closed it automatically. Weigh the financial mindfulness above: a weak leveraged holding eating margin is a stronger candidate to free up than an owned position when the account is tight. Be honest if the story has genuinely broken or evolved since your last review.
 ${isFirstReview
-  ? (regime === 'IMPAIRED'
-      ? '2. SET THE IMPAIRED LEVELS (first review only): this holding is already well below cost, so do NOT propose a stop-loss. Propose proposed_recovery (the price that would genuinely prove the story is repairing) and proposed_giveup (the price below which he accepts it is dead money and frees the capital). Ground both in the live price and the real thesis, not round numbers. They will be LOCKED permanently.'
-      : '2. SET THE LEVELS (first review only): propose ONE sensible stop loss and take profit grounded in the current live price. These will be LOCKED permanently — you are setting them once, for good, so choose carefully. Give real price levels.')
+  ? '2. SET THE LEVELS (first review only): propose ONE sensible stop loss and take profit grounded in the current live price. These will be LOCKED permanently — you are setting them once, for good, so choose carefully. Give real price levels.'
   : '2. DO NOT propose or change any stop or target. The levels are LOCKED and are shown above. Your job is only to judge hold or close against them and the story. Do NOT output new levels.'}
 3. WHAT'S CHANGED: explicitly note how your view has shifted (or held firm) since the last review, referencing it.
 4. HOLDING HORIZON & FINANCES: offer a sensible sense of how long to keep holding or what milestone/catalyst to hold toward, and note briefly whether holding on or closing helps or hurts his margin and buying power.
@@ -1234,9 +910,7 @@ ${isFirstReview
 
 Respond ONLY with JSON, no markdown:
 ${isFirstReview
-  ? (regime === 'IMPAIRED'
-      ? '{"verdict":"HOLD|CLOSE|TRIM","reason":"2-3 sentences grounded in current facts","proposed_recovery":"price level to LOCK that proves the story is repairing","proposed_giveup":"price level to LOCK below which this is dead money","level_note":"","change_note":"one sentence on your initial read","hold_guidance":"how long / toward what, one sentence","sources":["[Source] specific point relied on, from MULTIPLE outlets where the wire allows"],"source_convergence":"STRONG|MODERATE|WEAK/THIN","conviction":"how sure you are, one short phrase"}'
-      : '{"verdict":"HOLD|CLOSE|TRIM","reason":"2-3 sentences grounded in current facts","proposed_sl":"price level to LOCK","proposed_tp":"price level to LOCK","level_note":"","change_note":"one sentence on your initial read","hold_guidance":"how long / toward what, one sentence","sources":["[Source] specific point relied on, from MULTIPLE outlets where the wire allows"],"source_convergence":"STRONG|MODERATE|WEAK/THIN","conviction":"how sure you are, one short phrase"}')
+  ? '{"verdict":"HOLD|CLOSE|TRIM","reason":"2-3 sentences grounded in current facts","proposed_sl":"price level to LOCK","proposed_tp":"price level to LOCK","level_note":"","change_note":"one sentence on your initial read","hold_guidance":"how long / toward what, one sentence","sources":["[Source] specific point relied on, from MULTIPLE outlets where the wire allows"],"source_convergence":"STRONG|MODERATE|WEAK/THIN","conviction":"how sure you are, one short phrase"}'
   : '{"verdict":"HOLD|CLOSE|TRIM","reason":"2-3 sentences grounded in current facts, referencing how the view has evolved since the last review","level_note":"one sentence on whether a LOCKED level was hit and what to do, or empty if none","change_note":"one sentence on what has changed since the last review","hold_guidance":"how long / toward what, one sentence","sources":["[Source] specific point relied on, from MULTIPLE outlets where the wire allows"],"source_convergence":"STRONG|MODERATE|WEAK/THIN","conviction":"how sure you are, one short phrase"}'}`, 1500);
 
   // build this review record
@@ -1249,9 +923,6 @@ ${isFirstReview
     priceAtReview: priceNow ?? null, at: t.iso,
     lockedSL: hasLocked ? lockedSL : (num(verdict.proposed_sl) ?? null),
     lockedTP: hasLocked ? lockedTP : (num(verdict.proposed_tp) ?? null),
-    lockedGiveUp: hasLocked ? lockedGiveUp : (num(verdict.proposed_giveup) ?? null),
-    lockedRecovery: hasLocked ? lockedRecovery : (num(verdict.proposed_recovery) ?? null),
-    regime,
   };
 
   // append to the running history (cap to keep the record tidy), and keep lastReview
@@ -1261,22 +932,9 @@ ${isFirstReview
   // LOCK the levels on the FIRST review only. Thereafter they are immutable here; the
   // ONLY way to change them is the deliberate manual override action. A review NEVER moves them.
   if (isFirstReview) {
-    h.levelRegime = regime;
-    if (regime === 'IMPAIRED') {
-      if (num(verdict.proposed_giveup) != null) { h.lockedGiveUp = num(verdict.proposed_giveup); h.mentalSL = h.lockedGiveUp; }
-      if (num(verdict.proposed_recovery) != null) { h.lockedRecovery = num(verdict.proposed_recovery); h.mentalTP = h.lockedRecovery; }
-    } else {
-      if (num(verdict.proposed_sl) != null) { h.lockedSL = num(verdict.proposed_sl); h.mentalSL = h.lockedSL; }
-      if (num(verdict.proposed_tp) != null) { h.lockedTP = num(verdict.proposed_tp); h.mentalTP = h.lockedTP; }
-    }
+    if (num(verdict.proposed_sl) != null) { h.lockedSL = num(verdict.proposed_sl); h.mentalSL = h.lockedSL; }
+    if (num(verdict.proposed_tp) != null) { h.lockedTP = num(verdict.proposed_tp); h.mentalTP = h.lockedTP; }
     h.levelsLockedAt = t.iso;
-    // If price is ALREADY through a level the instant it is locked, that is not news and
-    // must never fire a loud banner. Mark it so updateLevelEvent files it straight into
-    // the decisions queue pre-acknowledged.
-    const born = readLevels(h, priceNow);
-    h._bornBreached = !!born.crossing;
-    updateLevelEvent(h, priceNow);
-    h._bornBreached = false;
   }
 
   // persist whether a locked level has been hit, so the Book/holding view can flag it
@@ -1288,54 +946,20 @@ ${isFirstReview
 }
 
 // ---------- Manual override: deliberately reset a holding's LOCKED levels ----------
-// The only ways locked levels can change: this explicit, conscious human action, or a
-// review that returns relock:true (an explicit verdict that the old levels no longer
-// describe reality). A routine review NEVER moves them.
-// Every change is appended to levelHistory, so a locked level that moved can always be
-// traced to who moved it and when. Silent mutation is exactly what makes a "permanent"
-// level meaningless.
-async function actSetLevels(holdingId, levels) {
+// The only way locked levels can change. A review never moves them; only this explicit,
+// conscious human action does. Pass new sl/tp (either may be null to clear one).
+async function actSetLevels(holdingId, sl, tp) {
   const s = await loadAll();
   const h = (s.book.holdings || []).find((x) => x.id === holdingId);
   if (!h) throw new Error('Holding not found.');
   const t = bkk();
-  // accept either the legacy (sl, tp) positional shape or a regime-aware object
-  const L = (levels && typeof levels === 'object') ? levels : {};
-  const regime = L.regime || h.levelRegime || 'PROTECTED';
-
-  h.levelHistory = h.levelHistory || [];
-  h.levelHistory.push({
-    at: t.iso, by: 'manual',
-    from: { regime: h.levelRegime || null, sl: h.lockedSL ?? null, tp: h.lockedTP ?? null, giveUp: h.lockedGiveUp ?? null, recovery: h.lockedRecovery ?? null },
-  });
-
-  h.levelRegime = regime;
-  if (regime === 'IMPAIRED') {
-    const g = num(L.giveUp), r = num(L.recovery);
-    h.lockedGiveUp = g != null ? g : null;
-    h.lockedRecovery = r != null ? r : null;
-    h.lockedSL = null; h.lockedTP = null;
-    h.mentalSL = h.lockedGiveUp; h.mentalTP = h.lockedRecovery;
-  } else {
-    const nsl = num(L.sl), ntp = num(L.tp);
-    h.lockedSL = nsl != null ? nsl : null;
-    h.lockedTP = ntp != null ? ntp : null;
-    h.lockedGiveUp = null; h.lockedRecovery = null;
-    h.mentalSL = h.lockedSL; h.mentalTP = h.lockedTP;
-  }
-  h.levelHistory[h.levelHistory.length - 1].to = { regime, sl: h.lockedSL ?? null, tp: h.lockedTP ?? null, giveUp: h.lockedGiveUp ?? null, recovery: h.lockedRecovery ?? null };
-  h.levelHistory = h.levelHistory.slice(-20);
+  const nsl = num(sl), ntp = num(tp);
+  h.lockedSL = nsl != null ? nsl : null;
+  h.lockedTP = ntp != null ? ntp : null;
+  h.mentalSL = h.lockedSL; h.mentalTP = h.lockedTP;
   h.levelsLockedAt = t.iso;
   h.levelsManuallySet = true;
-  h.levelHit = null;
-  // re-arm the watch against the NEW levels, and never fire a banner for a level that is
-  // already crossed at the moment it is set.
-  const px = num(h.livePrice) ?? num(h.lastPrice);
-  h.levelEvent = null;
-  const born = readLevels(h, px);
-  h._bornBreached = !!born.crossing;
-  updateLevelEvent(h, px);
-  h._bornBreached = false;
+  h.levelHit = null; // recheck against the new levels on the next review
   await rSet('exchange:book', s.book);
   return { ok: true, holding: h };
 }
@@ -1560,15 +1184,7 @@ function computeVitals(book) {
   if (holdings.length) {
     // value falls back to avgCost when no live price is synced, so a leveraged holding
     // without a fresh price is NOT silently dropped (which would understate leverage).
-    // CURRENCY: SGX holdings are quoted in SGD, the rest in USD. Summing them raw added
-    // SGD to USD at 1:1, overstating the SGX weight by ~29% and skewing this whole ratio.
-    // The FX rate is not available synchronously here, so use the platform's own
-    // securitiesValue (already USD) where it exists and fall back to local value otherwise.
-    const posVal = (h) => {
-      const sv = num(h.securitiesValue);
-      if (sv != null && sv > 0) return Math.abs(sv); // platform figure, already USD
-      return Math.abs((num(h.qty) || 0) * (num(h.lastPrice) || num(h.avgCost) || 0));
-    };
+    const posVal = (h) => Math.abs((num(h.qty) || 0) * (num(h.lastPrice) || num(h.avgCost) || 0));
     const levValue = levHoldings.reduce((sum, h) => sum + posVal(h), 0);
     const totalValue = holdings.reduce((sum, h) => sum + posVal(h), 0);
     const levPct = totalValue > 0 ? (levValue / totalValue) * 100 : 0;
@@ -1730,47 +1346,6 @@ async function actGet() {
   const t = bkk();
   const s = await loadAll();
   const ideas = await rGet(`exchange:ideas:${t.dateKey}`);
-
-  // ---- Level watch (the whole point of the app) ----
-  // NOVA has no server-side stop or target: nothing closes a position for him, ever. So a
-  // locked level is only real if SOMETHING checks it. Until now the check lived solely
-  // inside actReview, which runs only when he manually taps review on one specific
-  // holding — meaning a breached stop on a holding he did not happen to open was never
-  // noticed at all. Every load now prices the whole book and checks every locked level.
-  let levelWatch = { checked: 0, priced: 0, fresh: [], queue: [], asOf: t.iso, feedOk: false };
-  try {
-    const withLevels = (s.book.holdings || []).filter((h) => h.levelsLockedAt || h.lockedSL != null || h.lockedTP != null || h.lockedGiveUp != null || h.lockedRecovery != null);
-    if (withLevels.length) {
-      const qm = await livePrices(withLevels.map((h) => ({ ticker: h.ticker || h.name, exchange: h.exchange })));
-      levelWatch.feedOk = Object.keys(qm).length > 0;
-      for (const h of withLevels) {
-        levelWatch.checked++;
-        const q = qm[(h.ticker || h.name || '').toUpperCase()];
-        if (!q) { h.levelPriceStale = true; continue; }
-        h.levelPriceStale = false;
-        levelWatch.priced++;
-        h.livePrice = q.price;
-        h.liveCurrency = q.currency || null;
-        h.liveAt = q.ts || null;
-        const ev = updateLevelEvent(h, q.price);
-        if (ev && !ev.resolved) {
-          const entry = {
-            holdingId: h.id, ticker: h.ticker, name: h.name,
-            type: ev.type, level: ev.level, price: ev.price,
-            at: ev.at, acknowledged: !!ev.acknowledged, bornBreached: !!ev.bornBreached,
-            regime: h.levelRegime || 'PROTECTED',
-          };
-          levelWatch.queue.push(entry);
-          // "fresh" = genuinely new and not yet acknowledged: these get the loud banner.
-          // A born-breached position is pre-acknowledged, so it lands in the queue quietly
-          // and never shouts. That is what stops five permanent red banners on day one.
-          if (!ev.acknowledged) levelWatch.fresh.push(entry);
-        }
-      }
-      await rSet('exchange:book', s.book);
-    }
-  } catch { /* the watch is best-effort; never let it break the whole screen */ }
-
   const vitals = computeVitals(s.book);
   // coaching: compare current goals to the last saved snapshot to notice improvements
   const coaching = computeCoaching(s.book, vitals, (s.book.coachGoals || []));
@@ -1790,38 +1365,25 @@ async function actGet() {
     ideasToday: ideas,
     vitals,
     coaching,
-    levelWatch,
   };
 }
 
-// ---------- Acknowledge a level event (clears the banner, keeps it in the queue) ----------
-async function actAckLevel(holdingId) {
-  const t = bkk();
-  const s = await loadAll();
-  const h = (s.book.holdings || []).find((x) => x.id === holdingId);
-  if (!h) throw new Error('Holding not found.');
-  if (!h.levelEvent) throw new Error('No standing level event on this holding.');
-  h.levelEvent.acknowledged = true;
-  h.levelEvent.acknowledgedAt = t.iso;
-  await rSet('exchange:book', s.book);
-  return { clock: t, holding: h, levelEvent: h.levelEvent };
-}
-
-// ---------- Resolve a level event (you acted; drop it from the decisions queue) ----------
-async function actResolveLevel(holdingId) {
-  const t = bkk();
-  const s = await loadAll();
-  const h = (s.book.holdings || []).find((x) => x.id === holdingId);
-  if (!h) throw new Error('Holding not found.');
-  if (h.levelEvent) { h.levelEvent.resolved = true; h.levelEvent.resolvedAt = t.iso; }
-  await rSet('exchange:book', s.book);
-  return { clock: t, holding: h };
-}
-
 // ---------- Seed the genuine NOVA book (one-time) ----------
-async function actSeed(seedBook, seedWatchlist) {
+async function actSeed(seedBook, seedWatchlist, force) {
   const t = bkk();
   if (!seedBook || !Array.isArray(seedBook.holdings)) throw new Error('No valid seed book provided.');
+  // SAFETY (audit finding 6 / P0): seed is a first-run BOOTSTRAP for an EMPTY book. It must
+  // NOT silently overwrite a real, populated portfolio — that was a one-call total wipe. If a
+  // book with holdings already exists, refuse unless the caller explicitly forces it, and
+  // return the current book untouched so the UI can warn instead of destroying data.
+  const existing = await rGet('exchange:book').catch(() => null);
+  if (existing && Array.isArray(existing.holdings) && existing.holdings.length > 0 && !force) {
+    return {
+      ok: false, refused: true, existingHoldings: existing.holdings.length,
+      note: `Seed refused: your book already holds ${existing.holdings.length} position(s). Seeding would overwrite them. This is a first-run bootstrap only. To replace a real book, sync a screenshot instead, or re-seed explicitly with force.`,
+      clock: t,
+    };
+  }
   const book = {
     holdings: seedBook.holdings,
     pendingReview: [],
@@ -1857,11 +1419,9 @@ async function actLearn(priceMap) {
   // resolves against the real market. Caller-supplied prices take precedence.
   const trackedTickers = s.ledger
     .filter((r) => r.status === 'passed' && !r.shadowResolved)
-    .map((r) => ({ ticker: r.idea.ticker || r.idea.name, exchange: r.idea.exchange })).filter((x) => x.ticker);
+    .map((r) => r.idea.ticker || r.idea.name).filter(Boolean);
   const livePriceMap = trackedTickers.length ? await livePrices(trackedTickers) : {};
-  // resolveShadow wants plain numbers; flatten both maps of quote objects down to prices.
-  const flatten = (m) => Object.fromEntries(Object.entries(m || {}).map(([k, v]) => [k, v && typeof v === 'object' ? v.price : v]));
-  const merged = { ...flatten(livePriceMap), ...flatten(priceMap) };
+  const merged = { ...livePriceMap, ...(priceMap || {}) };
   const graded = resolveShadow(s, t, merged);
   await rSet('exchange:ledger', s.ledger.slice(-400));
   let reflection = null;
@@ -1883,19 +1443,22 @@ export default async function handler(req, res) {
     else if (action === 'ideas') out = await actIdeas(!!p.force);
     else if (action === 'sync') out = await actSync(p.positionsImages || p.positionsImage, p.historyImage);
     else if (action === 'review') out = await actReview(p.holdingId);
-    else if (action === 'setlevels') out = await actSetLevels(p.holdingId, p.levels || { sl: p.sl, tp: p.tp, giveUp: p.giveUp, recovery: p.recovery, regime: p.regime });
-    else if (action === 'acklevel') out = await actAckLevel(p.holdingId);
-    else if (action === 'resolvelevel') out = await actResolveLevel(p.holdingId);
+    else if (action === 'setlevels') out = await actSetLevels(p.holdingId, p.sl, p.tp);
     else if (action === 'rebalance') out = await actRebalance();
     else if (action === 'proofofclose') out = await actProofOfClose(p.positionsImage);
     else if (action === 'pass') out = await actPass(p.ideaLedgerId, p.idea);
     else if (action === 'takeup') out = await actTakeUp(p.ideaLedgerId, p.idea);
     else if (action === 'flag') out = await actFlagUnavailable(p.name, p.available);
     else if (action === 'learn') out = await actLearn(p.priceMap);
-    else if (action === 'seed') out = await actSeed(p.seedBook, p.seedWatchlist);
+    else if (action === 'seed') out = await actSeed(p.seedBook, p.seedWatchlist, p.force);
     else return res.status(400).json({ error: `Unknown action: ${action}` });
     res.status(200).json(out);
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
   }
 }
+
+
+
+
+
