@@ -2,7 +2,7 @@
 // THE FOREX BRAIN — Phase 1 (paper only). See FOREX_BRAIN.md for the law.
 // Trawl -> converge -> verdict pipeline for the seven USD majors.
 // Price maths from Twelve Data (deterministic, in code). News/conviction from
-// the web layer. Reasoning from claude-fable-5, called ONCE per pair per cycle
+// the web layer. Reasoning from claude-sonnet-5, called ONCE per pair per cycle
 // with a pre-digested pack. The model never trawls; code never reasons.
 //
 // Actions:
@@ -23,7 +23,7 @@
 // ---------------------------------------------------------------- CONFIG ----
 
 export const CONFIG = {
-  model: "claude-fable-5",
+  model: "claude-sonnet-5",
   boxCandles: 24,            // completed H1 candles forming the range
   atrPeriod: 14,
   minSources: 3,             // convergence floor: fewer reached => forced FLAT
