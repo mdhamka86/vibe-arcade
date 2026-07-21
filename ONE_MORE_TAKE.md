@@ -2,7 +2,7 @@
 
 Design specification for **ONE MORE TAKE!**, a light, funny, mobile-first web game about running a chaotic movie studio. The game takes the emotional core of *The Movies* and *Stunts & Effects*—discovering stars, casting films, surviving productions, directing stunts and watching the finished result—and compresses it into a fast browser tycoon built on the proven **Whisker Warriors** structure.
 
-**Status:** v0.8 ECONOMY BALANCE & PRESSURE BUILD PREPARED (21/07/2026). v0.7 established studio tiers, upgrades, quarterly overhead, debt, market trends, contracts and rescue financing. v0.8 performs the first multi-year balance pass: repeated contract farming now creates contract fatigue, falling client fees and worsening professional standing; completing a film resets that fatigue. Every contract shows projected net cash after overhead and interest. The Studio Office and Finance screen now display cash runway, lifetime overhead and clearer financial pressure. Insolvent studios cannot begin new productions until contracts or financing restore stability, preventing debt from becoming decorative. Saves migrate to version 5 while retaining v4, v3, v2 and v1 fallback loading. Twenty-two embedded engine tests are green and TypeScript JSX transpilation reports zero errors. A deterministic twelve-quarter contract audit leaves cash positive but collapses reputation and prestige, making contract work a recovery tool rather than the optimal long-term strategy.
+**Status:** v0.9 STUNTS, EFFECTS & PRODUCTION CHAOS BUILD PREPARED (21/07/2026). The complete v0.8 studio economy remains intact. Relevant action scenes now offer five explicit stunt approaches; productions choose practical, digital or hybrid effects; and up to two named specialists may be hired from five disciplines. Deterministic risk combines approach, actor willingness, coordinator skill, department funding, posture, fatigue and prior incidents. Contextual weighted events react to genre, traits, relationships, approaches, budget, upgrades, market trends and previous set history. Injuries persist across saves, remove performers from casting for defined quarters and recover as the calendar advances. Signature scenes, delays, specialists, stunt choices, effects methods and consequences now appear in premieres and archive records. Saves migrate to version 6 while retaining v5, v4, v3, v2 and v1 fallback loading. Twenty-eight embedded engine tests, JSX transpilation and component-screen runtime smoke checks are green.
 
 **Owner:** Hammy (hammyLabs)  
 **Repo:** `mdhamka86/vibe-arcade`  
@@ -1964,7 +1964,17 @@ The game should discourage save-scumming through humour and continuity, not by h
 
 **Archive depth:** resolved for the vertical slice. Archive posters open detailed production records instead of acting as decorative thumbnails.
 
-### Still open — resolve during Phase 6 and later content passes
+**Stunt control:** resolved for v0.9. Every relevant stunt scene offers actor performs, stunt double, simplify, dangerous version and effects replacement. The decision records cost, risk, quality, delay, injury and signature-scene consequences.
+
+**Effects philosophy:** resolved for v0.9. Practical, digital and hybrid effects have distinct costs, reliability, spectacle, prestige, time and genre-fit modifiers. The selected approach applies across the production and is preserved in the archive.
+
+**Specialist hiring:** resolved for v0.9. A production may hire up to two specialists from stunt coordination, stunt performance, practical effects, digital effects and creature design. Fees, skill, traits and director compatibility feed deterministic outcomes.
+
+**Injury availability:** resolved for v0.9. Actor injuries create explicit one-to-three-quarter recovery windows. Unavailable actors remain visible but cannot be cast; contract, rejection and release quarter advancement all progress recovery.
+
+**Contextual production events:** first complete pass shipped in v0.9. Weighted selection uses genre, scene type, traits, director traits, relationships, stunt/effects approach, funding, specialists, owned upgrades, market trend and previous incidents. Exact results remain seeded.
+
+### Still open — resolve during later content passes
 
 1. Whether **ONE MORE TAKE!** becomes the permanent final title.
 2. Whether higher studio tiers retain the three-card slate or unlock a broader scrollable script market.
@@ -2106,3 +2116,60 @@ The current numbers should still be watched during live play. The next tuning pa
 - Film-resets-fatigue test: passed.
 - Financial-runway test: passed.
 - Twelve-quarter deterministic contract audit: completed.
+
+---
+
+## v0.9 implementation record — Stunts, Effects & Production Chaos
+
+### Player-facing production systems
+
+- Relevant scenes now replace the generic three-choice crisis with five stunt approaches: Actor Performs, Stunt Double, Simplify the Stunt, Attempt Dangerous Version and Replace It with Effects.
+- Each stunt approach carries an explicit cash cost plus different risk, reliability, spectacle, performance, prestige and schedule values.
+- Production planning now requires one effects approach: Practical Effects, Digital Effects or Hybrid Effects.
+- Effects approaches have separate fees and different reliability, spectacle, prestige, production-time and genre-fit profiles.
+- Five named hireable specialists are available: stunt coordinator Mara Voss, stunt performer Jax Rook, practical-effects supervisor Ines Calder, digital-effects supervisor Omar Quill and creature designer Bea Moss.
+- A production may hire up to two specialists. Every specialist stores fee, discipline, skill, traits and compatibility with each director.
+- Production-plan totals include effects fees and all hired-specialist fees. Scene-level stunt decisions are counted as production overruns in release profit and final studio cash.
+
+### Deterministic risk and event model
+
+- `calculateStuntOutcome()` is seeded from the project, scene and chosen approach.
+- Injury probability combines screenplay difficulty, approach risk, production posture, stunt-department funding, actor willingness, accumulated fatigue, prior incidents, coordinator skill, stunt-performer mitigation, effects reliability and director compatibility.
+- Actor willingness is visible on talent cards and derives from reliability plus traits such as Fearless, Stunt Curious, Quiet Professional and Refuses to Die On Screen.
+- Injuries are MINOR, MODERATE or SERIOUS and create one-, two- or three-quarter recovery windows.
+- Production delays accumulate in days and reduce coherence while remaining visible through release and archive records.
+- Contextual events are selected from a weighted authored pool. Weights react to genre, scene type, actor and director traits, relationships, stunt/effects approach, funding, specialist disciplines, market trend, owned upgrades and previous incident IDs.
+- Previous contextual events are sharply down-weighted to avoid immediate repetition within the same production.
+- High-quality or successfully dangerous scenes can become named signature scenes.
+
+### Persistence, premiere and archive
+
+- Save schema raised from version 5 to version 6.
+- v5, v5 backup, v4, v4 backup, v3, v3 backup, v2, v2 backup and v1 saves migrate into the current root contract.
+- New root fields: `talentStatus` and `injuryHistory`.
+- New project fields: `effectsApproach`, `specialistIds`, `fatigueByTalent`, `studioUpgrades`, `marketGenre`, `signatures` and `delays`.
+- Talent status persists fatigue, injury text, severity and an absolute recovery quarter.
+- Injured performers remain visible in the roster and casting room but cannot be selected until recovery completes.
+- Quarter advancement through a film, contract or rejected slate reduces fatigue and resolves completed recovery windows.
+- Film records now retain stunt approaches, risk values, effects approach, specialist snapshots, injuries, delay days, signature scenes, contextual incidents, consequences and stunt overruns.
+- Premiere beats promote signature scenes and production injuries into the generated trailer rather than leaving them as archive-only data.
+- Results and film-detail screens surface the same production history, including specialists and every recorded stunt approach.
+
+### Compatibility and reliability fixes
+
+- The single-file React/Babel architecture remains unchanged.
+- All v0.8 economy, awards, relationships, script-market, image fallback and archive systems remain active.
+- The recovered v0.8 source referenced `gameReducer` without defining it. v0.9 restores the reducer so new, continued and replaced game states initialize correctly.
+- The real-image paint-order fix remains unchanged: remote images stay above non-blocking fallback art.
+
+### Validation
+
+- Babel React transpilation: passed with no syntax diagnostics.
+- Embedded deterministic suite: **28/28 passed**.
+- Component runtime smoke: title, casting, production plan, production, release, roster and film-detail components render against representative state.
+- Dedicated tests cover deterministic stunt outcomes, specialist mitigation, injury persistence and recovery, contextual event determinism, v5-to-v6 migration and signature-scene archival.
+- `git diff --check`: clean.
+
+### Next phase
+
+Phase 7 should deepen careers rather than widen production risk again: ageing, availability beyond injuries, role specialisation, franchises, sequels, recasting, scandals and long-term star/director career arcs.
