@@ -2,7 +2,7 @@
 
 Design specification for **ONE MORE TAKE!**, a light, funny, mobile-first web game about running a chaotic movie studio. The game takes the emotional core of *The Movies* and *Stunts & Effects*—discovering stars, casting films, surviving productions, directing stunts and watching the finished result—and compresses it into a fast browser tycoon built on the proven **Whisker Warriors** structure.
 
-**Status:** v1.0 PHASE 7 — STARS, SCANDALS & SEQUELS COMPLETE (21/07/2026). All v0.9 stunt, effects, injury, economy, awards, relationship, image-fallback and archive systems remain intact. Talent now ages at year-end and progresses every quarter through persistent morale, loyalty, fatigue, momentum, specialisation, goals, availability, sabbaticals and retirement risk. Training and Rest are proper quarter-consuming office actions. Successful releases can create deterministic franchise opportunities for sequels, reboots, spin-offs, rights sales or a deliberate leave-alone decision. Franchise records preserve lineage, cast and director continuity, goodwill, fatigue, rights, best and worst entries, scores and history. Demands, refusals, walkouts, recasting consequences, mild fictional publicity scandals, relationship labels and signature roles turn long campaigns into career stories. Saves now use version 7 while retaining non-destructive fallback loading and migration from v6, v5, v4, v3, v2 and v1. Forty-five embedded deterministic tests, in-browser Babel transpilation, runtime navigation and image-layout checks are green.
+**Status:** v1.1 PHASE 8 — RELEASE POLISH COMPLETE (21/07/2026). All v1.0 career, franchise, demand, scandal and v0.9 production systems remain intact. Campaigns now export as validated portable JSON bundles and may import official bundles or legacy raw saves. Automatic backup recovery is exposed inside the game. New campaigns receive an eight-part Studio Guide; older campaigns migrate without forced onboarding. Reduced motion, high contrast, stronger focus treatment and live status announcements improve accessibility. The Movie Archive now supports search, genre, franchise-status and sort controls, while Film Detail links every stored instalment in a franchise. Save version 8 migrates non-destructively from v7 through v1. Three seeded five-year reference campaigns provide a visible balance audit. Sixty embedded deterministic tests, static integrity checks and local browser verification at desktop and 390 × 844 mobile sizes are green. The release candidate is ready for deployment and real-player balance observation.
 
 **Owner:** Hammy (hammyLabs)  
 **Repo:** `mdhamka86/vibe-arcade`  
@@ -1379,8 +1379,8 @@ Use one `useReducer` game state rather than dozens of loosely connected state ho
 
 ```js
 {
-  saveVersion: 7,
-  build: "1.0-stars-scandals-sequels",
+  saveVersion: 8,
+  build: "1.1-release-polish",
   meta: {
     createdAt: "ISO timestamp",
     updatedAt: "ISO timestamp"
@@ -1416,7 +1416,12 @@ Use one `useReducer` game state rather than dozens of loosely connected state ho
   scandals: [],
   history: [],
   rngSeed: 12345,
-  settings: { sound: true },
+  settings: {
+    sound: true,
+    reducedMotion: false,
+    highContrast: false,
+    onboardingSeen: false
+  },
   sound: true
 }
 ```
@@ -1466,7 +1471,7 @@ Benefits:
 
 ### Save key
 
-`oneMoreTake_save_v7`
+`oneMoreTake_save_v8`
 
 Save after:
 
@@ -1482,9 +1487,9 @@ Save after:
 
 Keep one backup key:
 
-`oneMoreTake_save_v7_backup`
+`oneMoreTake_save_v8_backup`
 
-Before writing a new save, validate and normalize it, then copy the previous valid v7 save to the backup key. Loading checks v7 and its backup, then v6, v5, v4, v3, v2 and their supported backups before finally checking the legacy v1 key. Older saves are migrated without deleting their original storage entries. This non-destructive rule is binding: a successful migration writes the new v7 save but never erases the source key.
+Before writing a new save, validate and normalize it, then copy the previous valid v8 save to the backup key. Loading checks v8 and its backup, then v7, v6, v5, v4, v3, v2 and their supported backups before finally checking the legacy v1 key. Older saves are migrated without deleting their original storage entries. This non-destructive rule is binding: a successful migration writes the new v8 save but never erases the source key.
 
 ### Export/import
 
@@ -1810,20 +1815,28 @@ Implemented:
 
 ### Phase 8 — Content expansion and polish
 
-Expand toward the version-one content targets.
+**Implementation status:** release-safety, clarity and responsive browser-verification tranche complete in v1.1. Later content variation and live balance tuning remain post-release work.
 
-Add:
+Implemented in v1.1:
 
-- balance passes;
-- more review writing;
-- poster variation;
-- more sound;
-- onboarding;
-- accessibility;
-- export/import;
-- archive filtering.
+- portable save export/import with migration and validation;
+- visible automatic-backup recovery;
+- new-campaign onboarding through the Studio Guide;
+- reduced motion, high contrast, stronger focus treatment and live status announcements;
+- archive search, genre, lineage and sort controls;
+- direct navigation between stored franchise instalments;
+- three deterministic five-year balance-audit profiles;
+- responsive settings, guide and archive layouts.
 
-**Passes when:** the game is stable, replayable and ready for public release.
+Still targeted after the v1.1 safety pass:
+
+- more review writing and publicity variations;
+- additional poster compositions and premiere beats;
+- expanded sound treatment;
+- final keyboard, screen-reader and device QA;
+- economy tuning based on real multi-year player saves.
+
+**Passes when:** the game is stable, replayable and ready for public release. v1.1 meets the internal gate: its deterministic suite, runtime smoke flow, desktop layout and phone-sized responsive layout all pass.
 
 No Phase 8 feature may be used to excuse an unfun Phase 3 loop.
 
@@ -2250,12 +2263,75 @@ The loader reads the v7 primary and backup first, then supported v6, v5, v4, v3,
 - Runtime smoke covered new-studio creation, Studio Office, Career Center, Training quarter settlement, screenplay selection and Casting.
 - Remote images loaded with natural dimensions in the exercised screens and no card or panel overflow was detected.
 
-### Remaining Phase 8 work
+### Remaining post-release work
 
-- multi-year economy and career balance passes;
-- onboarding and contextual help for career status, demands and franchise decisions;
-- accessibility audit, keyboard focus and reduced-motion treatment;
-- save export/import and recovery UI;
-- archive filtering and clearer franchise navigation;
-- more reviews, publicity incidents, demands and career-goal reactions;
-- poster variation, additional audio and final mobile polish.
+- observe multi-year economy and career balance in real player saves;
+- run a dedicated keyboard and screen-reader audit beyond the implemented focus, live-region, contrast and reduced-motion support;
+- monitor exported-save growth and browser storage limits on very long campaigns;
+- expand reviews, publicity incidents, demands and career-goal reactions;
+- add poster compositions, premiere beats and audio variation without weakening the lightweight single-file build;
+- tune rescue financing, contract rewards and Training/Rest opportunity cost using play evidence rather than the reference audit alone.
+
+---
+
+## v1.1 implementation record — Campaign Safety & Clarity
+
+### Portable saves and recovery
+
+- Current save version: **8**.
+- Primary keys: `oneMoreTake_save_v8` and `oneMoreTake_save_v8_backup`.
+- Fallback loading retains v7, v6, v5, v4, v3, v2 and legacy v1 keys. Migration never deletes the source entry.
+- `createSaveExport()` produces a versioned `ONE_MORE_TAKE_SAVE` envelope containing export timestamp, build marker and a normalized game.
+- `importSaveExport()` accepts either the official envelope or a legacy raw-save object, migrates it and refuses replacement unless the full v8 contract validates.
+- The Settings screen downloads a named JSON backup, imports local JSON and exposes the automatic backup slot with campaign, year and quarter confirmation.
+- Save-size estimation is shown before export so campaign growth remains visible while the game still relies on `localStorage`.
+
+### Onboarding and accessibility
+
+- New campaigns open an eight-part Studio Guide before entering the office. Migrated campaigns mark onboarding as already seen and are not interrupted.
+- The guide explains quarters, cash pressure, casting, production risk, careers, franchises, backups and the campaign's non-terminal definition of success.
+- `settings` now stores `sound`, `reducedMotion`, `highContrast` and `onboardingSeen`.
+- Reduced motion removes transitions and jumps the generated premiere to its final results beat.
+- High contrast strengthens text, borders, image overlays and focus visibility.
+- Interactive controls receive a visible `:focus-visible` outline; filter labels remain available to assistive technology; status toasts use `role="status"` and `aria-live="polite"`.
+- New Settings, Guide and Archive controls collapse cleanly at 800px and 520px breakpoints.
+
+### Archive and franchise navigation
+
+- `filterArchiveFilms()` provides deterministic search, genre, lineage and sort behaviour outside React.
+- Archive filters support all films, franchise films, franchise originals and standalones, plus newest, oldest, audience, profit and title sorting.
+- Result counts update through a polite live region and empty filter results receive a proper non-card state.
+- Franchise film details display direct instalment navigation in stored franchise order.
+- Legacy films without a scene ledger now show an explicit empty-state explanation rather than a blank section.
+
+### Five-year balance audit
+
+`runCampaignBalanceAudit()` runs 20 deterministic quarters for three reference styles. With the locked audit seed:
+
+| Style | Features | Contracts | Rescues | Final cash | Debt |
+|---|---:|---:|---:|---:|---:|
+| Cautious | 20 | 0 | 0 | $451,307 | $0 |
+| Balanced | 20 | 0 | 0 | $414,924 | $0 |
+| Reckless | 14 | 6 | 7 | $31,924 | $508,149 |
+
+The audit is diagnostic, not a profitability claim. Its purpose is to prove formula finiteness, strategy separation and continued feature production. It exposes a remaining question: reckless play is recoverable but generates repeated rescue cycles and may need a harder long-term consequence.
+
+### Validation
+
+- Embedded deterministic engine suite: **60/60 passed**.
+- Phase 8 coverage adds v7-to-v8 migration, settings normalization, new-campaign onboarding, export envelopes, export/import round-trips, legacy imports, malformed-input rejection, save-size estimation, archive search/filter/sort, franchise ordering and deterministic five-year audits.
+- Static HTML checks confirm balanced script/style tags, a single active App and Archive component, build/version markers, v7/v1 fallback keys and the established remote-image paint-order fix.
+- Browser runtime verification passed against the local release candidate: Babel mounted the game, the build marker reported `1.1-release-polish`, the embedded suite reported 60/60 and the exercised flow produced no runtime error.
+- Desktop verification at 1280 × 720 confirmed zero horizontal overflow, a loaded 1400-pixel title image and the intended absolutely positioned title background.
+- Phone-sized verification at 390 × 844 confirmed zero horizontal overflow across Settings, save health, import controls and the balance table. The file-import control was given a dedicated block layout so it no longer collides with adjacent actions.
+- The exercised interaction path passed: new studio → eight-part Studio Guide → Studio Office → Save & Accessibility → Back to Studio Office.
+
+### Open balance and release questions
+
+1. Whether exported saves should later support optional compression once real archives exceed roughly 1 MB.
+2. Whether high contrast needs an alternate photo-overlay treatment for very bright stock imagery.
+3. Whether cautious and balanced reference campaigns accumulate cash too easily after Year 3.
+4. Whether the reckless profile's seven rescues over five years should trigger permanent receivership.
+5. Whether archive filters should persist between visits or reset to a clean full-slate view.
+6. Whether the Studio Guide needs screen-specific contextual links in addition to its single overview.
+7. Whether Phase 8 content expansion should prioritise more scripts, more production incidents or more review writing first.
