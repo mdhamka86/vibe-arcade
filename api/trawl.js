@@ -1130,3 +1130,22 @@ export default async (req, res) => {
     return res.status(500).json({ error: String(e.message || e) });
   }
 };
+
+// ---- Vercel function configuration ----
+// The trawl's 300s used to be declared in vercel.json's "functions" block. That entry
+// was removed (d625ca5) while chasing a build failure, which left the longest-running
+// function in the project on the platform default — so a full ?action=run&stage=all
+// sweep could be killed mid-flight with no local sign that anything was wrong, and the
+// 00:15 cron would simply stop producing a morning pack.
+//
+// Declaring it here instead of re-adding it to vercel.json keeps ONE source of truth,
+// next to the code whose runtime it bounds, matching odds2.js (45s) and stewards.js
+// (120s). If a vercel.json entry for this file is ever restored, note that for plain
+// Node /api routes the in-code value wins — so they must agree or the file will say
+// one thing and the platform do another.
+//
+// WHY 300: the sweep fetches every meet's sources and PDFs serially with retries; the
+// client's TRAWL_MAX_MS leash in stewards.html is derived from this number. 300 also
+// exceeds the classic non-Fluid ceiling of 60s, so it depends on Fluid compute being
+// enabled on this project (as stewards.js's 120 already does).
+export const config = { maxDuration: 300 };
