@@ -2,7 +2,7 @@
 
 Design specification for **ONE MORE TAKE!**, a light, funny, mobile-first web game about running a chaotic movie studio. The game takes the emotional core of *The Movies* and *Stunts & Effects*—discovering stars, casting films, surviving productions, directing stunts and watching the finished result—and compresses it into a fast browser tycoon built on the proven **Whisker Warriors** structure.
 
-**Status:** v1.1 PHASE 8 — RELEASE POLISH COMPLETE (21/07/2026). All v1.0 career, franchise, demand, scandal and v0.9 production systems remain intact. Campaigns now export as validated portable JSON bundles and may import official bundles or legacy raw saves. Automatic backup recovery is exposed inside the game. New campaigns receive an eight-part Studio Guide; older campaigns migrate without forced onboarding. Reduced motion, high contrast, stronger focus treatment and live status announcements improve accessibility. The Movie Archive now supports search, genre, franchise-status and sort controls, while Film Detail links every stored instalment in a franchise. Save version 8 migrates non-destructively from v7 through v1. Three seeded five-year reference campaigns provide a visible balance audit. Sixty embedded deterministic tests, static integrity checks and local browser verification at desktop and 390 × 844 mobile sizes are green. The release candidate is ready for deployment and real-player balance observation.
+**Status:** v1.2 HOLLYWOOD PASS COMPLETE (21/07/2026). The v1.1 release-safety foundation and every v1.0/v0.9 simulation system remain intact. Talent Roster and Training now present every actor and director with a responsive circular stock portrait beside their identity. Image-light management screens receive cinematic production strips; marketing angles are full photographic cards; Save & Accessibility uses visual panel headers; and shared Hollywood banners give careers a stronger marquee identity. Screen changes now reset scroll position, and phone headers reserve enough space for the active screen title. Save version 8 is unchanged and still migrates non-destructively from v7 through v1. The 60-test deterministic engine suite, 24-point release-integrity audit and a complete phone-sized film workflow are green.
 
 **Owner:** Hammy (hammyLabs)  
 **Repo:** `mdhamka86/vibe-arcade`  
@@ -2335,3 +2335,61 @@ The audit is diagnostic, not a profitability claim. Its purpose is to prove form
 5. Whether archive filters should persist between visits or reset to a clean full-slate view.
 6. Whether the Studio Guide needs screen-specific contextual links in addition to its single overview.
 7. Whether Phase 8 content expansion should prioritise more scripts, more production incidents or more review writing first.
+
+---
+
+## v1.2 implementation record — Hollywood Visual Pass
+
+### Purpose
+
+v1.2 makes the management layer feel like the same movie game as Casting, Production and Premiere. It deliberately adds presentation depth without introducing a new economy, campaign rule or save field.
+
+### Talent and career presentation
+
+- Talent Roster cards now place a circular stock portrait beside each actor or director's name, role, age and status.
+- Training & Rest uses the same identity treatment so quarterly career decisions remain connected to recognisable people.
+- Portraits retain the existing compressed 640-pixel source, multi-URL failover chain, `no-referrer` policy and SVG/CSS fallback.
+- Desktop retains a three-column career board; phone layouts collapse to one full-width card with a 68-pixel portrait.
+- The roster and career screens receive cinematic photographic banners with readable gradient overlays.
+
+### Hollywood sweep
+
+- Contract Board, Production Plan, Release Office and Save & Accessibility receive compact cinematic strips without displacing their functional controls.
+- Release campaign angles become photographic cards: the selected star, the film's own key art and a mystery-cinema treatment.
+- Campaign safety, accessibility and balance-audit panels receive image headers.
+- Existing image-led screens remain intact: title, office, screenplay market, casting, soundstage, editing, premiere, results, awards and archive posters.
+- The pass reuses the established compressed image manifest rather than adding an unverified image host or repository weight.
+
+### Responsive and navigation corrections
+
+- Every screen transition now resets the document to the top. Entering a screen from a lower office card can no longer open halfway down the destination.
+- On phone widths, the visible topbar brand contracts to `OMT`, preserving the full accessible text while leaving room for the active screen title.
+- Hollywood banners, photo cards, circular portraits, Settings panels and management strips report zero horizontal overflow at 390 × 844.
+
+### Compatibility
+
+- Current save version remains **8** because v1.2 adds no persisted simulation field.
+- `oneMoreTake_save_v8` and `oneMoreTake_save_v8_backup` are unchanged.
+- v7 through v1 fallback keys remain readable and migration remains non-destructive.
+- Export/import envelopes remain `ONE_MORE_TAKE_SAVE` format version 1.
+- The deterministic engine formulas and five-year reference audit are unchanged.
+
+### Validation
+
+- Deterministic engine suite: **60/60 passed**.
+- Release-integrity audit: **24/24 passed**.
+- Browser build marker: `1.2-hollywood`.
+- Desktop title verification: 1280 × 720, zero horizontal overflow, primary 1400-pixel image loaded.
+- Phone workflow verification: 390 × 844, new studio → guide → office → roster → training → contracts → screenplay → casting → production plan → four production scenes → post-production → release office.
+- Talent Roster verification: eight of eight 640-pixel portraits and the 900-pixel roster banner loaded.
+- Settings verification: four of four photographic surfaces loaded at 900–1200 pixels; all Settings, import and balance-table containers reported zero overflow.
+- Release Office verification: all three campaign-card images and the 900-pixel release strip loaded; the screen reported zero overflow.
+- Final contract-art verification loaded the 1400-pixel studio-set source rather than the earlier generic outdoor camera image.
+
+### Remaining questions after v1.2
+
+1. Whether the career banner should rotate by studio tier once real multi-year saves reach Major Lot status.
+2. Whether very long talent names need a dedicated compact type rule after additional characters are added.
+3. Whether Settings should keep all three image headers or reduce them on data-constrained devices.
+4. Whether v1.3 should prioritise more screenplay art, more production incidents or additional premiere/review writing.
+5. Whether the image-heavy pass changes perceived pacing enough to justify a user-selectable low-data visual mode.
