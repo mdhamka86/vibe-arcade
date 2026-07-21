@@ -6,7 +6,7 @@
 //   ANTHROPIC_API_KEY            (console.anthropic.com)
 //   UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN  (or KV_REST_API_URL / KV_REST_API_TOKEN)
 
-import { getNews } from './terminal-news.js';
+import { getNews, getSymbolIdeas } from './terminal-news.js';
 
 const R_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const R_TOK = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
@@ -260,17 +260,84 @@ function checkLevels(idea, refPx) {
   if (rr != null && rr < 1) return { ok: false, reason: `reward:risk ${rr} is below 1 — target closer than stop` };
   return { ok: true, rr, slPips: Math.round(slPips), tpPips: Math.round(tpPips) };
 }
-function refFor(pair, rates) {
-  if (!rates) return null;
+function refFor(pair, rates, live) {
   const p = normPair(pair);
+  // PREFER the live quote (audit finding 10), but ONLY if it's a genuinely valid positive
+  // number — a glitchy 0/NaN/negative must fall through to the daily rate, never poison level
+  // validation (every stop/target would look catastrophically wrong against a zero reference).
+  if (live && live[p] && Number.isFinite(live[p].price) && live[p].price > 0) return live[p].price;
+  if (!rates) return null;
   if (rates[p] != null) return rates[p];
-  // try inverse (e.g. someone wrote USDGBP)
   const inv = p.slice(3, 6) + p.slice(0, 3);
   if (rates[inv] != null) return +(1 / rates[inv]).toFixed(5);
   return null;
 }
 
-// ---------- Reference FX rates (frankfurter.dev, ECB daily, no key) ----------
+// ---------- LIVE FX pricing + volatility (Yahoo, near-live; ATR from OHLC) ----------
+// Audit finding 10: the desk needs CURRENT executable-grade prices and REAL volatility to
+// validate one-day entries and size stops, not just yesterday's ECB daily fix. Yahoo's chart
+// endpoint (keyless) gives a live indicative mid-price plus daily OHLC, from which we compute
+// ATR(14) — the standard volatility measure — and the recent range. Indicative mid, not your
+// broker's exact bid/ask, so it's for validation and stop-sizing, not the precise fill.
+const YF_SYMBOL = { // pair -> Yahoo FX symbol
+  EURUSD: 'EURUSD=X', GBPUSD: 'GBPUSD=X', USDJPY: 'JPY=X', USDCHF: 'CHF=X', AUDUSD: 'AUDUSD=X',
+  NZDUSD: 'NZDUSD=X', USDCAD: 'CAD=X', EURGBP: 'EURGBP=X', EURJPY: 'EURJPY=X', GBPJPY: 'GBPJPY=X',
+  EURAUD: 'EURAUD=X', GBPAUD: 'GBPAUD=X', AUDJPY: 'AUDJPY=X', NZDJPY: 'NZDJPY=X', CADJPY: 'CADJPY=X',
+  CHFJPY: 'CHFJPY=X', EURCHF: 'EURCHF=X', GBPCHF: 'GBPCHF=X', AUDCAD: 'AUDCAD=X', AUDNZD: 'AUDNZD=X',
+  DXY: 'DX-Y.NYB',
+};
+async function yahooQuote(pair) {
+  const sym = YF_SYMBOL[normPair(pair)];
+  if (!sym) return null;
+  try {
+    const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1mo`,
+      { headers: { 'User-Agent': 'Mozilla/5.0 (TheTerminal/1.0)' } });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const res = j.chart && j.chart.result && j.chart.result[0];
+    if (!res || !res.meta) return null;
+    const m = res.meta, q = (res.indicators && res.indicators.quote && res.indicators.quote[0]) || {};
+    const price = m.regularMarketPrice;
+    if (!Number.isFinite(price) || price <= 0) return null; // reject null/0/NaN/negative at source
+    // ATR(14) from daily OHLC
+    let trs = [];
+    const H = q.high || [], L = q.low || [], C = q.close || [];
+    for (let i = 1; i < C.length; i++) {
+      if (H[i] == null || L[i] == null || C[i - 1] == null) continue;
+      trs.push(Math.max(H[i] - L[i], Math.abs(H[i] - C[i - 1]), Math.abs(L[i] - C[i - 1])));
+    }
+    const atr = trs.length ? trs.slice(-14).reduce((a, b) => a + b, 0) / Math.min(14, trs.length) : null;
+    const pip = pipSize(pair, price);
+    return {
+      pair: normPair(pair), price: +price, asOf: m.regularMarketTime ? new Date(m.regularMarketTime * 1000).toISOString() : null,
+      dayLow: m.regularMarketDayLow ?? null, dayHigh: m.regularMarketDayHigh ?? null,
+      atr: atr != null ? +atr.toFixed(6) : null, atrPips: atr != null && pip ? Math.round(atr / pip) : null,
+      live: true,
+    };
+  } catch { return null; }
+}
+// Fetch live quotes+volatility for a set of pairs, with honest per-pair fallback to daily rates.
+async function livePrices(pairs, fallbackRates) {
+  const uniq = [...new Set(pairs.map(normPair).filter((p) => YF_SYMBOL[p]))];
+  const quotes = await Promise.all(uniq.map((p) => yahooQuote(p).catch(() => null)));
+  const out = {};
+  uniq.forEach((p, i) => {
+    if (quotes[i]) out[p] = quotes[i];
+    else if (fallbackRates && fallbackRates[p] != null) out[p] = { pair: p, price: fallbackRates[p], atr: null, atrPips: null, live: false, asOf: fallbackRates.asOf || null };
+  });
+  return out;
+}
+// A compact, HONEST text block for prompts: live where we have it, flagged stale where we don't.
+function formatPrices(prices) {
+  const rows = Object.values(prices || {});
+  if (!rows.length) return 'no live pricing available this run';
+  return rows.map((r) => {
+    if (r.live) return `${r.pair}: ${r.price} (LIVE ${r.asOf ? r.asOf.slice(11, 16) + 'Z' : ''}${r.atrPips != null ? `, daily ATR ~${r.atrPips} pips` : ''}${r.dayLow != null ? `, today ${r.dayLow}-${r.dayHigh}` : ''})`;
+    return `${r.pair}: ${r.price} (⚠ STALE daily ref ${r.asOf || ''} — no live quote this run, treat cautiously)`;
+  }).join('\n');
+}
+
+// ---------- Reference FX rates (frankfurter.dev, ECB daily, no key) — FALLBACK layer ----------
 async function refRates() {
   try {
     const r = await fetch('https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR,GBP,JPY,CHF,AUD,NZD,CAD');
@@ -329,8 +396,51 @@ function bookView(book) {
     }),
   };
 }
+// Normalise an outlet name to its publisher FAMILY, so two feeds from the same publisher
+// (e.g. "ForexLive" and "ForexLive CB") count as ONE independent source, not two. Used by
+// the convergence gate to prevent same-publisher syndication from faking convergence.
+function outletFamily(name) {
+  if (!name || typeof name !== 'string') return null;
+  const n = name.toLowerCase().replace(/[^a-z]/g, '');
+  if (!n) return null;
+  const families = ['forexlive', 'fxstreet', 'actionforex', 'dailyforex', 'myfxbook', 'reuters', 'bloomberg', 'investing', 'wsj', 'cnbc', 'ft', 'marketwatch', 'seekingalpha'];
+  for (const f of families) { if (n.includes(f)) return f; }
+  return n.slice(0, 12); // fallback: first chunk as its own family
+}
+// Honest, dynamic list of which news feeds ACTUALLY delivered this run (audit finding 5).
+// Reads the health attached to the news array — never claims a dead feed is present.
+function liveSourceLine(news) {
+  const health = (news && news.health) || [];
+  if (!health.length) {
+    // no health info: report the distinct outlets that genuinely appear in the items
+    const outlets = [...new Set((news || []).map((n) => n.source).filter(Boolean))].slice(0, 12);
+    return outlets.length ? outlets.join(', ') : 'Google News aggregate';
+  }
+  const live = health.filter((h) => h.ok && h.count > 0).map((h) => h.source);
+  const down = health.filter((h) => !h.ok || h.count === 0).map((h) => h.source);
+  let line = live.length ? live.join(', ') : 'Google News aggregate only';
+  if (down.length) line += ` (down/empty this run: ${down.join(', ')})`;
+  return line;
+}
+// Compact but INFORMATIVE digest: each item shows source, how long ago it published (recency
+// is critical for a one-day trade), the headline, and a short snippet of the actual reporting
+// so the model can tell analysis from a flash and judge context — not just a bare headline
+// (audit finding 4). Age is computed from the item's real publish timestamp.
+function ageLabel(ts) {
+  if (!ts) return '?';
+  const mins = Math.round((Date.now() - ts) / 60000);
+  if (mins < 0) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.round(hrs / 24)}d ago`;
+}
 function digest(items, n = 16) {
-  return (items || []).slice(0, n).map((i) => `- [${i.source}] ${i.title}`).join('\n');
+  return (items || []).slice(0, n).map((i) => {
+    const age = ageLabel(i.ts);
+    const snip = (i.desc || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+    return `- [${i.source} · ${age}] ${i.title}${snip ? `\n    ${snip}` : ''}`;
+  }).join('\n');
 }
 function pasteRow(cells) { return cells.map((c) => (c ?? '')).join('\t'); }
 
@@ -368,7 +478,21 @@ async function actIdeas(force) {
   if (t.isWeekend && !force) return { clock: t, weekend: true, ideas: cached || null };
 
   const s = await loadAll();
-  const [news, rates, cal] = await Promise.all([getNews('forex'), refRates(), getCalendar()]);
+  // major pairs to pull real per-symbol pattern setups for (TradingView trader ideas).
+  // This gives the desk genuine technical/pattern context, not just news headlines.
+  const PATTERN_PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCHF', 'USDCAD', 'NZDUSD', 'DXY'];
+  const [news, rates, cal, patternSets] = await Promise.all([
+    getNews('forex'), refRates(), getCalendar(),
+    Promise.all(PATTERN_PAIRS.map(async (sym) => ({ sym, ideas: await getSymbolIdeas(sym).catch(() => []) }))),
+  ]);
+  // LIVE prices + volatility for the majors (audit finding 10): current quotes and real ATR
+  // so the desk validates entries against NOW and sizes stops to genuine volatility.
+  const live = await livePrices(PATTERN_PAIRS, rates);
+  // build a compact pattern-desk digest: a few freshest trader setups per pair
+  const patternDigest = patternSets
+    .filter((p) => p.ideas.length)
+    .map((p) => `${p.sym}: ${p.ideas.slice(0, 3).map((i) => i.title.trim()).join(' | ')}`)
+    .join('\n') || 'no pattern feed available this run';
 
   // freshness memory: last 7 days of offered/taken ideas, and a banned set of
   // pair+direction combos from the last 3 days plus anything already open
@@ -426,10 +550,12 @@ async function actIdeas(force) {
   const recentAAR = s.ledger.filter((r) => r.aar).slice(-6)
     .map((r) => `${r.idea?.pair || r.close?.pair} ${r.aar.bucket}: ${r.aar.headline}`).join('\n');
 
-  const priceBlock = rates
-    ? Object.entries(rates).filter(([k]) => k !== 'asOf' && rates[k] != null)
-        .map(([k, v]) => `${k} ${v}`).join(', ')
-    : 'live prices unavailable, be conservative';
+  // Prefer the LIVE prices + volatility; fall back to the daily-rate string only if live is empty.
+  const priceBlock = Object.keys(live).length
+    ? formatPrices(live)
+    : (rates
+        ? Object.entries(rates).filter(([k]) => k !== 'asOf' && rates[k] != null).map(([k, v]) => `${k} ${v} (⚠ daily ref, not live)`).join(', ')
+        : 'live prices unavailable, be conservative');
 
   // session awareness: the desk is used both at the 21:20 night session and in the
   // The desk is used at any hour, so read the actual clock and tailor the brief to the
@@ -451,7 +577,7 @@ ${sessionBrief}
 
 ${deskContext(t, s.book, s.lessons, s.book.vitals, rates)}
 
-LIVE REFERENCE PRICES (anchor EVERY level to these; entries must sit within ~0.5% of the live price, not at invented round numbers):
+LIVE REFERENCE PRICES + VOLATILITY (anchor EVERY level to these; entries must sit within ~0.5% of the LIVE price, not at invented round numbers. Where a pair shows a daily ATR, size the stop RELATIVE to it — a one-day stop is typically ~0.6-1.2x the daily ATR: tighter than ATR gets stopped by normal noise, much wider than ATR risks too much. Do NOT use a hardcoded pip count when a real ATR is shown):
 ${priceBlock}
 
 Recent AAR verdicts:
@@ -468,8 +594,11 @@ ${historyLines}
 ECONOMIC CALENDAR, next 48h, High/Medium impact, Bangkok times (validated Forex Factory data):
 ${calLines(cal)}
 
-Tonight's forex news wire (multi-source: ForexLive, FXStreet, ActionForex, Myfxbook, DailyForex, central bank feed, Google News):
+Tonight's forex news wire (sources that actually delivered this run — ${liveSourceLine(news)}):
 ${digest(news, 30)}
+
+PATTERN DESK — real trader setups from TradingView, per pair (technical/chart-pattern context to weigh ALONGSIDE the news; these are crowd ideas, not gospel, but they show where technical attention sits):
+${patternDigest}
 
 TASK: Propose exactly 2 short-term ideas built as ONE-DAY positions: opened tonight, targeted to close within ~24h, 48h absolute ceiling.
 
@@ -494,14 +623,15 @@ SIZING DOCTRINE (aggressive, margin-bounded):
 - Weigh the lessons archive; do not repeat known mistakes.
 
 Respond ONLY with JSON, no markdown:
-{"ideas":[{"pair":"EUR/USD","direction":"BUY|SELL","entry_zone":"1.1440-1.1455","tp":"1.1520","sl":"1.1400","lots":"0.05","horizon":"one-day (close within 24h)","conviction":"LOW|MED|MED-HIGH|HIGH","thesis":"...","source":"the SPECIFIC catalyst and where it came from that drives this idea, e.g. 'FXStreet: ECB Lagarde hawkish remarks + tomorrow's German CPI' or 'RBA hold + Chinese PMI beat (ActionForex)'. Name the real news item(s) behind it, not a vague rationale.","risks":"...","sizing_note":"why THIS lot size: the margin arithmetic, projected margin level if taken, and what capped or freed the size","correlation_note":"..."}],"stand_down":false,"desk_note":"one-paragraph read of the session"}
+{"ideas":[{"pair":"EUR/USD","direction":"BUY|SELL","entry_zone":"1.1440-1.1455","tp":"1.1520","sl":"1.1400","lots":"0.05","horizon":"one-day (close within 24h)","conviction":"LOW|MED|MED-HIGH|HIGH","thesis":"...","sources":[{"outlet":"the publication name EXACTLY as tagged in the wire above, e.g. ForexLive, FXStreet, ActionForex, Reuters","point":"the specific claim from that outlet that supports this idea"}],"risks":"...","sizing_note":"why THIS lot size: the margin arithmetic, projected margin level if taken, and what capped or freed the size","correlation_note":"..."}],"stand_down":false,"desk_note":"one-paragraph read of the session"}
+CONVERGENCE RULE (enforced in code, not just requested): MED-HIGH and HIGH conviction REQUIRE at least TWO sources in the "sources" array from DIFFERENT outlets that both appear in the wire above. An idea that cites fewer than two independent wire outlets will be AUTOMATICALLY DOWNGRADED to at most MED, no matter what conviction you write. So only claim MED-HIGH/HIGH when you can genuinely name two or more different outlets from the wire that converge. Do not invent outlets or cite ones not present above.
 Reminder: every price you output is checked against live rates after you respond. An impossible level (wrong magnitude, or SL/TP on the wrong side) will be rejected, so verify each number now.`;
 
   let ideas = await claude(prompt, 2200);
 
   // combined gate: reject on duplicate/open exposure OR broken levels, retry once
   const isDupe = (i) => banned.has(normPair(i.pair) + '|' + i.direction) || openPairs.includes(normPair(i.pair));
-  const levelCheck = (i) => checkLevels(i, refFor(i.pair, rates));
+  const levelCheck = (i) => checkLevels(i, refFor(i.pair, rates, live));
   const isBad = (i) => isDupe(i) || !levelCheck(i).ok;
 
   if ((ideas.ideas || []).some(isBad)) {
@@ -526,6 +656,33 @@ Reminder: every price you output is checked against live rates after you respond
   }
   ideas.generatedAt = t.iso;
   ideas.dateKey = t.dateKey;
+
+  // CONVERGENCE GATE (audit finding 1): "MED-HIGH"/"HIGH" is not taken on trust. An idea
+  // only keeps a top-two rung if it genuinely cites >=2 DIFFERENT outlets that ACTUALLY
+  // appeared in tonight's wire. Hallucinated or thin-sourced high conviction is downgraded
+  // to MED in code, so a confident-sounding idea with no real convergence can never qualify.
+  const realOutlets = new Set((news || []).map((n) => outletFamily(n.source)).filter(Boolean));
+  const convergenceOf = (i) => {
+    const cited = Array.isArray(i.sources) ? i.sources : [];
+    // keep only cited outlets that genuinely exist in tonight's wire, de-duped by family
+    const verified = new Set();
+    for (const s of cited) {
+      const fam = outletFamily(s && s.outlet);
+      if (fam && realOutlets.has(fam)) verified.add(fam);
+    }
+    return verified;
+  };
+  (ideas.ideas || []).forEach((i) => {
+    const verified = convergenceOf(i);
+    i.verifiedSources = [...verified];
+    i.sourceConvergence = verified.size >= 2 ? 'CONVERGENT' : verified.size === 1 ? 'SINGLE' : 'UNSOURCED';
+    // hard downgrade: no top-two conviction without >=2 verified independent outlets
+    if (['MED-HIGH', 'HIGH'].includes((i.conviction || '').toUpperCase()) && verified.size < 2) {
+      i.convictionClaimed = i.conviction;
+      i.conviction = 'MED';
+      i.conviction_note = `Auto-capped to MED: claimed ${i.convictionClaimed} but only ${verified.size} independent wire source(s) verified. Top conviction needs 2+.`;
+    }
+  });
 
   // conviction gating: mark which ideas clear the MED-HIGH bar. Full set is kept for
   // the record and the shadow book; the frontend shows only the qualifying ones.
@@ -585,13 +742,15 @@ JSON only: {"lesson":"one durable transferable principle, max 25 words, OR the l
 async function parseShot(image, kind) {
   const spec = {
     positions: `Extract ALL open positions AND the account vitals from this MT5 screenshot.
-JSON: {"positions":[{"pair":"EURAUD","direction":"BUY|SELL","lots":0.1,"entry":1.63669,"current":1.6450,"sl":1.62,"tp":1.6289,"floating":16.23,"openTime":"2026.07.20 03:38"}],"vitals":{"balance":0,"equity":0,"margin":0,"freeMargin":0,"marginLevel":0}}
+JSON: {"positions":[{"ticket":"12743484","pair":"EURAUD","direction":"BUY|SELL","lots":0.1,"entry":1.63669,"current":1.6450,"sl":1.62,"tp":1.6289,"floating":16.23,"openTime":"2026.07.20 03:38"}],"vitals":{"balance":0,"equity":0,"margin":0,"freeMargin":0,"marginLevel":0}}
+TICKET ID (read it when present): MT5's desktop position view usually has a "Ticket" column — a long number like 12743484 unique to each trade. Read it into "ticket" EXACTLY as shown. The mobile app often HIDES this column; if there is no ticket column visible for a row, set "ticket" to null — do NOT invent or guess one. When present it is the most reliable identity of a trade.
 CRITICAL — READ THE PAIR EXACTLY: read all SIX letters of each symbol carefully. Do NOT confuse similar currency codes — AUD vs USD, CHF vs CAD, NZD vs NOK. A common error is misreading EURAUD as EURUSD. SANITY-CHECK EACH PAIR AGAINST ITS ENTRY PRICE: the entry must be plausible for the pair. Rough live ranges: EURUSD ~1.0-1.2, EURAUD ~1.5-1.7, EURCHF ~0.9-1.0, USDCHF ~0.8-0.95, GBPUSD ~1.2-1.4, USDJPY ~140-165, AUDUSD ~0.6-0.7. If your read of the pair makes the entry price implausible (e.g. "EURUSD" at 1.63 — impossible, EURUSD never trades there; that is EURAUD), you have MISREAD the pair — re-read it and correct it. The price is usually right; fix the pair to match it.
 OPEN TIME (important): MT5 usually shows each position's OPEN TIME/date (often in a "Time" column, format like "2026.07.20 03:38"). Read it into openTime EXACTLY as shown if visible. If no open time is visible for a row, set openTime to null — do NOT guess it.
 CRITICAL — SIGN OF FLOATING P/L: MT5 shows profit and loss BY COLOUR. A figure shown in GREEN (or blue/positive tint) is a PROFIT and MUST be a POSITIVE number; a figure shown in RED is a LOSS and MUST be a NEGATIVE number. Read the colour carefully and set the sign accordingly; never drop or invert it. Cross-check: for a BUY, if current price is above entry the floating is usually positive (below entry, negative); for a SELL it is the reverse. When colour and this cross-check disagree, trust the colour but read carefully.
 If a field is not visible use null. marginLevel as a number (percent). Numbers as numbers, not strings.`,
     history: `Extract ALL closed deals visible in this MT5 history screenshot.
-JSON: {"closes":[{"pair":"EURUSD","direction":"BUY|SELL","lots":0.1,"entry":1.14388,"exit":1.15,"profit":24.2,"closeTime":"2026.07.02 19:41"}]}
+JSON: {"closes":[{"ticket":"12743484","pair":"EURUSD","direction":"BUY|SELL","lots":0.1,"entry":1.14388,"exit":1.15,"profit":24.2,"closeTime":"2026.07.02 19:41"}]}
+TICKET: if a ticket/order number column is visible, read it into "ticket" (helps match a closure to the exact open position); else null.
 CRITICAL — SIGN OF PROFIT: GREEN/positive means a POSITIVE profit, RED means a NEGATIVE loss. Preserve the sign faithfully; never invert it.`,
     fill: `Extract the single confirmed position (the newest/most relevant) plus account vitals if visible from this MT5 screenshot.
 JSON: {"fill":{"pair":"EURUSD","direction":"BUY|SELL","lots":0.1,"entry":1.14388,"sl":1.116,"tp":1.18},"vitals":{"balance":null,"equity":null,"freeMargin":null,"marginLevel":null}}`,
@@ -610,6 +769,15 @@ JSON: {"fill":{"pair":"EURUSD","direction":"BUY|SELL","lots":0.1,"entry":1.14388
 // must NOT let a one-digit misread flush a held position to closures and re-adopt it as a
 // thesis-less orphan. tolerant=true widens the entry tolerance for the reconcile step.
 function samePos(a, b, tolerant) {
+  // GOLD STANDARD (audit finding 9): if BOTH sides carry a real MT5 ticket, the ticket is the
+  // unambiguous identity of the trade. Equal tickets = same trade, full stop. Different tickets
+  // = different trades, even if pair/direction/lots/entry all match (this is exactly the case
+  // Kepler flagged: two EURUSD buys at 1.1438 and 1.1445 are now correctly kept distinct).
+  const ta = ticketId(a), tb = ticketId(b);
+  if (ta && tb) return ta === tb;
+  // FALLBACK (ticket missing on one/both — e.g. a mobile screenshot that hid the column):
+  // identify by pair + direction + lots, with entry as a tie-breaker. Resilient, never breaks
+  // when the ticket isn't in the shot.
   if (normPair(a.pair) !== normPair(b.pair)) return false;
   if ((a.direction || '').toUpperCase() !== (b.direction || '').toUpperCase()) return false;
   // lots should match closely; a real position keeps its size
@@ -622,6 +790,13 @@ function samePos(a, b, tolerant) {
   if (ea == null || eb == null || ea === 0) return true; // can't compare entries -> trust the rest
   const drift = Math.abs(ea - eb) / ea;
   return drift < (tolerant ? 0.015 : 0.002);
+}
+// normalise a ticket to a clean digit string, or null if absent/implausible
+function ticketId(p) {
+  const raw = p && (p.ticket ?? p.ticketId);
+  if (raw == null) return null;
+  const s = String(raw).replace(/[^0-9]/g, '');
+  return s.length >= 6 ? s : null; // MT5 tickets are long; ignore stray short numbers
 }
 
 // Parse an MT5 open-time string like "2026.07.08 21:14" (or with seconds) into a timestamp.
@@ -858,7 +1033,7 @@ ${posDetail}
 Closures detected this sync: ${report.closedDetected.map((c) => `${c.position.pair} ${c.position.direction} ${c.close ? `closed ${c.close.profit >= 0 ? '+' : ''}${c.close.profit}` : 'closed, awaiting history screenshot'}`).join('; ') || 'none'}
 TODAY'S ECONOMIC CALENDAR, High/Medium impact, Bangkok times (validated Forex Factory data, do not invent events beyond it):
 ${calLines(cal)}
-Fresh wire (each item source-tagged in [brackets] — real finance/forex outlets: ForexLive, FXStreet, ActionForex, DailyForex, Reuters, central-bank feeds):\n${digest(news, 18)}
+Fresh wire (each item source-tagged in [brackets] — sources live this run: ${liveSourceLine(news)}):\n${digest(news, 18)}
 
 For EACH open position, decide a thesis status: HOLDING (original reasoning intact, stay the course), WOBBLING (thesis under strain, watch closely, be ready to act), or BROKEN (the reason for the trade no longer applies, actively consider closing). Ground the verdict in the fresh news, the calendar and the price move since entry. CALIBRATE TO HORIZON: a position tagged FRESH DESK-PROPOSED must not be flipped to BROKEN on ordinary noise minutes after the desk itself proposed it, and a LONG-TERM HOLD must be judged on its durable multi-week thesis, not a one-day wobble. For off-book positions, first infer the likely thesis in one clause, then judge it the same way.
 
@@ -1003,7 +1178,16 @@ async function actRedFlag(positionId) {
   const s = await loadAll();
   const p = s.book.positions.find((x) => x.id === positionId);
   if (!p) throw new Error('Position not found.');
-  const [news, rates, cal] = await Promise.all([getNews('forex'), refRates(), getCalendar()]);
+  const [news, rates, cal, patternIdeas, live] = await Promise.all([
+    getNews('forex'), refRates(), getCalendar(),
+    getSymbolIdeas(normPair(p.pair)).catch(() => []),
+    livePrices([p.pair], null).catch(() => ({})),
+  ]);
+  // real trader pattern setups for THIS pair, to weigh in the hold-or-close call
+  const patternDesk = patternIdeas.length
+    ? patternIdeas.slice(0, 5).map((i) => `- ${i.title.trim()}`).join('\n')
+    : 'no pattern feed for this pair this run';
+  const liveLine = formatPrices(live) || 'live price unavailable this run';
   const held = daysHeld(p.openedAt);
   const hoursOpen = p.openedAt ? Math.max(0, (Date.now() - p.openedAt) / 3600e3) : null;
   const fromDesk = !!p.ideaId; // this position was opened from one of the desk's own ideas
@@ -1040,7 +1224,13 @@ Original thesis: ${p.thesis || 'none on record'}
 Opportunity cost: ${marginShare}; a stale position blocks proper sizing of fresh ideas (weigh this ONLY if the position is genuinely stale or broken, not if it is a fresh or long-term hold doing its job).
 UPCOMING CALENDAR for this pair's currencies, Bangkok times (validated Forex Factory data):
 ${pairCal}
-Fresh wire (each item is source-tagged in [brackets] — these are real finance/forex sources: ForexLive, FXStreet, ActionForex, DailyForex, Reuters, central-bank feeds, etc.):\n${digest(news, 20)}
+Fresh wire (each item is source-tagged in [brackets] — sources live this run: ${liveSourceLine(news)}):\n${digest(news, 20)}
+
+PATTERN DESK for ${p.pair} — real trader setups from TradingView (technical/chart context for the hold-or-close call; crowd ideas, weigh critically, but they show where technical attention sits on this exact pair):
+${patternDesk}
+
+LIVE PRICE + VOLATILITY for ${p.pair} (use this to judge whether the position's stop/target still make sense against where price actually is and how much it's moving):
+${liveLine}
 
 ${ruleFrame}
 

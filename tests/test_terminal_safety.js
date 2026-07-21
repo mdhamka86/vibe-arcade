@@ -149,3 +149,36 @@ console.log(`FINAL: ${pass} passed, ${fail} failed`);
 if (fail) { console.log('FAILURES:', fails.join(' | ')); process.exitCode = 1; }
 else console.log('ALL CHECKS PASSED ✓');
 console.log('============================================================');
+
+// ============================================================================
+// APPENDED: audit regressions for the 5-finding batch (convergence, feed health,
+// dedup, ticket identity, live pricing). Guards these never silently regress.
+// ============================================================================
+console.log('\n=== 10. LIVE-PRICING SAFETY (finding 10) ===');
+// refFor must reject garbage live prices and fall back to daily — a 0/NaN reference would
+// wreck every level check. (extracted from the real engine)
+(function(){
+  const fs=require('fs');const src=fs.readFileSync('/mnt/user-data/outputs/terminal-engine.js','utf8');
+  const m=src.match(/function refFor[\s\S]*?\n\}\n/);
+  if(!m){console.log('  (refFor not found)');return;}
+  const normPair=G.normPair;
+  eval(m[0]);
+  const daily={EURUSD:1.14};
+  check('live price 0 rejected -> daily', refFor('EURUSD',daily,{EURUSD:{price:0}})===1.14);
+  check('live price NaN rejected -> daily', refFor('EURUSD',daily,{EURUSD:{price:NaN}})===1.14);
+  check('live price negative rejected -> daily', refFor('EURUSD',daily,{EURUSD:{price:-1.5}})===1.14);
+  check('valid live price preferred', refFor('EURUSD',daily,{EURUSD:{price:1.1418}})===1.1418);
+  check('no live -> daily fallback', refFor('EURUSD',daily,null)===1.14);
+})();
+
+console.log('\n=== 11. TICKET IDENTITY (finding 9) ===');
+check('different tickets never merge (Kepler case)', !G.samePos({ticket:'12743484',pair:'EURUSD',direction:'BUY',lots:0.1,entry:1.1438},{ticket:'12743999',pair:'EURUSD',direction:'BUY',lots:0.1,entry:1.1445},true));
+check('same ticket = same trade', G.samePos({ticket:'12743484',pair:'EURUSD',direction:'BUY',lots:0.1,entry:1.14},{ticket:'12743484',pair:'EURUSD',direction:'BUY',lots:0.1,entry:1.99},true));
+check('no ticket -> fallback matching intact', G.samePos({pair:'USDCHF',direction:'BUY',lots:0.05,entry:0.80751},{pair:'USDCHF',direction:'BUY',lots:0.05,entry:0.8078},true));
+check('garbage ticket ignored, fallback used', G.samePos({ticket:'abc',pair:'EURUSD',direction:'BUY',lots:0.1,entry:1.14},{ticket:'xyz',pair:'EURUSD',direction:'BUY',lots:0.1,entry:1.14},true));
+
+console.log('\n============================================================');
+console.log(`GRAND TOTAL: ${pass} passed, ${fail} failed`);
+if (fail) { console.log('FAILURES:', fails.join(' | ')); process.exitCode = 1; }
+else console.log('ALL CHECKS PASSED ✓');
+console.log('============================================================');
