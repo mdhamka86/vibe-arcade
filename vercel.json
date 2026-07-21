@@ -26,26 +26,26 @@
     }
   ],
   "functions": {
-    "api/deep.js": {
+    "api/deep.cjs": {
       "maxDuration": 10,
       "memory": 1024
     },
-    "api/odds2.js": {
+    "api/odds2.cjs": {
       "maxDuration": 45
     },
     "api/mission.js": {
       "maxDuration": 10
     },
-    "api/stewards.js": {
+    "api/stewards.cjs": {
       "maxDuration": 120
     },
-    "api/trawl.js": {
+    "api/trawl.cjs": {
       "maxDuration": 300
     },
-    "api/propose.js": {
+    "api/propose.cjs": {
       "maxDuration": 120
     },
-    "api/probe.js": {
+    "api/probe.cjs": {
       "maxDuration": 60
     },
     "api/forex-brain.js": {
