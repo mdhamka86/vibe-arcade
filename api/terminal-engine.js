@@ -883,6 +883,68 @@ function parseMT5Time(str) {
 }
 
 
+// PAIR-PLAUSIBILITY GUARD: the vision parser can misread a currency code (classically
+// EURAUD read as EURUSD). We use GENEROUS ranges (wide enough that a real price near a
+// pair's normal band is never wrongly condemned) and, per audit, we DO NOT silently rewrite
+// a position — a wrong "correction" is as dangerous as a wrong read. We FLAG the mismatch
+// for the user to confirm, and only auto-correct in the single unambiguous misread case:
+// the base currency matches and EXACTLY ONE other pair fits, AND the gap is large (a true
+// impossibility, not an edge-of-band rounding). Even then we flag it loudly.
+//
+// THESE BANDS GO STALE, AND A STALE BAND IS A FALSE ALARM ON A REAL POSITION. Eight were
+// re-centred on 22/07/2026 against ECB daily rates (the same frankfurter.dev feed refRates()
+// uses as its fallback layer, dated 21/07/2026), because four had been overtaken by the
+// market outright — GBPJPY spot 218.08 against a 215 ceiling, EURJPY 185.82 against 185,
+// CHFJPY 200.69 against 195, AUDNZD 1.2001 against 1.18 — and four more sat within ~6% of
+// theirs. A guard that fires on the real book teaches the user to click past it, which is
+// how the EURAUD misread this whole mechanism exists to catch gets waved through.
+//
+// Each re-centred band is spot ±15%, which is the headroom the untouched bands already
+// carried. When you next touch this table, re-derive from live rates rather than nudging
+// the edge that happened to trip — nudging is what left four of them breached at once.
+const PAIR_RANGES = {
+  EURUSD: [0.95, 1.30], EURAUD: [1.40, 1.80], EURCHF: [0.85, 1.05], EURGBP: [0.78, 0.95],
+  EURJPY: [158, 214], USDCHF: [0.75, 1.00], USDJPY: [138, 187], USDCAD: [1.25, 1.52],
+  GBPUSD: [1.15, 1.45], AUDUSD: [0.55, 0.75], NZDUSD: [0.52, 0.70], AUDJPY: [97, 131],
+  NZDJPY: [78, 104], CADJPY: [96, 126], GBPJPY: [185, 251], CHFJPY: [170, 231],
+  AUDNZD: [1.02, 1.38], EURNZD: [1.66, 2.25], GBPAUD: [1.80, 2.10], AUDCAD: [0.84, 1.14],
+};
+const plausible = (pair, px) => { const r = PAIR_RANGES[normPair(pair)]; return !r || (px >= r[0] && px <= r[1]); };
+
+// Run the guard across a parsed book. MUTATES `positions` — an auto-correction rewrites
+// pos.pair, a flag sets pos.pairSuspect — and returns the list of what it did.
+//
+// Every entry carries `auto`, and the distinction is the whole point: auto:true means the
+// pair WAS changed, auto:false means it was NOT and the user must check it. They are
+// different claims and the UI must not merge them into one "corrected N pairs" count.
+//
+// Lives at module scope, not inline in actSync, so the safety suite can exercise the
+// SHIPPED logic — including the flag-only branch — instead of a hand-copied duplicate.
+function pairGuard(positions) {
+  const fixes = [];
+  for (const pos of positions || []) {
+    const px = num(pos.entry);
+    if (px == null) continue;
+    if (plausible(pos.pair, px)) continue;
+    const base = normPair(pos.pair).slice(0, 3);
+    const candidates = Object.keys(PAIR_RANGES).filter((k) => px >= PAIR_RANGES[k][0] && px <= PAIR_RANGES[k][1]);
+    const sameBase = candidates.filter((k) => k.startsWith(base));
+    // Auto-correct ONLY the unambiguous classic misread: same base currency, exactly one
+    // candidate, and the read pair is genuinely far outside its band (not a rounding edge).
+    const r = PAIR_RANGES[normPair(pos.pair)];
+    const farOutside = r ? (px < r[0] * 0.9 || px > r[1] * 1.1) : true;
+    if (sameBase.length === 1 && farOutside) {
+      fixes.push({ was: pos.pair, now: sameBase[0], entry: px, auto: true, note: `${pos.pair} entry ${px} is far outside its range and matches ${sameBase[0]} exactly (same base currency) — auto-corrected as a likely screenshot misread. VERIFY on your platform.` });
+      pos.pair = sameBase[0];
+    } else {
+      // ambiguous or edge case: FLAG, never mutate. Let the user confirm.
+      pos.pairSuspect = true;
+      fixes.push({ was: pos.pair, now: null, entry: px, auto: false, note: `${pos.pair} entry ${px} looks unusual for ${pos.pair}${candidates.length ? ` (fits ${candidates.join('/')})` : ''}. NOT changed — verify the pair on your platform; the desk will hold judgement on it.` });
+    }
+  }
+  return fixes;
+}
+
 // Morning sync: positions shot (+ optional history shot) -> reconcile
 async function actSync(positionsImgs, historyImg) {
   const t = bkk();
@@ -924,41 +986,10 @@ async function actSync(positionsImgs, historyImg) {
     };
   }
 
-  // PAIR-PLAUSIBILITY GUARD: the vision parser can misread a currency code (classically
-  // EURAUD read as EURUSD). We use GENEROUS ranges (wide enough that a real price near a
-  // pair's normal band is never wrongly condemned) and, per audit, we DO NOT silently rewrite
-  // a position — a wrong "correction" is as dangerous as a wrong read. We FLAG the mismatch
-  // for the user to confirm, and only auto-correct in the single unambiguous misread case:
-  // the base currency matches and EXACTLY ONE other pair fits, AND the gap is large (a true
-  // impossibility, not an edge-of-band rounding). Even then we flag it loudly.
-  const PAIR_RANGES = {
-    EURUSD: [0.95, 1.30], EURAUD: [1.40, 1.80], EURCHF: [0.85, 1.05], EURGBP: [0.78, 0.95],
-    EURJPY: [145, 185], USDCHF: [0.75, 1.00], USDJPY: [130, 172], USDCAD: [1.25, 1.52],
-    GBPUSD: [1.15, 1.45], AUDUSD: [0.55, 0.75], NZDUSD: [0.52, 0.70], AUDJPY: [82, 118],
-    NZDJPY: [78, 104], CADJPY: [96, 126], GBPJPY: [172, 215], CHFJPY: [152, 195],
-    AUDNZD: [1.02, 1.18], EURNZD: [1.65, 2.00], GBPAUD: [1.80, 2.10], AUDCAD: [0.85, 1.03],
-  };
-  const plausible = (pair, px) => { const r = PAIR_RANGES[normPair(pair)]; return !r || (px >= r[0] && px <= r[1]); };
-  for (const pos of seen) {
-    const px = num(pos.entry);
-    if (px == null) continue;
-    if (plausible(pos.pair, px)) continue;
-    const base = normPair(pos.pair).slice(0, 3);
-    const candidates = Object.keys(PAIR_RANGES).filter((k) => px >= PAIR_RANGES[k][0] && px <= PAIR_RANGES[k][1]);
-    const sameBase = candidates.filter((k) => k.startsWith(base));
-    // Auto-correct ONLY the unambiguous classic misread: same base currency, exactly one
-    // candidate, and the read pair is genuinely far outside its band (not a rounding edge).
-    const r = PAIR_RANGES[normPair(pos.pair)];
-    const farOutside = r ? (px < r[0] * 0.9 || px > r[1] * 1.1) : true;
-    if (sameBase.length === 1 && farOutside) {
-      report.pairFixes.push({ was: pos.pair, now: sameBase[0], entry: px, auto: true, note: `${pos.pair} entry ${px} is far outside its range and matches ${sameBase[0]} exactly (same base currency) — auto-corrected as a likely screenshot misread. VERIFY on your platform.` });
-      pos.pair = sameBase[0];
-    } else {
-      // ambiguous or edge case: FLAG, never mutate. Let the user confirm.
-      pos.pairSuspect = true;
-      report.pairFixes.push({ was: pos.pair, now: null, entry: px, auto: false, note: `${pos.pair} entry ${px} looks unusual for ${pos.pair}${candidates.length ? ` (fits ${candidates.join('/')})` : ''}. NOT changed — verify the pair on your platform; the desk will hold judgement on it.` });
-    }
-  }
+  // PAIR-PLAUSIBILITY GUARD (see pairGuard / PAIR_RANGES above). Auto-corrections and
+  // flag-only entries both land in report.pairFixes, each tagged with `auto` so the UI can
+  // keep "we changed this" separate from "please check this".
+  report.pairFixes.push(...pairGuard(seen));
 
   // Sign sanity check for floating P/L: for a BUY, price above entry should mean a POSITIVE
   // float (below entry, negative); for a SELL the reverse. A clear contradiction likely means

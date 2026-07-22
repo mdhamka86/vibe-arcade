@@ -30,10 +30,40 @@ if (!ENGINE_PATH) {
 }
 const ENGINE_SRC = fs.readFileSync(ENGINE_PATH, 'utf8');
 
+// The pair-guard banner lives in the UI, and its counting is part of the guard's safety
+// contract (see section 1b), so the suite reads that file too. Located the same portable way.
+function locateUI() {
+  const here = __dirname;
+  const candidates = [
+    path.join(here, '..', 'public', 'terminal.html'),
+    path.join(here, 'terminal.html'),
+    path.join(here, '..', 'terminal.html'),
+  ];
+  for (const c of candidates) { try { if (fs.existsSync(c)) return c; } catch (e) { /* keep looking */ } }
+  return null;
+}
+const UI_PATH = locateUI();
+const UI_SRC = UI_PATH ? fs.readFileSync(UI_PATH, 'utf8') : null;
+
 // extract the real guard functions from the engine source (single source of truth — we test
 // the SHIPPED code, not a hand-copied duplicate). If the engine's shape changes, this notices.
 function buildGuards(src) {
   const grab = (re) => { const m = src.match(re); return m ? m[0] : ''; };
+  // For the pair guard specifically, a silent miss is worse than a crash: the suite would
+  // still print a row of green ticks while testing nothing at all. That is exactly what
+  // happened before — fixPairFor was a hand-written copy of the engine's inline loop, so
+  // every assertion below passed against a duplicate that the shipped code had no link to.
+  // If the engine's shape changes, say so and stop.
+  const grabReq = (re, what) => {
+    const m = src.match(re);
+    if (!m) {
+      console.error(`\n  ✗ Could not extract ${what} from the engine — its shape has changed.`);
+      console.error('    The pair-guard checks would be testing nothing, so this is a hard stop.');
+      console.error('    Fix the extraction regex in buildGuards() to match the engine, then re-run.');
+      process.exit(3);
+    }
+    return m[0];
+  };
   let out = '';
   out += grab(/function num\(v\) \{[\s\S]*?\n\}\n/);
   out += grab(/const normPair = [^\n]+\n/);
@@ -41,11 +71,12 @@ function buildGuards(src) {
   out += grab(/function parseMT5Time[\s\S]*?\n\}\n/);
   out += grab(/function ticketId\(p\) \{[\s\S]*?\n\}\n/);
   out += grab(/function samePos\(a, b, tolerant\) \{[\s\S]*?\n\}\n/);
-  out += grab(/const PAIR_RANGES = \{[\s\S]*?\};\n/);
-  out += grab(/const plausible = [^\n]+\n/);
+  out += grabReq(/const PAIR_RANGES = \{[\s\S]*?\};\n/, 'PAIR_RANGES');
+  out += grabReq(/const plausible = [^\n]+\n/, 'plausible()');
   out += grab(/function refFor[\s\S]*?\n\}\n/);
-  out += `function fixPairFor(pos){const px=num(pos.entry);if(px==null)return {...pos};if(plausible(pos.pair,px))return {...pos};const base=normPair(pos.pair).slice(0,3);const candidates=Object.keys(PAIR_RANGES).filter((k)=>px>=PAIR_RANGES[k][0]&&px<=PAIR_RANGES[k][1]);const sameBase=candidates.filter((k)=>k.startsWith(base));const r=PAIR_RANGES[normPair(pos.pair)];const farOutside=r?(px<r[0]*0.9||px>r[1]*1.1):true;if(sameBase.length===1&&farOutside)return {...pos,pair:sameBase[0],_fixed:true};return {...pos};}`;
-  out += `\nmodule.exports={num,normPair,pipSize,parseMT5Time,ticketId,samePos,PAIR_RANGES,plausible,fixPairFor,refFor};`;
+  // THE REAL SHIPPED GUARD, both branches — not a reimplementation of one of them.
+  out += grabReq(/function pairGuard\(positions\) \{[\s\S]*?\n\}\n/, 'pairGuard()');
+  out += `\nmodule.exports={num,normPair,pipSize,parseMT5Time,ticketId,samePos,PAIR_RANGES,plausible,pairGuard,refFor};`;
   const Module = require('module');
   const m = new Module();
   m._compile(out, ENGINE_PATH + '#guards');
@@ -70,11 +101,28 @@ function floatSignWrong(screen) {
   return (inProfit && fl < 0) || (!inProfit && fl > 0);
 }
 
+// ---- drive the REAL shipped guard on one position ----
+// pairGuard mutates the book and returns what it did, so a single-position run tells us
+// three things the old _fixed boolean could not: whether the pair was rewritten, whether it
+// was merely flagged, and what the user is actually shown.
+function runGuard(pos) {
+  const p = { ...pos };
+  const fix = G.pairGuard([p])[0] || null;
+  return {
+    pos: p, fix, pair: p.pair,
+    corrected: !!(fix && fix.auto),     // engine rewrote the pair
+    flagged: !!(fix && !fix.auto),      // engine refused to rewrite and asked the user
+    note: fix ? fix.note : '',
+  };
+}
+
 console.log('\n=== 1. PAIR MISREAD GUARD (the EURAUD danger) ===');
 // The exact bug you hit
 check('EURAUD read as EURUSD @1.63669 → corrected to EURAUD',
-  G.fixPairFor({pair:'EURUSD',entry:1.63669})._fixed && G.fixPairFor({pair:'EURUSD',entry:1.63669}).pair==='EURAUD');
-// Every real pair at a real price must be LEFT ALONE (no false corrections)
+  runGuard({pair:'EURUSD',entry:1.63669}).corrected && runGuard({pair:'EURUSD',entry:1.63669}).pair==='EURAUD');
+// Every real pair at a real price must be LEFT ALONE — and note this now asserts NO fix at
+// all, not merely "not auto-corrected". A spurious amber flag on a genuine position is the
+// failure mode that trains the user to ignore the banner.
 const realBook = [
   ['EURUSD',1.1421],['EURAUD',1.6367],['EURCHF',0.9252],['USDCHF',0.8075],
   ['GBPUSD',1.2680],['USDJPY',157.30],['AUDUSD',0.6550],['NZDUSD',0.5980],
@@ -82,16 +130,79 @@ const realBook = [
   ['NZDJPY',94.0],['CADJPY',114.6],['EURGBP',0.8510],['CHFJPY',175.2],
 ];
 for (const [pair,px] of realBook) {
-  check(`real ${pair}@${px} left untouched`, !G.fixPairFor({pair,entry:px})._fixed);
+  check(`real ${pair}@${px} left untouched`, !runGuard({pair,entry:px}).fix);
 }
 // Known cross-currency misreads that SHOULD correct
-check('USDCHF misread, entry 1.372 → USDCAD', G.fixPairFor({pair:'USDCHF',entry:1.372}).pair==='USDCAD');
-check('AUDUSD misread as AUDJPY-range stays sensible', !G.fixPairFor({pair:'AUDUSD',entry:0.655})._fixed);
+check('USDCHF misread, entry 1.372 → USDCAD', runGuard({pair:'USDCHF',entry:1.372}).pair==='USDCAD');
+check('AUDUSD misread as AUDJPY-range stays sensible', !runGuard({pair:'AUDUSD',entry:0.655}).corrected);
 // A price that fits NO pair should NOT be force-changed (safety: don't guess wildly)
-check('nonsense entry 999 not force-corrected', !G.fixPairFor({pair:'EURUSD',entry:999})._fixed);
+check('nonsense entry 999 not force-corrected', !runGuard({pair:'EURUSD',entry:999}).corrected);
 // null / missing entry must not crash or change
-check('null entry safe', !G.fixPairFor({pair:'EURUSD',entry:null})._fixed);
-check('missing entry safe', G.fixPairFor({pair:'EURUSD'}) && !G.fixPairFor({pair:'EURUSD'})._fixed);
+check('null entry safe', !runGuard({pair:'EURUSD',entry:null}).fix);
+check('missing entry safe', runGuard({pair:'EURUSD'}) && !runGuard({pair:'EURUSD'}).fix);
+
+console.log('\n=== 1b. PAIR GUARD: FLAG-ONLY BRANCH + BANNER COUNTING ===');
+// The auto:false branch had NO coverage at all — the old suite reimplemented only the
+// auto-correct path, so nothing checked that an ambiguous read is left alone, and nothing
+// checked what the banner then claims about it.
+
+// (a) fits nothing at all -> flag, never rewrite
+{
+  const r = runGuard({pair:'EURUSD',entry:999});
+  check('unfittable price is FLAGGED, not corrected', r.flagged && !r.corrected);
+  check('unfittable price leaves pair untouched', r.pair==='EURUSD');
+  check('unfittable price sets pairSuspect', r.pos.pairSuspect===true);
+  check('flag note says NOT changed', /NOT changed/.test(r.note));
+}
+// (b) AMBIGUOUS: more than one same-base candidate fits -> must flag, never guess.
+// AUD@1.10 sits in both AUDNZD and AUDCAD, so there is no single honest answer.
+{
+  const r = runGuard({pair:'AUDUSD',entry:1.10});
+  check('ambiguous multi-candidate read is flagged', r.flagged && !r.corrected);
+  check('ambiguous read leaves pair untouched', r.pair==='AUDUSD');
+  check('ambiguous note lists the candidates', /fits .*AUD/.test(r.note));
+}
+// (c) EDGE, not impossible: just outside the band but inside the 10% farOutside margin.
+// A rounding-edge read must never be silently rewritten.
+{
+  const r = runGuard({pair:'EURUSD',entry:1.35});
+  check('near-edge price flagged, not corrected', r.flagged && !r.corrected);
+  check('near-edge price leaves pair untouched', r.pair==='EURUSD');
+}
+// (d) THE BANNER CONTRACT. pairFixes mixes both kinds; the header must count them apart.
+// This is the regression: a sync that changed NOTHING must not claim a correction.
+{
+  const book = [
+    {pair:'EURUSD',entry:1.63669},  // auto-correctable -> EURAUD
+    {pair:'EURUSD',entry:999},      // flag only
+    {pair:'GBPUSD',entry:1.2680},   // clean, no entry in pairFixes at all
+  ];
+  const fixes = G.pairGuard(book);
+  const auto = fixes.filter(f=>f.auto), flagged = fixes.filter(f=>!f.auto);
+  check('mixed book yields 2 pairFixes entries', fixes.length===2);
+  check('mixed book: exactly 1 auto-correction', auto.length===1);
+  check('mixed book: exactly 1 flag', flagged.length===1);
+  check('clean position produced no entry', !fixes.some(f=>f.was==='GBPUSD'));
+  check('auto entry names its replacement', auto[0].now==='EURAUD');
+  check('flag entry has no replacement', flagged[0].now===null);
+  // the headline number the OLD banner printed was fixes.length (2) under the word
+  // "Corrected" — which was wrong by one here, and wrong by ALL in the flag-only case:
+  const flagOnly = G.pairGuard([{pair:'EURUSD',entry:999}]);
+  check('flag-only sync reports ZERO corrections', flagOnly.filter(f=>f.auto).length===0);
+  check('flag-only sync still reports 1 to verify', flagOnly.filter(f=>!f.auto).length===1);
+}
+// (e) the UI must actually do that split, not merely be able to.
+{
+  check('terminal.html locatable', !!UI_SRC);
+  if (UI_SRC) {
+    check('banner no longer counts the whole array as corrected',
+      !/Corrected \{report\.pairFixes\.length\}/.test(UI_SRC));
+    check('banner splits pairFixes on f.auto', /pairFixes[\s\S]{0,220}filter\(f=>f\.auto\)/.test(UI_SRC));
+    check('banner has a separate verify heading', /to verify/.test(UI_SRC));
+    check('verify heading avoids the word "Corrected"',
+      !/Corrected \{(flagged|fixes)\.length\}/.test(UI_SRC));
+  }
+}
 
 console.log('\n=== 2. FLOATING P/L SIGN GUARD (winner shown as loser) ===');
 // BUY above entry but negative float = misread → flag
@@ -148,11 +259,16 @@ const parsed = [
   {pair:'EURCHF',direction:'SELL',lots:0.04,entry:0.92516,sl:0.92850,tp:0.91900,floating:5.14},
   {pair:'USDCHF',direction:'BUY',lots:0.05,entry:0.80751,sl:0.80300,tp:0.81450,floating:10.94},
 ];
-const corrected = parsed.map(p=>G.fixPairFor(p));
+// run the guard exactly the way actSync does: ONE call across the whole parsed book
+const corrected = parsed.map(p=>({...p}));
+const bookFixes = G.pairGuard(corrected);
 check('position 1 corrected to EURAUD', corrected[0].pair==='EURAUD');
 check('position 2 stays EURCHF', corrected[1].pair==='EURCHF');
 check('position 3 stays USDCHF', corrected[2].pair==='USDCHF');
 check('corrected EURAUD entry now plausible', G.plausible('EURAUD',1.63669));
+check('3-position book produced exactly 1 pairFix', bookFixes.length===1);
+check('and the banner would call it 1 correction', bookFixes.filter(f=>f.auto).length===1);
+check('with nothing left to verify', bookFixes.filter(f=>!f.auto).length===0);
 // SIGN GUARD SAFETY: with NO current price present, the guard must NOT fire — it has nothing
 // to compare against and must never flip a shown profit on incomplete data.
 check('sign guard silent when no current price (pos1)', !floatSignWrong(corrected[0]));
@@ -163,12 +279,13 @@ console.log('\n=== 8. ADVERSARIAL: things that MUST NOT trigger a false BROKEN =
 // SIGN GUARD must FLAG a discrepancy but is designed NEVER to silently flip the float
 // (engine keeps the colour-read value; verified by code review + the no-current-price cases above).
 // a healthy position with a slightly odd but valid price
-check('valid GBPUSD 1.19 (low end) not corrected', !G.fixPairFor({pair:'GBPUSD',entry:1.19})._fixed);
-check('valid USDJPY 165 (high end) not corrected', !G.fixPairFor({pair:'USDJPY',entry:165})._fixed);
+// these now assert NO fix at all — not flagged either, since a real price must be silent
+check('valid GBPUSD 1.19 (low end) not corrected', !runGuard({pair:'GBPUSD',entry:1.19}).fix);
+check('valid USDJPY 165 (high end) not corrected', !runGuard({pair:'USDJPY',entry:165}).fix);
 // a JPY pair whose price would look "impossible" to a non-JPY reader but is fine
-check('USDJPY 157 stays (not mistaken for a 1.x pair)', !G.fixPairFor({pair:'USDJPY',entry:157})._fixed);
+check('USDJPY 157 stays (not mistaken for a 1.x pair)', !runGuard({pair:'USDJPY',entry:157}).fix);
 // exotic not in table → left alone rather than mis-corrected
-check('unknown pair TRYJPY left alone (no range)', !G.fixPairFor({pair:'TRYJPY',entry:4.85})._fixed);
+check('unknown pair TRYJPY left alone (no range)', !runGuard({pair:'TRYJPY',entry:4.85}).fix);
 
 console.log('\n============================================================');
 console.log(`RESULT: ${pass} passed, ${fail} failed`);
@@ -182,9 +299,9 @@ console.log('============================================================');
 // ============================================================================
 console.log('\n=== 9. AUDIT REGRESSIONS (Kepler) ===');
 // Finding 5: a real AUDJPY at 112.40 must NOT be mutated (widened range)
-check('AUDJPY @112.40 not mutated (was silently → CADJPY)', !G.fixPairFor({pair:'AUDJPY',entry:112.40})._fixed);
-check('AUDJPY @117 (high edge) not mutated', !G.fixPairFor({pair:'AUDJPY',entry:117})._fixed);
-check('CADJPY @101 not mutated', !G.fixPairFor({pair:'CADJPY',entry:101})._fixed);
+check('AUDJPY @112.40 not mutated (was silently → CADJPY)', !runGuard({pair:'AUDJPY',entry:112.40}).fix);
+check('AUDJPY @117 (high edge) not mutated', !runGuard({pair:'AUDJPY',entry:117}).fix);
+check('CADJPY @101 not mutated', !runGuard({pair:'CADJPY',entry:101}).fix);
 // but a genuine gross misread still caught
 check('EURUSD @1.63 still flagged (real EURAUD misread)', !G.plausible('EURUSD',1.63));
 // parseMT5Time rejects impossible dates
@@ -262,6 +379,28 @@ check('engine has consumeMatch', src.includes('consumeMatch'));
 check('engine has partialShot guard', src.includes('partialShot'));
 check('engine has evidence convergence', src.includes('articleConcernsPair'));
 check('engine has freshness check', src.includes('isFresh'));
+
+console.log('\n=== 13. RANGE FRESHNESS (bands re-centred 22/07/2026) ===');
+// Spot rates from ECB daily (frankfurter.dev, 21/07/2026) — the same feed refRates() falls
+// back to. Every one of these is a price a user can genuinely be holding, so ANY fix raised
+// here is a false alarm on a real position. Four of these were breaching their old bands at
+// once, GBPJPY worst: 218.08 against a 215 ceiling, which is the report that started this.
+const spotJul2026 = [
+  ['GBPJPY',218.08], ['EURJPY',185.82], ['CHFJPY',200.69], ['AUDNZD',1.2001],
+  ['USDJPY',162.74], ['AUDJPY',114.16], ['EURNZD',1.9533], ['AUDCAD',0.9872],
+];
+for (const [pair,px] of spotJul2026) check(`spot ${pair}@${px} raises nothing`, !runGuard({pair,entry:px}).fix);
+// ...but a widened band is only safe if genuine nonsense STILL lands. Widening everything
+// until nothing trips would leave the amber banner technically present and useless.
+check('GBPJPY @21.8 (decimal slip) still caught', !!runGuard({pair:'GBPJPY',entry:21.8}).fix);
+check('AUDNZD @2.50 still caught', !!runGuard({pair:'AUDNZD',entry:2.50}).fix);
+check('CHFJPY @95 still caught', !!runGuard({pair:'CHFJPY',entry:95}).fix);
+check('EURUSD @1.63 still implausible (the flagship misread)', !G.plausible('EURUSD',1.63));
+// COUPLING, deliberate and fragile: EURNZD's floor (1.66) sits just above 1.63669, and that
+// is what keeps the flagship EURAUD auto-correct UNAMBIGUOUS — one same-base candidate
+// rather than two. Drop that floor below 1.63669 and the EURAUD case silently degrades from
+// a correction to a flag. This assertion exists so that fails loudly instead of quietly.
+check('EURNZD floor stays above the EURAUD misread price', !G.plausible('EURNZD',1.63669));
 
 console.log('\n============================================================');
 console.log(`GRAND TOTAL: ${pass} passed, ${fail} failed`);

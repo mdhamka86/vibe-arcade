@@ -541,11 +541,27 @@ function Book({state,refresh}){
           {report.signFlags.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}
           <div style={{marginTop:5}} className="dim">These kept the value MT5's colour showed. Verify on your platform if unsure.</div>
         </div>}
-        {report.pairFixes?.length>0 && <div className="alertbox a-amber">
-          <div style={{fontWeight:700,marginBottom:4}}>Corrected {report.pairFixes.length} misread pair{report.pairFixes.length>1?'s':''} (entry price didn't fit the pair):</div>
-          {report.pairFixes.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}
-          <div style={{marginTop:5}} className="dim">If any looks wrong, re-sync a clearer screenshot.</div>
-        </div>}
+        {/* pairFixes carries TWO different claims and they must never share a count: auto:true
+            means the engine rewrote the pair, auto:false means it deliberately did NOT and
+            wants you to check. Counting them together let a sync that changed nothing announce
+            "Corrected 1 misread pair" above a bullet reading "NOT changed" — the guard's whole
+            safety property is that it doesn't silently rewrite, so the banner was undoing it. */}
+        {(() => {
+          const fixes = report.pairFixes || [];
+          const auto = fixes.filter(f=>f.auto), flagged = fixes.filter(f=>!f.auto);
+          return <>
+            {auto.length>0 && <div className="alertbox a-amber">
+              <div style={{fontWeight:700,marginBottom:4}}>Corrected {auto.length} misread pair{auto.length>1?'s':''} (entry price didn't fit the pair):</div>
+              {auto.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}
+              <div style={{marginTop:5}} className="dim">If any looks wrong, re-sync a clearer screenshot.</div>
+            </div>}
+            {flagged.length>0 && <div className="alertbox a-amber">
+              <div style={{fontWeight:700,marginBottom:4}}>{flagged.length} pair{flagged.length>1?'s':''} to verify — nothing was changed:</div>
+              {flagged.map((f,i)=><div key={i} style={{marginTop:2}}>· {f.note}</div>)}
+              <div style={{marginTop:5}} className="dim">The entry price sits outside this pair's usual range. Check it on your platform; if the pair is right, no action is needed.</div>
+            </div>}
+          </>;
+        })()}
       </>}
 
       {(() => {
