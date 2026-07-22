@@ -158,6 +158,9 @@ const TODAY = '2026-07-22';
     ['generic lead word', 'Power Assets', 'US power grid strained by datacentre demand'],
     ['both words generic', 'First Resources', 'First quarter resources outlook improves'],
     ['suffix-only match', 'Something Holdings', 'Holdings across the sector fell today'],
+    ['place name as lead word', 'Shanghai Airport', 'China stocks slide as Shanghai declines and Shenzhen pares'],
+    ['common noun as company name', 'Target', 'New York lacks authority, calls it a target'],
+    ['shared conglomerate prefix', 'Mitsubishi Electric', 'Mitsubishi Estate sells a Tokyo tower'],
     ['empty story', 'Singapore Airlines', ''],
     ['empty name', '', 'Singapore Airlines lifts load factors'],
   ]) check(`false match rejected: ${label}`, nameMatchesStory(name, story) === false);
@@ -171,6 +174,8 @@ const TODAY = '2026-07-22';
     ['non-English proper noun', 'Kweichow Moutai', 'Kweichow Moutai lifts baijiu prices'],
     ['generic word WITH its qualifier', 'ENN Energy', 'ENN Energy signs long-term LNG supply deal'],
     ['name that is a substring elsewhere', 'Disco Corp', 'Disco shares jump on record chip-tool orders'],
+    ['place-name company, full phrase', 'Shanghai Airport', 'Shanghai Airport reports record passenger throughput'],
+    ['conglomerate, full phrase', 'Mitsubishi Electric', 'Mitsubishi Electric lifts guidance on automation'],
     ['case insensitive', 'Nintendo', 'NINTENDO RAISES FORECAST'],
     ['punctuation between words', 'Sands China', 'Sands-China posts record quarter'],
   ]) check(`genuine match kept: ${label}`, nameMatchesStory(name, story) === true);

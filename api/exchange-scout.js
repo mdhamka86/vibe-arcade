@@ -240,7 +240,17 @@ const GENERIC = new Set(['energy', 'motor', 'motors', 'bank', 'banking', 'financ
   'international', 'national', 'general', 'united', 'american', 'china', 'chinese', 'japan', 'japanese',
   'singapore', 'malaysia', 'malaysian', 'hong', 'kong', 'asia', 'asian', 'pacific', 'global', 'world',
   'first', 'new', 'sun', 'star', 'city', 'land', 'life', 'home', 'auto', 'digital', 'data', 'systems',
-  'solutions', 'services', 'products', 'materials', 'resources', 'partners', 'enterprise', 'enterprises']);
+  'solutions', 'services', 'products', 'materials', 'resources', 'partners', 'enterprise', 'enterprises',
+  // Place names. A story about "Shanghai declines" is market commentary, not company news,
+  // but Shanghai Airport's lead word would happily claim it. Same trap for every city that
+  // appears in a listed company's name.
+  'shanghai', 'shenzhen', 'beijing', 'tokyo', 'osaka', 'seoul', 'taipei', 'york', 'london',
+  'kuala', 'lumpur', 'macau', 'jardine', 'nippon', 'mitsui', 'mitsubishi', 'sumitomo',
+  // Common nouns that happen to be company names. "Target" matching any sentence containing
+  // the word target is a coincidence, not a catalyst.
+  'target', 'gap', 'ford', 'shell', 'total', 'orange', 'apple', 'amazon', 'block', 'match',
+  'union', 'public', 'central', 'eastern', 'western', 'northern', 'southern', 'great', 'grand',
+  'seven', 'eleven', 'next', 'now', 'open', 'square', 'summit', 'peak', 'bridge', 'gateway']);
 
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
