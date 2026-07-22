@@ -208,18 +208,13 @@ async function catalysts(names, dateKey) {
     }
   }
 
-  // News-derived, all markets. Matching on company name rather than ticker: an SGX code like
+  // News-derived, all markets. Matching on company NAME rather than ticker: an SGX code like
   // C6L never appears in a headline, but "Singapore Airlines" does.
   let wire = [];
   try { wire = await getNews('market'); } catch { wire = []; }
   for (const n of names) {
     if (found[n.code]) continue; // a dated calendar event outranks a headline
-    const key = firstMeaningfulWord(n.name);
-    if (!key) continue;
-    const hit = wire.find((it) => {
-      const hay = `${it.title || ''} ${it.desc || ''}`.toLowerCase();
-      return hay.includes(n.name.toLowerCase()) || (key.length > 4 && hay.includes(key));
-    });
+    const hit = wire.find((it) => nameMatchesStory(n.name, `${it.title || ''} ${it.desc || ''}`));
     if (hit) {
       const when = hit.ts ? new Date(hit.ts).toISOString().slice(0, 10) : dateKey;
       found[n.code] = {
@@ -231,12 +226,55 @@ async function catalysts(names, dateKey) {
   return found;
 }
 
-function firstMeaningfulWord(name) {
-  const skip = new Set(['the', 'china', 'hong', 'japan', 'singapore', 'malaysia', 'bank', 'group', 'holdings', 'corp', 'company', 'international', 'national']);
-  for (const w of String(name || '').toLowerCase().split(/[^a-z]+/)) {
-    if (w.length > 3 && !skip.has(w)) return w;
+// Corporate furniture that carries no identifying information.
+const SUFFIXES = new Set(['corp', 'corporation', 'inc', 'incorporated', 'ltd', 'limited', 'plc', 'co',
+  'company', 'holdings', 'holding', 'group', 'bhd', 'berhad', 'reit', 'trust', 'sa', 'ag', 'nv', 'the']);
+// Words common enough that a match on them alone means nothing. "ENN Energy" matching a
+// story about "X Energy" is not a catalyst, it is a coincidence.
+const GENERIC = new Set(['energy', 'motor', 'motors', 'bank', 'banking', 'financial', 'finance', 'technology',
+  'technologies', 'industries', 'industrial', 'electric', 'electronics', 'chemical', 'chemicals', 'steel',
+  'power', 'gas', 'oil', 'mining', 'pharma', 'pharmaceutical', 'pharmaceuticals', 'biosciences', 'health',
+  'healthcare', 'medical', 'insurance', 'securities', 'capital', 'investment', 'investments', 'properties',
+  'property', 'development', 'developments', 'construction', 'engineering', 'airlines', 'airways', 'air',
+  'telecom', 'telecommunications', 'communications', 'media', 'retail', 'foods', 'food', 'beverage',
+  'international', 'national', 'general', 'united', 'american', 'china', 'chinese', 'japan', 'japanese',
+  'singapore', 'malaysia', 'malaysian', 'hong', 'kong', 'asia', 'asian', 'pacific', 'global', 'world',
+  'first', 'new', 'sun', 'star', 'city', 'land', 'life', 'home', 'auto', 'digital', 'data', 'systems',
+  'solutions', 'services', 'products', 'materials', 'resources', 'partners', 'enterprise', 'enterprises']);
+
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// FALSE-CATALYST GUARD (22/07/2026). The first version of this matched substrings against
+// the first word over three letters, and production immediately produced nonsense: ENN
+// Energy matched a story about "X Energy" purely on the word energy, and Disco Corp matched
+// a Capital One story because "disco" is a substring of "Discover". A fabricated catalyst is
+// worse than none — it inflates the name's rank AND can be handed to the model as evidence.
+//
+// So: strip corporate furniture, then require either the full remaining phrase or, for
+// single-word names, a distinctive word matched on WORD BOUNDARIES. Generic industry words
+// never qualify on their own.
+export function nameMatchesStory(companyName, story) {
+  const hay = String(story || '').toLowerCase();
+  if (!hay) return false;
+  const words = String(companyName || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const core = words.filter((w) => !SUFFIXES.has(w));
+  if (!core.length) return false;
+
+  // Multi-word names: require the whole phrase, so "Sands China" cannot be satisfied by a
+  // story that merely mentions China.
+  if (core.length >= 2) {
+    const phrase = new RegExp(`\\b${core.map(esc).join('[^a-z0-9]{1,3}')}\\b`, 'i');
+    if (phrase.test(hay)) return true;
+    // A distinctive leading word still counts (Tencent Holdings -> "Tencent"), but only if
+    // it is not generic and is long enough to be a real name.
+    const lead = core[0];
+    if (lead.length >= 5 && !GENERIC.has(lead)) return new RegExp(`\\b${esc(lead)}\\b`, 'i').test(hay);
+    return false;
   }
-  return null;
+
+  const only = core[0];
+  if (only.length < 5 || GENERIC.has(only)) return false;
+  return new RegExp(`\\b${esc(only)}\\b`, 'i').test(hay);
 }
 
 // ---------- Stage 4: rank ----------

@@ -138,6 +138,43 @@ const TODAY = '2026-07-22';
   check('carried-forward signals are labelled stale', /carried from the last full sweep/.test(shortlistBlock([{ ...ranked[0], stale: true }])));
 
   // ---------------------------------------------------------------------------
+  console.log('=== 5b. FALSE-CATALYST GUARD ===');
+  // Every case below was produced by the FIRST live production sweep. The original matcher
+  // took the first word over three letters and substring-matched it, which is how ENN Energy
+  // acquired a catalyst from a story about "X Energy", and Disco Corp from a Capital One
+  // story containing "Discover". A fabricated catalyst is worse than none: it inflates the
+  // name's rank and is then handed to the model as evidence.
+  const { nameMatchesStory } = S;
+  if (typeof nameMatchesStory !== 'function') {
+    console.error('nameMatchesStory is no longer exported — the false-catalyst guard would be untested. Hard stop.');
+    process.exit(3);
+  }
+  for (const [label, name, story] of [
+    ['generic industry word', 'ENN Energy', 'Why is X Energy stock rallying after-hours today?'],
+    ['substring of a longer word', 'Disco Corp', 'Capital One earnings did not answer the Discover question'],
+    ['country word only', 'Sands China', 'Nike to tighten online sales in China amid fragmented market'],
+    ['unrelated story', 'Seven & i', 'Chinese EV maker XPeng hunts for new markets'],
+    ['common noun', 'China Life', 'Life expectancy rises in new study'],
+    ['generic lead word', 'Power Assets', 'US power grid strained by datacentre demand'],
+    ['both words generic', 'First Resources', 'First quarter resources outlook improves'],
+    ['suffix-only match', 'Something Holdings', 'Holdings across the sector fell today'],
+    ['empty story', 'Singapore Airlines', ''],
+    ['empty name', '', 'Singapore Airlines lifts load factors'],
+  ]) check(`false match rejected: ${label}`, nameMatchesStory(name, story) === false);
+
+  for (const [label, name, story] of [
+    ['full multi-word name', 'Singapore Airlines', 'Singapore Airlines lifts load factors in June traffic update'],
+    ['distinctive lead word', 'Tencent Holdings', 'Tencent shares slide as Beijing tightens gaming rules'],
+    ['multi-word, genuine', 'Sands China', 'Sands China reports higher mass-market GGR in Macau'],
+    ['single distinctive word', 'XPeng', 'Chinese EV maker XPeng hunts for new markets'],
+    ['single word, long', 'Nintendo', 'Nintendo raises full-year forecast on Switch demand'],
+    ['non-English proper noun', 'Kweichow Moutai', 'Kweichow Moutai lifts baijiu prices'],
+    ['generic word WITH its qualifier', 'ENN Energy', 'ENN Energy signs long-term LNG supply deal'],
+    ['name that is a substring elsewhere', 'Disco Corp', 'Disco shares jump on record chip-tool orders'],
+    ['case insensitive', 'Nintendo', 'NINTENDO RAISES FORECAST'],
+    ['punctuation between words', 'Sands China', 'Sands-China posts record quarter'],
+  ]) check(`genuine match kept: ${label}`, nameMatchesStory(name, story) === true);
+
   console.log('=== 6. ON-LIST GATE (mutation) ===');
   const onList = new Set(['AAA', 'BBB']);
   const okCat = (d, verified = false) => catalystCheck(
