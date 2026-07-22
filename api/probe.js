@@ -46,9 +46,14 @@ export default async (req, res) => {
     // runs 6-9KB — so at 8000 roughly three courses a day came back unparseable, silently
     // dropped out of the candidate pool, and made a sound matcher look 63% accurate.
     // A scouting tool that truncates the document you are scouting answers the wrong
-    // question. 400000 covers the programme whole with room to spare and stays far under
-    // the ~4.5MB response ceiling. Still key-guarded; still deliberately temporary.
-    const maxSnip = Math.min(parseInt(u.searchParams.get("max") || "600", 10) || 600, 400000);
+    // question. Still key-guarded; still deliberately temporary.
+    //
+    // 400000 was the first attempt and it was measured too finely: PMU's 15/07 programme
+    // is 416921 bytes and came back 4% short, which is the same silent-truncation failure
+    // one order of magnitude up. A ceiling picked to just fit today's biggest document is
+    // a ceiling that breaks on a busy Saturday. 2000000 leaves real headroom and is still
+    // well under the ~4.5MB response limit.
+    const maxSnip = Math.min(parseInt(u.searchParams.get("max") || "600", 10) || 600, 2000000);
     const ms = Math.min(parseInt(u.searchParams.get("ms") || "15000", 10) || 15000, 30000);
 
     const ctrl = new AbortController();
