@@ -319,6 +319,217 @@ function parseDistM(d) {
   return m ? parseInt(m[1], 10) : 0;
 }
 
+// ============================================================================
+// FRANCE: the PMU racecard adapter (FR ONLY — no other region is touched)
+// ============================================================================
+// WHY THIS EXISTS. The three French adapters above are dateless, trackless index
+// pages: prono-turf-gratuit/presse-pmu, frequence-turf, canalturf. They serve
+// whatever meeting the site is featuring, which is not the meeting SGPools carded,
+// so on 22/07/2026 all three named 0 of 86 card runners and France went SSOT-blind.
+// Nothing chose a meeting; the sites did. This adapter chooses.
+//
+// PMU's API is date-addressable (/programme/DDMMYYYY) and meeting-addressable
+// (/R{n}/C{n}), returns structured runners, and is the same host pmuPrices already
+// depends on. It is reachable from syd1 (it is CloudFront-geo-blocked from a dev
+// box, which is why this was scouted through /api/probe rather than locally).
+//
+// WHAT IT IS AND IS NOT: this is a CARD source. It verifies and enriches the
+// coupon — runners, distances, race titles, start times — and it carries no
+// opinion. It is marked kind:"card" so a convergence rule can tell it apart from a
+// tipster. It does NOT emit PMU horse numbers: SGPools numbering is the single
+// source of truth for what the number means, and carrying PMU's numbering across
+// is precisely the trap that put money on FAIRY KNIGHT instead of Sooty on 17/07.
+const PMU_PROGRAMME = "https://online.turfinfo.api.pmu.fr/rest/client/61/programme/";
+
+// Flatten a day's programme into a flat, start-time-ordered course list.
+function pmuCoursesFromProgramme(prog) {
+  const out = [];
+  for (const r of ((prog || {}).programme || {}).reunions || []) {
+    const hip = r.hippodrome || {};
+    for (const c of r.courses || []) {
+      out.push({
+        R: r.numOfficiel,
+        C: c.numOrdre,
+        hippo: hip.libelleLong || hip.libelleCourt || "?",
+        pays: (r.pays && r.pays.code) || "",
+        dist: c.distance || 0,
+        partants: c.nombreDeclaresPartants || 0,
+        startMs: c.heureDepart || 0,
+        discipline: c.discipline || "",
+        libelle: c.libelle || "",
+      });
+    }
+  }
+  return out.sort((a, b) => a.startMs - b.startMs);
+}
+
+// Match each SGPools race to one PMU course. `getNames(R, C)` is injected so the
+// safety suite drives this exact function without touching the network.
+//
+// NAMES DECIDE. Distance and declared-runner count are a PREFILTER only, to avoid
+// paying for participants on all ~60 courses. They are NOT a matching signal:
+// verified across 16 days, réunion R2 at La Teste on 11/07 ran FOUR 1900m races
+// (C3:7, C4:6, C5:6, C6:7 runners) and only C6 was the SGPools race. An earlier
+// build matched on distance+field size and picked C3 — a confident, silent, wrong
+// answer, which then dragged every later race out of alignment and cost five more
+// on 08/07. This is the same law pmuPrices already follows and the same law the
+// SSOT gate applies to every other source: >=50% of the card's runners by name.
+//
+// Coupon order is deliberately NOT an invariant. 08/07 matched 14/14 races at 100%
+// of names with the assignments out of start-time order — SGPools numbers its
+// coupon its own way. Ordering is reported for diagnosis and never gates anything.
+async function matchCard(sgRaces, courses, getNames, opts) {
+  const o = opts || {};
+  const FLOOR = o.floor == null ? 0.5 : o.floor;   // house law: >=50% by name
+  const SLACK = o.slack == null ? 2 : o.slack;     // declared vs carded runners
+  const MAX_TRY = o.maxTry == null ? 8 : o.maxTry; // candidates tried per race
+  const BUDGET = o.budget == null ? 40 : o.budget; // total participants fetches
+  const assigned = [];
+  const unresolved = [];
+  const used = new Set();
+  let fetches = 0;
+
+  for (const sr of sgRaces || []) {
+    const d = parseDistM(sr.dist);
+    const n = sr.fieldSize || (sr.runners || []).length || 0;
+    const runners = sr.runners || [];
+    if (!runners.length) {
+      unresolved.push({ raceNo: sr.raceNo, why: "the SGPools card lists no runners for this race, so there is nothing to match on" });
+      continue;
+    }
+    const fresh = courses.filter((c) => !used.has(c.R + "|" + c.C));
+    let cands = fresh.filter((c) => c.dist === d && Math.abs(c.partants - n) <= SLACK);
+    if (!cands.length) cands = fresh.filter((c) => Math.abs(c.partants - n) <= SLACK);
+    cands = cands
+      .sort((a, b) => Math.abs(a.partants - n) - Math.abs(b.partants - n) || a.startMs - b.startMs)
+      .slice(0, MAX_TRY);
+
+    let best = null;
+    for (const c of cands) {
+      if (fetches >= BUDGET) break;
+      const names = await getNames(c.R, c.C);
+      fetches++;
+      if (!names || !names.length) continue;
+      const overlap = nameOverlap(runners, names);
+      if (!best || overlap > best.overlap) best = { c, overlap, names };
+      if (overlap === 1) break; // perfect — stop paying for more
+    }
+    if (best && best.overlap >= FLOOR) {
+      used.add(best.c.R + "|" + best.c.C);
+      assigned.push({
+        raceNo: sr.raceNo, ...best.c,
+        sgDist: d, sgField: n,
+        overlap: Math.round(best.overlap * 100) / 100,
+        pmuNames: best.names,
+        tried: cands.length,
+      });
+    } else {
+      // LOUD, PER RACE. Never assign below the floor: a wrong course is a bet on a
+      // horse nobody analysed, which is strictly worse than one unmatched race.
+      unresolved.push({
+        raceNo: sr.raceNo, sgDist: d, sgField: n,
+        why: best
+          ? "best of " + cands.length + " candidate(s) was PMU R" + best.c.R + "/C" + best.c.C +
+            " at " + Math.round(best.overlap * 100) + "% runner-name overlap, under the " +
+            Math.round(FLOOR * 100) + "% floor — treated as a different race"
+          : (cands.length
+              ? "none of " + cands.length + " candidate course(s) returned runners"
+              : "no PMU course at " + d + "m with " + n + "±" + SLACK + " runners anywhere in the day's programme"),
+      });
+    }
+  }
+
+  let monotonic = true;
+  for (let i = 1; i < assigned.length; i++)
+    if (assigned[i].startMs < assigned[i - 1].startMs) monotonic = false;
+  const byReunion = {};
+  for (const a of assigned) (byReunion[a.R] = byReunion[a.R] || []).push(a);
+  return {
+    assigned, unresolved, monotonic, fetches,
+    confidence: (sgRaces || []).length ? assigned.length / sgRaces.length : 0,
+    // SGPools France is a COUPON CONTAINER and routinely merges several PMU
+    // réunions (22/07 = R4+R5, 08/07 = R3+R4, 07/07 = R1+R4). Never assume one.
+    reunions: Object.keys(byReunion).map(Number).sort((a, b) => a - b),
+    venues: [...new Set(assigned.map((a) => a.hippo))],
+  };
+}
+
+// Render the matched card as source text for the model + the SSOT gate. Runner
+// NUMBERS are SGPools', never PMU's (see the numbering note above).
+function pmuSourceText(pack, meet, m) {
+  const L = [];
+  L.push("PMU OFFICIAL RACECARD for " + meet.venue + ", card date " + pack.date +
+    " — matched to the SGPools coupon by runner name, race by race.");
+  L.push("Matched " + m.assigned.length + " of " + (meet.raceMap || []).length +
+    " SGPools races across PMU " +
+    (m.reunions.length > 1 ? "reunions " : "reunion ") + m.reunions.map((r) => "R" + r).join(" + ") +
+    " (" + m.venues.join(" + ") + ").");
+  L.push("Horse numbers below are the SGPools card's own. PMU numbering is deliberately not carried across.");
+  for (const a of m.assigned) {
+    const sg = (meet.raceMap || []).find((r) => r.raceNo === a.raceNo) || {};
+    const when = a.startMs ? new Date(a.startMs).toISOString().slice(11, 16) + "Z" : "?";
+    L.push("");
+    L.push("SGPools R" + a.raceNo + " = PMU R" + a.R + "/C" + a.C + "  " + (a.libelle || "") +
+      "  " + a.dist + "m  " + (a.discipline || "") + "  off " + when +
+      "  [" + Math.round(a.overlap * 100) + "% runner-name agreement]");
+    L.push("  " + (sg.runners || []).map((h) => h.no + " " + h.name).join(", "));
+    // Runners PMU declares that the SGPools card does not name, and vice versa —
+    // usually a late scratching, and worth the model seeing rather than hiding.
+    const card = new Set((sg.runners || []).map((h) => normName(h.name)));
+    const extra = (a.pmuNames || []).filter((x) => !card.has(normName(x)));
+    if (extra.length) L.push("  PMU also declares (not on the SGPools card, likely scratched/added): " + extra.join(", "));
+  }
+  for (const u of m.unresolved)
+    L.push("\nSGPools R" + u.raceNo + ": NO PMU COURSE MATCHED — " + u.why);
+  return L.join("\n");
+}
+
+// Build the FR card source for one meet. Returns a source object, or null if the
+// programme itself could not be read (caller then leaves the meet as it was).
+async function pmuFranceSource(pack, meet) {
+  const d = String(pack.date || "").split("/");
+  if (d.length !== 3) return null;
+  const pmuDate = d[0] + d[1] + d[2];
+  const prog = await fetchWithTimeout(PMU_PROGRAMME + pmuDate, 20000, true);
+  if (!prog.ok)
+    return { id: "pmu-racecard", kind: "card", ok: false, error: "PMU programme: " + prog.error, chars: 0, text: "" };
+  const courses = pmuCoursesFromProgramme(prog.body);
+  if (!courses.length)
+    return { id: "pmu-racecard", kind: "card", ok: false, error: "PMU programme carried no courses for " + pack.date, chars: 0, text: "" };
+
+  const cache = {};
+  const getNames = async (R, C) => {
+    const k = R + "|" + C;
+    if (cache[k] !== undefined) return cache[k];
+    const r = await fetchWithTimeout(PMU_PROGRAMME + pmuDate + "/R" + R + "/C" + C + "/participants", 12000, true);
+    return (cache[k] = r.ok && r.body ? (r.body.participants || []).map((p) => p.nom) : null);
+  };
+
+  const sgRaces = (meet.raceMap || []).map((r) => ({
+    raceNo: r.raceNo, dist: r.dist, fieldSize: r.fieldSize, runners: r.runners,
+  }));
+  const m = await matchCard(sgRaces, courses, getNames);
+  const text = pmuSourceText(pack, meet, m);
+  return {
+    id: "pmu-racecard",
+    kind: "card",
+    ok: m.assigned.length > 0,
+    error: m.assigned.length ? null : "PMU carried no course matching any SGPools race on this card",
+    chars: text.length,
+    text: m.assigned.length ? text : "",
+    // structured, for the morning reader and any later price/odds work
+    pmu: {
+      reunions: m.reunions, venues: m.venues, monotonic: m.monotonic,
+      matched: m.assigned.length, of: sgRaces.length, fetches: m.fetches,
+      races: m.assigned.map((a) => ({
+        sgRaceNo: a.raceNo, R: a.R, C: a.C, dist: a.dist,
+        startMs: a.startMs, libelle: a.libelle, overlap: a.overlap,
+      })),
+      unresolved: m.unresolved,
+    },
+  };
+}
+
 // TAB: AU meets. One meetings call, then lazy race fetches gated by distance and
 // capped, with a learned venue+offset shortcut (SGPools integrates venues in
 // contiguous renumbered blocks, so once R5=venue X race 2, R6 is very likely
@@ -663,6 +874,28 @@ async function stageSources(pack) {
     m.sources = (byRegion[m.region] || []).map((s) => ({
       id: s.id, ok: s.ok, error: s.error, chars: s.text.length, text: s.text,
     }));
+
+  // ---- FRANCE ONLY: the PMU racecard, attached PER MEET ----
+  // Everything above is fanned out by REGION, so every meet in a region gets the
+  // identical text — which is why three Australian meets all received the same
+  // racingnsw homepage. This adapter cannot work that way: it matches against THIS
+  // meet's runner map, so it is built per meet and appended after the fan-out.
+  // Scoped to FR by design; no other region's sources are touched.
+  await Promise.all(
+    pack.meets
+      .filter((m) => m.region === "FR")
+      .map(async (m) => {
+        try {
+          const src = await pmuFranceSource(pack, m);
+          if (src) m.sources.push(src);
+        } catch (e) {
+          m.sources.push({
+            id: "pmu-racecard", kind: "card", ok: false,
+            error: "PMU adapter threw: " + String(e.message || e), chars: 0, text: "",
+          });
+        }
+      })
+  );
   // ============================================================================
   // THE SSOT GATE — the SGPools race card is the single source of truth.
   // ============================================================================
@@ -1155,3 +1388,8 @@ export default async (req, res) => {
 // exceeds the classic non-Fluid ceiling of 60s, so it depends on Fluid compute being
 // enabled on this project (as stewards.js's 120 already does).
 export const config = { maxDuration: 300 };
+
+// The France card matcher, exported so the safety suite drives the SHIPPED functions
+// rather than a copy of them. matchCard takes its runner-name lookup by injection
+// precisely so it can be exercised without a network.
+export { matchCard, pmuCoursesFromProgramme, pmuSourceText };
