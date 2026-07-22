@@ -54,6 +54,20 @@ function series({ n = 70, start = 1.1000, drift = 0, range = 0.004, lastClose = 
   return out;
 }
 
+// Run `fn` with globalThis.fetch stubbed to return one canned Anthropic response, so the real
+// scorePairLLM validation path can be exercised without a network call. Restored afterwards
+// even on throw — a leaked stub would silently poison every later check.
+async function withStubbedClaude(payload, fn) {
+  const real = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => (payload === null
+      ? { content: [{ text: 'not json at all' }] }
+      : { content: [{ text: JSON.stringify(payload) }], stop_reason: 'end_turn' }),
+  });
+  try { return await fn(); } finally { globalThis.fetch = real; }
+}
+
 (async function main() {
   const S = await import('file://' + SCREEN_PATH.replace(/\\/g, '/'));
   const C = await import('file://' + CANDLES_PATH.replace(/\\/g, '/'));
@@ -268,13 +282,19 @@ function series({ n = 70, start = 1.1000, drift = 0, range = 0.004, lastClose = 
   check('the screen reads NO forex-brain state (share code, not state)',
     !/forex:(verdict|prices|news|candles|openVerdicts|shadowLedger|journal)/.test(SCREEN_SRC));
   check('the screen DOES reuse forex-brain pure functions',
-    /import \{ computeBox, computeAtr \} from '\.\/forex-brain\.js'/.test(SCREEN_SRC));
+    /import \{ computeBox, computeAtr(, validateVerdict, settleVerdict)? \} from '\.\/forex-brain\.js'/.test(SCREEN_SRC));
+  check('...including its verdict validator and settler for the shadow ledger',
+    /validateVerdict/.test(SCREEN_SRC) && /settleVerdict/.test(SCREEN_SRC));
   check('no import cycle: engine never imports the screen',
     !/from '\.\/terminal-screen\.js'/.test(ENGINE_SRC));
 
   console.log('\n=== 12. OPERATIONAL ===');
   check('screen declares maxDuration 300', /export const config = \{ maxDuration: 300 \}/.test(SCREEN_SRC));
-  check('screen calls no model — it is deterministic', !/anthropic|claude|max_tokens/i.test(SCREEN_SRC));
+  check('screen uses the same model as the forex-brain experiment', /claude-sonnet-4-6/.test(SCREEN_SRC));
+  check('the wall-clock guard stops well inside the 300s cron budget',
+    S.SCREEN_CONFIG && /RUN_BUDGET_MS = 235000/.test(SCREEN_SRC));
+  check('per-pair calls carry their own timeout so one hang cannot eat the budget',
+    /PAIR_CALL_TIMEOUT_MS = \d+/.test(SCREEN_SRC) && /signal: ctl\.signal/.test(SCREEN_SRC));
   check('screen hold ceiling matches the engine HORIZON ceiling',
     S.SCREEN_CONFIG.holdCeilingHours === 96 && /ceilingHours: 96/.test(ENGINE_SRC));
   const vercel = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'vercel.json'), 'utf8'));
@@ -308,8 +328,168 @@ function series({ n = 70, start = 1.1000, drift = 0, range = 0.004, lastClose = 
     skipped('live cross fetches'); skipped('end-to-end scoring');
   }
 
+  console.log('\n=== 14. TWO-STAGE LLM SCORING ===');
+  // Stage 1 is driven through an INJECTED scorer, so the whole loop — concurrency, the deadline
+  // guard, the pass/fail split — is exercised deterministically without a single network call.
+  const detRows = ['EURUSD', 'GBPJPY', 'AUDNZD', 'EURNZD', 'NZDCAD', 'GBPCHF', 'EURCAD'].map((p) =>
+    S.scorePair({ pair: p, d1: p === 'EURUSD' ? flat : up, h1: null, cal, exposure: exp, recentlyProposed: false }));
+  const okScorer = async (row) => ({ ok: true, llm: { score: 50 + (row.pair.charCodeAt(0) % 30), direction: 'BUY', conviction: 'MED', read: 'A perfectly adequate synthetic read for ' + row.pair, keyRisk: 'x', catalystDependency: 'y', entry: 1, tp: 1.1, sl: 0.9 } });
+  const r1 = await S.runStage1(detRows, { news: [], exposureLine: 'FLAT' }, { scorer: okScorer, concurrency: 3 });
+  check('stage 1 scores every pair when all calls succeed', r1.scored.length === detRows.length);
+  check('...and reports nothing unscored', r1.unscored.length === 0);
+  check('...attaching the llm read to each row', r1.scored.every((r) => r.llm && r.llm.read.length > 10));
+  check('...while preserving the deterministic factors alongside it',
+    r1.scored.every((r) => r.factors && r.factors.atrD1Pips != null));
+
+  console.log('\n=== 15. PARTIAL FAILURE — one bad call must not tank the run ===');
+  // THE headline risk. Twenty-odd network calls will not all succeed forever.
+  const flaky = async (row) => {
+    if (row.pair === 'GBPJPY') throw new Error('socket hang up');
+    if (row.pair === 'AUDNZD') return { ok: false, error: 'response truncated at the token limit' };
+    return okScorer(row);
+  };
+  // A scorer that THROWS (rather than returning ok:false) is the nastier case: scorePairLLM is
+  // written never to throw, but runStage1 must not assume that of an arbitrary scorer.
+  const safeFlaky = async (row) => { try { return await flaky(row); } catch (e) { return { ok: false, error: String(e.message) }; } };
+  const r2 = await S.runStage1(detRows, { news: [], exposureLine: 'FLAT' }, { scorer: safeFlaky, concurrency: 3 });
+  check('the run COMPLETES despite two failures', r2.scored.length + r2.unscored.length === detRows.length);
+  check('the healthy pairs are still scored', r2.scored.length === detRows.length - 2);
+  check('the failed pairs are marked unscored, NOT dropped', r2.unscored.length === 2);
+  check('...each carrying its real reason', r2.unscored.every((u) => typeof u.unscored === 'string' && u.unscored.length > 3));
+  check('...naming the actual failure, not a generic message',
+    r2.unscored.some((u) => /hang up/.test(u.unscored)) && r2.unscored.some((u) => /token limit/.test(u.unscored)));
+  check('an unscored pair keeps its deterministic factors for the board',
+    r2.unscored.every((u) => u.factors && u.factors.atrD1Pips != null));
+  check('no pair is lost between the two lists',
+    new Set([...r2.scored, ...r2.unscored].map((r) => r.pair)).size === detRows.length);
+  // Total failure: still a completed run, not an exception.
+  const allFail = await S.runStage1(detRows, { news: [], exposureLine: 'FLAT' }, { scorer: async () => ({ ok: false, error: 'api down' }), concurrency: 3 });
+  check('a total Stage-1 outage still returns cleanly', allFail.scored.length === 0 && allFail.unscored.length === detRows.length);
+
+  console.log('\n=== 15b. A MALFORMED RESPONSE IS A FAILURE, NOT A SCORE ===');
+  // The model can return something structurally plausible and semantically junk. Every one of
+  // these must come back as ok:false with a reason — never as a score the board then ranks on.
+  const badResponses = [
+    ['score out of range', { score: 940, direction: 'BUY', read: 'a long enough read here' }, /out of range/],
+    ['score missing', { direction: 'BUY', read: 'a long enough read here' }, /out of range/],
+    ['score not a number', { score: 'very good', direction: 'BUY', read: 'a long enough read here' }, /out of range/],
+    ['direction invalid', { score: 70, direction: 'MAYBE', read: 'a long enough read here' }, /direction/],
+    ['direction missing', { score: 70, read: 'a long enough read here' }, /direction/],
+    ['read too short to be judgement', { score: 70, direction: 'BUY', read: 'ok' }, /read too short/],
+    ['not JSON at all', null, /no JSON object|JSON/],
+  ];
+  for (const [label, payload, re] of badResponses) {
+    const r = await withStubbedClaude(payload, () => S.scorePairLLM(detRows[0], { news: [], exposureLine: 'FLAT' }));
+    check(`${label} => unscored with a reason`, r.ok === false && re.test(r.error));
+  }
+  const good = await withStubbedClaude({ score: 68, direction: 'SELL', conviction: 'MED-HIGH', read: 'A genuinely long enough analyst read for the validator.', key_risk: 'CPI surprise', catalyst_dependency: 'GBP CPI Wed', entry: 218.1, tp: 215.0, sl: 220.0 },
+    () => S.scorePairLLM(detRows[1], { news: [], exposureLine: 'FLAT' }));
+  check('a well-formed response is accepted', good.ok === true && good.llm.score === 68 && good.llm.direction === 'SELL');
+  check('...preserving conviction and levels', good.llm.conviction === 'MED-HIGH' && good.llm.entry === 218.1 && good.llm.sl === 220);
+  const oddConv = await withStubbedClaude({ score: 60, direction: 'BUY', conviction: 'ENORMOUS', read: 'A genuinely long enough analyst read here.' },
+    () => S.scorePairLLM(detRows[0], { news: [], exposureLine: 'FLAT' }));
+  check('an unrecognised conviction falls back to LOW rather than being trusted', oddConv.ok && oddConv.llm.conviction === 'LOW');
+
+  console.log('\n=== 16. THE CRON BUDGET GUARD ===');
+  // Vercel kills the function at 300s with no chance to write, which would lose a run that had
+  // already scored 20 pairs. The deadline must stop it cleanly and ship what it has.
+  const slow = async (row) => { await new Promise((r) => setTimeout(r, 40)); return okScorer(row); };
+  const tight = await S.runStage1(detRows, { news: [], exposureLine: 'FLAT' }, { scorer: slow, concurrency: 1, deadline: Date.now() + 90 });
+  check('the deadline stops the loop rather than running past the budget', tight.scored.length < detRows.length);
+  check('...and pairs it never reached are marked, not silently missing',
+    tight.scored.length + tight.unscored.length === detRows.length);
+  check('...with a reason that says what happened',
+    tight.unscored.every((u) => /budget ran out/.test(u.unscored)));
+  check('a generous deadline does not trip the guard',
+    (await S.runStage1(detRows, { news: [], exposureLine: 'FLAT' }, { scorer: okScorer, concurrency: 3, deadline: Date.now() + 60000 })).unscored.length === 0);
+
+  console.log('\n=== 17. PROMPTS ===');
+  const pairPrompt = S.buildPairPrompt(detRows[1], { news: [{ source: 'ForexLive', title: 'BoJ holds policy', desc: 'The Bank of Japan left rates unchanged', ts: Date.now() }], exposureLine: 'LONG AUD 0.11 lots' });
+  check('the per-pair prompt names only that pair', (pairPrompt.match(/GBPJPY/g) || []).length >= 2 && !pairPrompt.includes('AUDNZD'));
+  check('...carries the measured evidence', /Daily ATR/.test(pairPrompt) && /20-day range/.test(pairPrompt) && /Recent energy/.test(pairPrompt));
+  check('...carries the book exposure', /LONG AUD 0\.11/.test(pairPrompt));
+  check('...carries pair-relevant news only', /BoJ holds policy/.test(pairPrompt));
+  check('...tells the analyst it is judging ONE pair, not the field', /Do not compare it to other pairs/.test(pairPrompt));
+  check('...pushes back against score inflation', /willing to score low/.test(pairPrompt));
+  check('...states the 2-3 day horizon', /INTERDAY/.test(pairPrompt) && /2-3 days/.test(pairPrompt));
+  const consPrompt = S.buildConsolidationPrompt(r1.scored, { exposureLine: 'LONG AUD 0.11 lots', unscoredCount: 2 });
+  check('the consolidation prompt carries every analyst read', r1.scored.every((r) => consPrompt.includes(r.pair)));
+  check('...tells the head to do what no analyst could', /compare the field/.test(consPrompt));
+  check('...warns that two correlated picks are one bet', /ONE bet at double size/.test(consPrompt));
+  check('...discloses how many pairs could not be scored', /2 could not be scored/.test(consPrompt));
+  check('news filter picks pair-relevant items', (() => {
+    const n = [{ title: 'ECB holds', desc: '', ts: 1 }, { title: 'BoJ cuts', desc: '', ts: 2 }, { title: 'Cricket scores', desc: '', ts: 3 }];
+    const got = S.newsForPair(n, 'EURJPY', 6).map((x) => x.title);
+    return got.includes('ECB holds') && got.includes('BoJ cuts') && !got.includes('Cricket scores');
+  })());
+
+  console.log('\n=== 18. EA / SHADOW-LEDGER COMPATIBILITY ===');
+  // The verdicts must satisfy forex-brain's OWN validator, or its settlement machinery cannot
+  // consume them and the whole share-not-couple premise fails.
+  const fb = await import('file://' + path.join(API, 'forex-brain.js').replace(/\\/g, '/'));
+  const nowIso = new Date().toISOString();
+  const buyRow = { pair: 'EURUSD', factors: { atrD1: 0.005 }, llm: { score: 72, direction: 'BUY', read: 'A sufficiently long rationale for the validator to accept.', entry: 1.14, tp: 1.155, sl: 1.132 } };
+  const vBuy = S.toVerdict(buyRow, nowIso);
+  check('a BUY verdict passes forex-brain validateVerdict', fb.validateVerdict(vBuy, nowIso).ok);
+  check('...with BUY geometry (sl < trigger < tp)', vBuy.slPrice < vBuy.entryZone.trigger && vBuy.tpPrice > vBuy.entryZone.trigger);
+  check('...and maxChase above the trigger for a BUY', vBuy.entryZone.maxChase >= vBuy.entryZone.trigger);
+  const sellRow = { ...buyRow, pair: 'USDJPY', llm: { ...buyRow.llm, direction: 'SELL', entry: 162.5, tp: 160.0, sl: 164.0 } };
+  const vSell = S.toVerdict(sellRow, nowIso);
+  check('a SELL verdict passes the validator', fb.validateVerdict(vSell, nowIso).ok);
+  check('...with maxChase BELOW the trigger for a SELL', vSell.entryZone.maxChase <= vSell.entryZone.trigger);
+  check('STAND_ASIDE becomes a FLAT verdict', S.toVerdict({ ...buyRow, llm: { ...buyRow.llm, direction: 'STAND_ASIDE' } }, nowIso).direction === 'FLAT');
+  check('a directional read with no levels degrades to FLAT rather than a broken verdict',
+    S.toVerdict({ ...buyRow, llm: { ...buyRow.llm, entry: null } }, nowIso).direction === 'FLAT');
+  check('riskPercent stays inside forex-brain cap', vBuy.riskPercent <= fb.CONFIG.maxRiskPercent);
+  check('verdictId is parseable as a date by settleVerdict', !isNaN(new Date(vBuy.verdictId.slice(0, 24)).getTime()));
+  check('expiry is the 2-3 day HOLD CEILING, not forex-brain 90 minutes',
+    Math.abs((Date.parse(vBuy.expiresAt) - Date.parse(nowIso)) / 3600e3 - 96) < 0.1);
+  check('verdict is tagged with its source engine', vBuy.source === 'terminal-screen');
+  // settleVerdict must actually run over these.
+  const hitTp = [{ datetime: new Date(Date.now() + 3 * H).toISOString(), open: 1.141, high: 1.156, low: 1.140, close: 1.155 }];
+  check('forex-brain settleVerdict consumes the verdict and resolves TP',
+    fb.settleVerdict(vBuy, hitTp, new Date(Date.now() + 4 * H).toISOString()).status === 'TP');
+  const hitSl = [{ datetime: new Date(Date.now() + 3 * H).toISOString(), open: 1.141, high: 1.142, low: 1.130, close: 1.131 }];
+  check('...and resolves SL', fb.settleVerdict(vBuy, hitSl, new Date(Date.now() + 4 * H).toISOString()).status === 'SL');
+  check('shadow ledger writes to its OWN namespace, never forex-brain state',
+    /terminal:shadow:(open|ledger)/.test(SCREEN_SRC) && !/rSet\('forex:/.test(SCREEN_SRC));
+  check('settleShadow keeps a verdict OPEN when candles are unavailable', (() => {
+    // symbol not in the universe => getCandles rejects => must stay open, not be judged
+    return S.settleShadow([{ ...vBuy, symbol: 'XXXYYY' }], nowIso).then((r) => r.stillOpen.length === 1 && r.settled.length === 0);
+  })() instanceof Promise);
+  check('settleShadow does not judge on missing data',
+    (await S.settleShadow([{ ...vBuy, symbol: 'XXXYYY' }], nowIso)).stillOpen.length === 1);
+  // The execution boundary must be documented, and nothing may cross it.
+  check('NO live order execution anywhere in the screen',
+    !/OrderSend|placeOrder|executeTrade|\/order|POST.*trade/i.test(SCREEN_SRC));
+  check('the execution boundary is explicitly flagged for the future EA design',
+    /NOT AN EXECUTION INSTRUCTION/.test(SCREEN_SRC) && /kill switch/.test(SCREEN_SRC));
+  check('shadow scorecard buckets by conviction band, so score calibration is measurable', (() => {
+    const card = S.shadowScorecard([
+      { symbol: 'EURUSD', conviction: 80, status: 'TP', r: 2 }, { symbol: 'EURUSD', conviction: 40, status: 'SL', r: -1 },
+    ]);
+    return card.byConvictionBand['71-100'].tp === 1 && card.byConvictionBand['0-50'].sl === 1 && card.hitRate === 50;
+  })());
+
+  console.log('\n=== 19. ENGINE CONSUMES THE TWO-STAGE OUTPUT ===');
+  check('screenLines surfaces the per-pair analyst read', /read: \$\{l\.read\}/.test(ENGINE_SRC));
+  check('...and the indicative levels are marked as needing re-anchoring', /RE-ANCHOR these to the live price/.test(ENGINE_SRC));
+  check('the engine honours the consolidation picks', /screenConsolidation/.test(ENGINE_SRC));
+  check('...but drops a pick that has since been opened',
+    /picks \|\| \[\]\)\.filter\(\(p\) => screenRanked\.some/.test(ENGINE_SRC));
+  check('the engine still owns final level/sizing against LIVE data',
+    /Re-anchor EVERY level to the live reference prices below/.test(ENGINE_SRC));
+  check('...and may substitute when live conditions invalidate a pick',
+    /substitute from the runners-up/.test(ENGINE_SRC));
+  check('unanalysed pairs are declared to the model, not silently absent',
+    /not judged and rejected/.test(ENGINE_SRC));
+  check('a missing consolidation degrades to weighing the reads directly',
+    /No consolidation pass was available this run/.test(ENGINE_SRC));
+  check('provenance records how many pairs were per-pair analysed',
+    /perPairAnalysed: screenRanked\.filter/.test(ENGINE_SRC));
+
   // ==========================================================================
-  console.log('\n=== 14. MUTATION HARNESS — is the ranking actually guarded? ===');
+  console.log('\n=== 20. MUTATION HARNESS — is the ranking actually guarded? ===');
   const MUT = [
     {
       gate: 'direction follows the TREND, not the flattering side (the live-data regression)',
@@ -366,6 +546,76 @@ function series({ n = 70, start = 1.1000, drift = 0, range = 0.004, lastClose = 
       probe: (M) => M.rangePosition(1.1, { high: 1, low: 1, size: 0 }) === null,
     },
     {
+      // THE headline risk of this upgrade. If the per-pair result is not isolated, one bad call
+      // takes the whole screen down — 24 good analyses lost to one socket hang-up.
+      gate: 'PARTIAL FAILURE: a failed pair is isolated, not fatal',
+      from: `      if (r.ok) scored.push({ ...row, llm: r.llm });
+      else unscored.push({ ...row, unscored: r.error });`,
+      to: `      if (r.ok) scored.push({ ...row, llm: r.llm });
+      else throw new Error(r.error);`,
+      probe: async (M) => {
+        const res = await M.runStage1(detRows, { news: [], exposureLine: 'FLAT' }, { scorer: safeFlaky, concurrency: 3 });
+        return res.scored.length === detRows.length - 2 && res.unscored.length === 2;
+      },
+    },
+    {
+      gate: 'PARTIAL FAILURE: scorePairLLM never throws',
+      from: `  } catch (e) {
+    // Isolated. The pair is marked unscored with the real reason and the run continues.
+    return { ok: false, error: String(e.message || e).slice(0, 120) };
+  }`,
+      to: `  } catch (e) {
+    throw e;
+  }`,
+      // A malformed response must come back as a value, not an exception.
+      probe: async (M) => {
+        const bad = await M.scorePairLLM(detRows[0], { news: [], exposureLine: 'FLAT' }).catch(() => 'THREW');
+        return bad !== 'THREW' && bad.ok === false;
+      },
+    },
+    {
+      gate: 'PARTIAL FAILURE: an out-of-range score is rejected, not trusted',
+      from: `    if (!Number.isFinite(score) || score < 0 || score > 100) throw new Error(\`score \${out.score} out of range\`);`,
+      to: `    if (false) throw new Error('x');`,
+      // Driven through a stubbed fetch, so this exercises the real validation path rather than
+      // asserting against the source text (which would pass under mutation and prove nothing).
+      probe: async (M) => withStubbedClaude({ score: 940, direction: 'BUY', read: 'a long enough read here', conviction: 'HIGH' },
+        async () => { const r = await M.scorePairLLM(detRows[0], { news: [], exposureLine: 'FLAT' }); return r.ok === false && /out of range/.test(r.error); }),
+    },
+    {
+      gate: 'PARTIAL FAILURE: an invalid direction is rejected',
+      from: `    if (!['BUY', 'SELL', 'STAND_ASIDE'].includes(dir)) throw new Error(\`direction "\${out.direction}" invalid\`);`,
+      to: `    if (false) throw new Error('x');`,
+      probe: async (M) => withStubbedClaude({ score: 70, direction: 'MAYBE', read: 'a long enough read here', conviction: 'HIGH' },
+        async () => { const r = await M.scorePairLLM(detRows[0], { news: [], exposureLine: 'FLAT' }); return r.ok === false && /direction/.test(r.error); }),
+    },
+    {
+      gate: 'CRON BUDGET: the deadline guard stops the loop',
+      from: `      if (Date.now() > deadline) {`,
+      to: `      if (false) {`,
+      probe: async (M) => {
+        const slow2 = async (row) => { await new Promise((r) => setTimeout(r, 40)); return okScorer(row); };
+        const res = await M.runStage1(detRows, { news: [], exposureLine: 'FLAT' }, { scorer: slow2, concurrency: 1, deadline: Date.now() + 90 });
+        return res.unscored.length > 0 && res.unscored.every((u) => /budget ran out/.test(u.unscored));
+      },
+    },
+    {
+      gate: 'EA SHAPE: STAND_ASIDE / missing levels degrade to FLAT',
+      from: `  if (l.direction === 'STAND_ASIDE' || l.entry == null || l.tp == null || l.sl == null) {`,
+      to: `  if (l.direction === 'STAND_ASIDE') {`,
+      probe: (M) => M.toVerdict({ pair: 'EURUSD', factors: { atrD1: 0.005 }, llm: { score: 70, direction: 'BUY', read: 'A long enough rationale here.', entry: null, tp: 1.15, sl: 1.13 } }, new Date().toISOString()).direction === 'FLAT',
+    },
+    {
+      gate: 'EA SHAPE: maxChase sits on the correct side of the trigger',
+      from: `      maxChase: l.direction === 'BUY' ? +(l.entry + atr * 0.25).toFixed(6) : +(l.entry - atr * 0.25).toFixed(6),`,
+      to: `      maxChase: +(l.entry - atr * 0.25).toFixed(6),`,
+      probe: async (M) => {
+        const fbm = await import('file://' + path.join(API, 'forex-brain.js').replace(/\\/g, '/'));
+        const iso = new Date().toISOString();
+        return fbm.validateVerdict(M.toVerdict({ pair: 'EURUSD', factors: { atrD1: 0.005 }, llm: { score: 70, direction: 'BUY', read: 'A long enough rationale here.', entry: 1.14, tp: 1.155, sl: 1.132 } }, iso), iso).ok;
+      },
+    },
+    {
       gate: 'freshness penalty',
       from: `    staleness: recentlyProposed ? W.staleness : 0,`,
       to: `    staleness: 0,`,
@@ -389,10 +639,11 @@ function series({ n = 70, start = 1.1000, drift = 0, range = 0.004, lastClose = 
     try {
       fs.writeFileSync(tmp, SCREEN_SRC.replace(m.from, m.to));
       const M = await import('file://' + tmp.replace(/\\/g, '/'));
-      try { survived = !!m.probe(M); } catch { survived = false; }
+      // Probes may be async (the failure-isolation ones drive the real loop), so ALWAYS await.
+      try { survived = !!(await m.probe(M)); } catch { survived = false; }
     } catch { survived = false; }
     finally { try { fs.unlinkSync(tmp); } catch { /* best effort */ } }
-    try { pristine = !!m.probe(S); } catch { pristine = false; }
+    try { pristine = !!(await m.probe(S)); } catch { pristine = false; }
     if (pristine && !survived) { mp++; pass++; }
     else {
       fail++;

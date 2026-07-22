@@ -23,9 +23,10 @@
 // 90-minute breakout verdicts answer a different question on a different horizon than a 2-3 day
 // interday hold. Sharing code is safe; sharing state would couple this to a moving target.
 
-import { computeBox, computeAtr } from './forex-brain.js';
-import { SCREEN_PAIRS, getUniverseCandles, aggregate, pipSizeFor, normPair } from './fx-candles.js';
-import { getCalendar, currencyExposure, screenAge } from './terminal-engine.js';
+import { computeBox, computeAtr, validateVerdict, settleVerdict } from './forex-brain.js';
+import { SCREEN_PAIRS, getUniverseCandles, getCandles, aggregate, pipSizeFor, normPair } from './fx-candles.js';
+import { getCalendar, currencyExposure, exposureLine, screenAge } from './terminal-engine.js';
+import { getNews } from './terminal-news.js';
 
 const R_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const R_TOK = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
@@ -228,6 +229,255 @@ export function scorePair({ pair, d1, h1, cal, exposure, recentlyProposed, nowMs
   };
 }
 
+// ============================ TWO-STAGE LLM SCORING ============================
+// The deterministic factors above measure a pair. They cannot JUDGE one — they cannot weigh a
+// 2.8-ATR downtrend against an RBNZ decision landing inside the window, or notice that the trend
+// and the news are pointing opposite ways. That judgement used to happen exactly once, in a
+// single call that skimmed 8 shortlisted pairs at once and picked 2. Every pair got a fraction
+// of one call's attention, and the 17 pairs outside the shortlist got none at all.
+//
+// Now:
+//   STAGE 1  one Sonnet call PER PAIR, reasoning about that pair alone with its full evidence.
+//   STAGE 2  one consolidation call that reads every Stage-1 verdict and compares the field.
+//
+// The shape is forex-brain's per-pair loop (forex-brain.js:374), which has been running this
+// pattern affordably on four crons a day. It belongs on a cron with nobody waiting, which is
+// exactly where this is.
+//
+// THE REAL RISK IS NOT COST, IT IS PARTIAL FAILURE. Twenty-odd network calls will not all
+// succeed forever. One pair timing out must never tank a run — and a pair that failed must never
+// be quietly indistinguishable from a pair that scored badly. Every failure is isolated, named,
+// and shown.
+const MODEL = 'claude-sonnet-4-6';
+
+// Per-call ceiling. A pair that hangs must not eat the cron budget the other 24 need.
+const PAIR_CALL_TIMEOUT_MS = 45000;
+const STAGE2_CALL_TIMEOUT_MS = 90000;
+// Wall-clock guard. Vercel kills the function at 300s with no chance to write anything, which
+// would lose a run that had already scored 20 pairs. We stop cleanly well before that and ship
+// what we have, marking the rest unscored.
+const RUN_BUDGET_MS = 235000;
+const PAIR_CONCURRENCY = 5;
+
+async function claudeJSON(prompt, maxTokens, timeoutMs) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      signal: ctl.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }),
+    });
+    const j = await r.json();
+    if (j.error) throw new Error(j.error.message || 'anthropic error');
+    if (j.stop_reason === 'max_tokens') throw new Error('response truncated at the token limit');
+    const text = (j.content || []).map((c) => c.text || '').join('\n').replace(/```json|```/g, '').trim();
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('no JSON object in the response');
+    return JSON.parse(m[0]);
+  } finally { clearTimeout(timer); }
+}
+
+// News relevant to ONE pair. The full wire is 60 items; handing all of it to 25 separate calls
+// would be wasteful and would bury the two articles that actually bear on the pair in front of
+// it. Same currency-term matching the engine's convergence gate uses.
+const CCY_TERMS = {
+  EUR: ['eur', 'euro', 'ecb', 'lagarde', 'eurozone'], USD: ['usd', 'dollar', 'fed', 'fomc', 'powell'],
+  GBP: ['gbp', 'pound', 'sterling', 'boe', 'bailey'], JPY: ['jpy', 'yen', 'boj', 'ueda', 'japan'],
+  CHF: ['chf', 'franc', 'snb', 'swiss'], AUD: ['aud', 'aussie', 'rba', 'australia'],
+  NZD: ['nzd', 'kiwi', 'rbnz', 'zealand'], CAD: ['cad', 'loonie', 'boc', 'canada'],
+};
+export function newsForPair(news, pair, limit = 6) {
+  const p = normPair(pair);
+  const a = p.slice(0, 3), b = p.slice(3, 6);
+  const scored = [];
+  for (const n of news || []) {
+    const hay = ((n.title || '') + ' ' + (n.desc || '')).toLowerCase();
+    const namesPair = hay.includes(p.toLowerCase()) || hay.includes(`${a}/${b}`.toLowerCase());
+    const aHit = (CCY_TERMS[a] || []).some((t) => hay.includes(t));
+    const bHit = (CCY_TERMS[b] || []).some((t) => hay.includes(t));
+    if (!namesPair && !aHit && !bHit) continue;
+    scored.push({ n, rank: namesPair ? 3 : (aHit && bHit) ? 2 : 1 });
+  }
+  return scored.sort((x, y) => y.rank - x.rank || (y.n.ts || 0) - (x.n.ts || 0)).slice(0, limit).map((x) => x.n);
+}
+
+// ---------- STAGE 1: one call per pair ----------
+export function buildPairPrompt(row, ctx) {
+  const f = row.factors || {};
+  const c = f.catalysts || {};
+  const news = newsForPair(ctx.news, row.pair, 6);
+  const evStr = (c.high || c.medium)
+    ? `${c.high} High-impact and ${c.medium} Medium-impact events for this pair's currencies inside the ${SCREEN_CONFIG.holdCeilingHours}h hold window.${c.next ? ` Next: ${c.next.ccy} ${c.next.title}, ${c.next.when}, in ${c.next.hoursOut}h [${c.next.impact}].` : ''}`
+    : 'No scheduled High/Medium events for either currency inside the hold window.';
+  return `You are a forex analyst on THE TERMINAL, a retail desk in Phuket (Phillip Nova MT5). Assess ONE pair for a ${SCREEN_CONFIG.holdCeilingHours / 24}-day-ceiling INTERDAY trade — opened now, intended to work over 2-3 days. Not a scalp, not a multi-week position.
+
+PAIR: ${row.pair}
+
+MEASURED EVIDENCE (computed in code from real price history — trust these numbers, do not re-estimate them):
+- Spot ${f.last}
+- Daily ATR ${f.atrD1Pips} pips${f.atrH4Pips != null ? `, H4 ATR ${f.atrH4Pips} pips` : ''}
+- 20-day range ${f.range20 ? `${f.range20.low} to ${f.range20.high}` : 'n/a'}; price sits at ${f.rangePos != null ? (f.rangePos * 100).toFixed(0) + '% of that range (0% = the low, 100% = the high)' : 'n/a'}
+- Recent energy ${f.volRatio}x the pair's own 30-day baseline (1.0 = normal for this pair; above 1.3 = unusually active; below 0.8 = unusually quiet)
+- Trend: fast/slow moving averages separated by ${f.trendSeparationAtr} ATR (positive = up, negative = down; beyond ±0.5 is a decisive trend)
+
+CALENDAR: ${evStr}
+
+THE BOOK'S EXISTING CURRENCY EXPOSURE: ${ctx.exposureLine}
+- Taking ${row.pair} long is a bet on ${row.pair.slice(0, 3)} and against ${row.pair.slice(3, 6)}; short is the reverse.
+- BUY here would ${f.bookFit && f.bookFit.buy.net >= 0 ? 'REDUCE' : 'ADD TO'} existing concentration (${(f.bookFit && f.bookFit.buy.detail.join('; ')) || 'no overlap'}).
+- SELL here would ${f.bookFit && f.bookFit.sell.net >= 0 ? 'REDUCE' : 'ADD TO'} existing concentration (${(f.bookFit && f.bookFit.sell.detail.join('; ')) || 'no overlap'}).
+
+${news.length ? `NEWS TOUCHING THIS PAIR (freshest first):\n${news.map((n) => `- [${n.source}] ${n.title}${n.desc ? `\n    ${String(n.desc).replace(/\s+/g, ' ').slice(0, 160)}` : ''}`).join('\n')}` : 'NEWS: nothing on the wire specifically touching this pair right now. That is itself information — a pair with no story needs the technicals to be doing the work.'}
+
+TASK: judge THIS pair on its own merits. Do not compare it to other pairs; you are seeing only this one, and something else will weigh the field.
+
+Score 0-100 for how good a 2-3 day trade this pair offers RIGHT NOW:
+  0-25   nothing here; no edge, or the evidence conflicts
+  26-50  marginal; a trade exists but the case is thin
+  51-70  a real setup with a coherent story
+  71-85  strong: technicals and catalyst and news agree
+  86-100 exceptional; reserve for genuine convergence, rare
+
+Be honest and be willing to score low. Most pairs on most nights are not opportunities, and a field of inflated scores is worth nothing to the desk. If the technicals and the news point opposite ways, say so and score it down.
+
+If you see a trade, give indicative levels anchored to the spot above and sized to the daily ATR — a 2-3 day stop is typically 1.5-2.5x the DAILY ATR, because the position must survive several sessions of noise. If you do not see a trade, set direction STAND_ASIDE and levels null.
+
+JSON only, no markdown:
+{"score":0-100,"direction":"BUY|SELL|STAND_ASIDE","conviction":"LOW|MED|MED-HIGH|HIGH","read":"your reasoning in 30-45 words: what the setup IS, and what the evidence actually says","key_risk":"the single thing most likely to break it, max 15 words","catalyst_dependency":"does this thesis depend on a scheduled event? name it, or say 'flow/technical, no event dependency', max 15 words","entry":number or null,"tp":number or null,"sl":number or null}`;
+}
+
+// Score one pair. NEVER throws: a failure is a value, so the caller's loop cannot be broken by it.
+export async function scorePairLLM(row, ctx) {
+  try {
+    const out = await claudeJSON(buildPairPrompt(row, ctx), 700, PAIR_CALL_TIMEOUT_MS);
+    const score = Number(out.score);
+    if (!Number.isFinite(score) || score < 0 || score > 100) throw new Error(`score ${out.score} out of range`);
+    const dir = String(out.direction || '').toUpperCase();
+    if (!['BUY', 'SELL', 'STAND_ASIDE'].includes(dir)) throw new Error(`direction "${out.direction}" invalid`);
+    const read = String(out.read || '').trim();
+    if (read.length < 10) throw new Error('read too short to be a judgement');
+    const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+    return {
+      ok: true,
+      llm: {
+        score: Math.round(score), direction: dir,
+        conviction: ['LOW', 'MED', 'MED-HIGH', 'HIGH'].includes(String(out.conviction || '').toUpperCase()) ? String(out.conviction).toUpperCase() : 'LOW',
+        read, keyRisk: String(out.key_risk || '').slice(0, 140) || null,
+        catalystDependency: String(out.catalyst_dependency || '').slice(0, 140) || null,
+        entry: n(out.entry), tp: n(out.tp), sl: n(out.sl),
+      },
+    };
+  } catch (e) {
+    // Isolated. The pair is marked unscored with the real reason and the run continues.
+    return { ok: false, error: String(e.message || e).slice(0, 120) };
+  }
+}
+
+// Run Stage 1 across the field with bounded concurrency and a wall-clock guard.
+export async function runStage1(rows, ctx, { concurrency = PAIR_CONCURRENCY, deadline = Infinity, scorer = scorePairLLM } = {}) {
+  const queue = [...rows];
+  const scored = [], unscored = [];
+  let idx = 0;
+  async function worker() {
+    while (idx < queue.length) {
+      const row = queue[idx++];
+      if (Date.now() > deadline) {
+        unscored.push({ ...row, unscored: 'the cron budget ran out before this pair was reached' });
+        continue;
+      }
+      const r = await scorer(row, ctx);
+      if (r.ok) scored.push({ ...row, llm: r.llm });
+      else unscored.push({ ...row, unscored: r.error });
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, queue.length || 1) }, worker));
+  return { scored, unscored };
+}
+
+// ---------- STAGE 2: one consolidation call over the whole field ----------
+export function buildConsolidationPrompt(scored, ctx) {
+  const field = [...scored].sort((a, b) => b.llm.score - a.llm.score).slice(0, 14).map((r, i) =>
+    `${i + 1}. ${r.pair} — LLM score ${r.llm.score}, ${r.llm.direction}${r.llm.direction !== 'STAND_ASIDE' ? ` (${r.llm.conviction})` : ''}
+     read: ${r.llm.read}
+     risk: ${r.llm.keyRisk || 'n/a'} | catalyst: ${r.llm.catalystDependency || 'n/a'}
+     measured: ATR ${r.factors.atrD1Pips}p/day, range pos ${r.factors.rangePos}, energy ${r.factors.volRatio}x, trend ${r.factors.trendSeparationAtr} ATR${r.llm.entry != null ? ` | indicative ${r.llm.entry} / TP ${r.llm.tp} / SL ${r.llm.sl}` : ''}`
+  ).join('\n');
+  return `You are the head of THE TERMINAL, a retail forex desk in Phuket. Each pair below was analysed INDEPENDENTLY by a separate analyst who saw only that pair. Your job is the one thing none of them could do: compare the field and decide where the desk's limited margin should go.
+
+Trades are INTERDAY, 2-3 days, ${SCREEN_CONFIG.holdCeilingHours / 24}-day ceiling. Account is small; capital preservation beats bravado.
+
+THE BOOK'S CURRENT CURRENCY EXPOSURE: ${ctx.exposureLine}
+Pairs already open are excluded from the field below.
+
+THE FIELD (${scored.length} pairs scored independently${ctx.unscoredCount ? `; ${ctx.unscoredCount} could not be scored this run` : ''}):
+${field}
+
+TASK: pick the best TWO candidates for the desk, and explain the field.
+
+Judge across pairs, which the individual analysts could not:
+- A 70 that duplicates the book's existing currency risk may well be worse than a 60 that diversifies it. Read the exposure line and mean it.
+- Two picks that are effectively the same bet (both long the dollar, both short yen) are ONE bet at double size. Prefer genuine independence between your two.
+- An analyst who saw only one pair could not know another pair offers the same story more cleanly. You can.
+- A high score built on a scheduled event is a coin-flip if that event lands inside the hold; one built on structure is not. Weigh that.
+
+HONESTY: if the field is genuinely poor tonight, say so plainly and mark your picks at their true low conviction. A quiet honest night is worth more to this desk than a manufactured one. Do not inflate to fill two slots — but do still name your two best, so the desk always has something to weigh.
+
+JSON only, no markdown:
+{"picks":[{"pair":"EURUSD","direction":"BUY|SELL","conviction":"LOW|MED|MED-HIGH|HIGH","why_this_one":"why it beat the rest of the field, 25-40 words","independence":"how it differs from the other pick, max 15 words"}],"runners_up":["PAIR — one clause on why it just missed"],"field_read":"the state of the board tonight in 40-60 words: is there opportunity out there or not, and where is the risk concentrated","field_quality":"RICH|MIXED|THIN"}`;
+}
+
+// ---------- forex-brain-compatible verdict (for the shadow ledger / EA testbed) ----------
+// Emitted in EXACTLY the shape forex-brain's validateVerdict() and settleVerdict() expect, so its
+// proven settlement machinery can score these calls without either side adapting to the other.
+// Shared FUNCTIONS and a shared candle layer; separate STATE — these are written to
+// `terminal:shadow:*`, never into `forex:*`.
+//
+// !! NOT AN EXECUTION INSTRUCTION !!  This is decision-support and shadow-testing only. Nothing
+// here places an order and nothing reads it expecting to. Before any of this could drive a live
+// EA it would need, at minimum: real-time spread and broker minimum-stop checks at fill time, a
+// slippage/chase policy enforced against the live book rather than a daily candle, position
+// sizing reconciled against live margin at the moment of entry rather than at screen time, and a
+// kill switch. Those are a separate, deliberate design. None of them are built here.
+export function toVerdict(row, nowIso, holdCeilingHours = SCREEN_CONFIG.holdCeilingHours) {
+  const l = row.llm;
+  const base = {
+    verdictId: `${nowIso}-${row.pair.toLowerCase()}`,
+    symbol: row.pair,
+    source: 'terminal-screen',
+    conviction: Math.round(l.score),
+    // The hold ceiling, NOT forex-brain's 90 minutes: settlement must run over the life the idea
+    // was actually given, which is the whole point of keeping the two engines' horizons separate.
+    expiresAt: new Date(new Date(nowIso).getTime() + holdCeilingHours * 3600e3).toISOString(),
+    sourcesReached: { hit: 1, expected: 1, missing: [] },
+    rationale: l.read,
+  };
+  if (l.direction === 'STAND_ASIDE' || l.entry == null || l.tp == null || l.sl == null) {
+    return { ...base, direction: 'FLAT' };
+  }
+  const atr = row.factors && row.factors.atrD1 ? row.factors.atrD1 : Math.abs(l.entry - l.sl) / 2;
+  return {
+    ...base,
+    direction: l.direction,
+    entryZone: {
+      trigger: l.entry,
+      // How far past the trigger a fill is still acceptable. Quarter of a daily ATR: beyond that
+      // the move has left without you and the risk/reward you reasoned about no longer exists.
+      maxChase: l.direction === 'BUY' ? +(l.entry + atr * 0.25).toFixed(6) : +(l.entry - atr * 0.25).toFixed(6),
+    },
+    slPrice: l.sl,
+    tpPrice: l.tp,
+    // Nominal, for shadow-settlement arithmetic only. REAL sizing is decided by the engine's
+    // margin gate against live vitals at proposal time — never by this number.
+    riskPercent: 0.5,
+  };
+}
+
 // ---------- The run ----------
 export async function runScreen(nowMs = Date.now()) {
   const started = Date.now();
@@ -245,8 +495,10 @@ export async function runScreen(nowMs = Date.now()) {
 
   // Two passes over the universe: daily is required, hourly is best-effort. A pair with no H1
   // data still scores — it just carries a null H4 ATR, stated rather than silently zeroed.
+  const candlesStarted = Date.now();
   const d1 = await getUniverseCandles(SCREEN_PAIRS, '1d', 6);
   const h1 = await getUniverseCandles(SCREEN_PAIRS, '1h', 6).catch(() => ({ candles: {}, health: [] }));
+  const candlesMs = Date.now() - candlesStarted;
 
   const rows = [];
   for (const pair of SCREEN_PAIRS) {
@@ -268,26 +520,154 @@ export async function runScreen(nowMs = Date.now()) {
     rows.push(row);
   }
 
-  const ranked = rows.filter((r) => r.score != null).sort((a, b) => b.score - a.score);
+  // Deterministically measurable rows, ordered by the computed score. This ordering no longer
+  // decides anything on its own — it decides who Stage 1 reaches first if the budget gets tight.
+  const measurable = rows.filter((r) => r.score != null).sort((a, b) => b.score - a.score);
   const unscoreable = rows.filter((r) => r.score == null);
+
+  // ---- STAGE 1: one Sonnet call per pair ----
+  const news = await getNews('forex').catch(() => []);
+  const ctx = { news, exposureLine: exposureLine(exposure), holdCeilingHours: SCREEN_CONFIG.holdCeilingHours };
+  const stage1Started = Date.now();
+  const { scored, unscored } = await runStage1(measurable, ctx, {
+    concurrency: PAIR_CONCURRENCY,
+    deadline: started + RUN_BUDGET_MS,
+  });
+  const stage1Ms = Date.now() - stage1Started;
+
+  // Ranked by the LLM's judgement, with the deterministic score kept alongside as the evidence
+  // it was formed from. Both are shown; neither is hidden behind the other.
+  const ranked = scored
+    .map((r) => ({ ...r, detScore: r.score, score: r.llm.score }))
+    .sort((a, b) => b.score - a.score || b.detScore - a.detScore);
+
+  // ---- STAGE 2: one consolidation call over the whole field ----
+  // Skipped rather than faked when Stage 1 produced too little to compare: a "field read" over
+  // two surviving pairs would be a confident sentence about nothing.
+  const stage2Started = Date.now();
+  let consolidation = null, consolidationError = null;
+  if (ranked.length >= 3 && Date.now() < started + RUN_BUDGET_MS) {
+    try {
+      consolidation = await claudeJSON(
+        buildConsolidationPrompt(ranked, { ...ctx, unscoredCount: unscored.length }),
+        1400, STAGE2_CALL_TIMEOUT_MS);
+      if (!consolidation || !Array.isArray(consolidation.picks)) throw new Error('no picks array returned');
+      // Only picks that correspond to a real scored pair survive — the consolidator must not be
+      // able to introduce a pair the field never contained.
+      consolidation.picks = consolidation.picks
+        .filter((p) => p && ranked.some((r) => r.pair === normPair(p.pair)))
+        .map((p) => ({ ...p, pair: normPair(p.pair) }))
+        .slice(0, 2);
+      if (!consolidation.picks.length) throw new Error('picks did not match any scored pair');
+    } catch (e) {
+      consolidationError = String(e.message || e).slice(0, 140);
+      consolidation = null;
+    }
+  } else if (ranked.length < 3) {
+    consolidationError = `only ${ranked.length} pair(s) scored — too thin a field to consolidate over`;
+  } else {
+    consolidationError = 'cron budget exhausted before the consolidation pass';
+  }
+  const stage2Ms = Date.now() - stage2Started;
+
   const pack = {
     at: new Date(nowMs).toISOString(),
     tookMs: Date.now() - started,
+    timings: { candlesMs: candlesMs, stage1Ms, stage2Ms, budgetMs: RUN_BUDGET_MS },
     universeSize: SCREEN_PAIRS.length,
     scored: ranked.length,
     ranked,
+    // THREE honest categories, deliberately not merged. "We had no price history" and "the
+    // analyst call failed" and "we ran out of time" are different claims about a pair, and a
+    // board that flattened them into one silence would be lying by omission.
     unscoreable,
+    unscored,
+    consolidation, consolidationError,
     exposureAtScreen: exposure,
     health: { d1: d1.health, h1: h1.health },
-    config: { weights: SCREEN_CONFIG.weights, holdCeilingHours: SCREEN_CONFIG.holdCeilingHours },
+    model: MODEL,
+    config: { weights: SCREEN_CONFIG.weights, holdCeilingHours: SCREEN_CONFIG.holdCeilingHours, pairConcurrency: PAIR_CONCURRENCY },
   };
   const dateKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Bangkok', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(nowMs));
   pack.dateKey = dateKey;
+
+  // ---- SHADOW LEDGER (the EA testbed feed) ----
+  // Every directional Stage-1 call is recorded as a forex-brain-shaped verdict and settled
+  // deterministically against real candles on later runs. This is how the per-pair scoring gets
+  // PROVEN rather than assumed — the same discipline forex-brain applies to itself, pointed at
+  // this engine's calls. Own namespace, shared functions, no execution.
+  try {
+    const openBefore = (await rGet('terminal:shadow:open').catch(() => null)) || [];
+    const fresh = [];
+    for (const r of ranked) {
+      const v = toVerdict(r, pack.at);
+      // forex-brain's OWN validator decides whether a verdict is coherent enough to track. If it
+      // rejects one, the call is recorded as unsettleable rather than quietly dropped.
+      const check = validateVerdict(v, pack.at);
+      if (v.direction === 'FLAT') continue;
+      if (!check.ok) { r.shadowRejected = check.errors.join('; '); continue; }
+      fresh.push(v);
+    }
+    const settled = await settleShadow(openBefore, pack.at);
+    await rSet('terminal:shadow:open', [...settled.stillOpen, ...fresh]);
+    pack.shadow = { opened: fresh.length, settled: settled.settled.length, stillOpen: settled.stillOpen.length + fresh.length };
+    if (settled.settled.length) {
+      const ledger = (await rGet('terminal:shadow:ledger').catch(() => null)) || [];
+      await rSet('terminal:shadow:ledger', [...ledger, ...settled.settled].slice(-500));
+    }
+  } catch (e) {
+    // The shadow ledger is a measurement device. It must never be able to break the thing it
+    // measures, so a failure here is recorded and the screen still ships.
+    pack.shadowError = String(e.message || e).slice(0, 140);
+  }
   // `terminal:screen` is the latest-pointer actIdeas reads; the dated key is the archive, so a
   // board can be looked back at when reviewing why an idea was or wasn't proposed.
   await rSet('terminal:screen', pack);
   await rSet(`terminal:screen:${dateKey}`, pack).catch(() => {});
   return pack;
+}
+
+// Settle previously-opened shadow verdicts against fresh candles, using forex-brain's own
+// settleVerdict — pessimistic by design (a candle touching both SL and TP scores as SL).
+// Returns { settled, stillOpen }. A pair whose candles cannot be fetched stays OPEN rather than
+// being judged on missing data.
+export async function settleShadow(open, nowIso) {
+  const settled = [], stillOpen = [];
+  for (const v of open || []) {
+    let candles = null;
+    try { candles = (await getCandles(v.symbol, '1h')).candles; } catch { /* keep it open */ }
+    if (!candles) { stillOpen.push(v); continue; }
+    let ruling;
+    try { ruling = settleVerdict(v, candles, nowIso); }
+    catch (e) { stillOpen.push(v); continue; }
+    if (ruling.status === 'PENDING' || ruling.status === 'OPEN') { stillOpen.push(v); continue; }
+    settled.push({
+      at: nowIso, verdictId: v.verdictId, symbol: v.symbol, direction: v.direction,
+      conviction: v.conviction, status: ruling.status,
+      entry: ruling.entry ?? null, exit: ruling.exit ?? null, r: ruling.r ?? null,
+      closedAt: ruling.closedAt ?? null, rationale: v.rationale,
+    });
+  }
+  return { settled, stillOpen };
+}
+
+// Scorecard over the shadow ledger — the answer to "is the per-pair scoring any good?".
+export function shadowScorecard(rows) {
+  const card = { settled: rows.length, tp: 0, sl: 0, notTriggered: 0, chaseSkip: 0, sumR: 0, byPair: {}, byConvictionBand: {} };
+  for (const r of rows) {
+    const band = r.conviction >= 71 ? '71-100' : r.conviction >= 51 ? '51-70' : '0-50';
+    card.byConvictionBand[band] = card.byConvictionBand[band] || { tp: 0, sl: 0, sumR: 0 };
+    const p = card.byPair[r.symbol] = card.byPair[r.symbol] || { tp: 0, sl: 0, other: 0, sumR: 0 };
+    if (r.status === 'TP') { card.tp++; card.sumR += r.r || 0; p.tp++; p.sumR += r.r || 0; card.byConvictionBand[band].tp++; card.byConvictionBand[band].sumR += r.r || 0; }
+    else if (r.status === 'SL') { card.sl++; card.sumR += r.r || 0; p.sl++; p.sumR += r.r || 0; card.byConvictionBand[band].sl++; card.byConvictionBand[band].sumR += r.r || 0; }
+    else if (r.status === 'NOT_TRIGGERED') { card.notTriggered++; p.other++; }
+    else if (r.status === 'CHASE_SKIP') { card.chaseSkip++; p.other++; }
+  }
+  const resolved = card.tp + card.sl;
+  card.hitRate = resolved ? +((card.tp / resolved) * 100).toFixed(1) : null;
+  card.avgR = resolved ? +(card.sumR / resolved).toFixed(2) : null;
+  card.sumR = +card.sumR.toFixed(2);
+  return card;
 }
 
 // ---------- Handler ----------
@@ -309,10 +689,22 @@ export default async function handler(req, res) {
     if (action === 'run') {
       const pack = await runScreen();
       return res.status(200).json({
-        ok: true, at: pack.at, tookMs: pack.tookMs, scored: pack.scored, universeSize: pack.universeSize,
-        top: pack.ranked.slice(0, 8).map((r) => ({ pair: r.pair, score: r.score, dir: r.preferredDirection, why: r.why })),
-        unscoreable: pack.unscoreable,
+        ok: true, at: pack.at, tookMs: pack.tookMs, timings: pack.timings, model: pack.model,
+        scored: pack.scored, universeSize: pack.universeSize,
+        top: pack.ranked.slice(0, 8).map((r) => ({ pair: r.pair, score: r.score, detScore: r.detScore, dir: r.llm.direction, conviction: r.llm.conviction, read: r.llm.read })),
+        consolidation: pack.consolidation, consolidationError: pack.consolidationError,
+        unscoreable: pack.unscoreable.map((u) => ({ pair: u.pair, reason: u.unscoreable })),
+        unscored: pack.unscored.map((u) => ({ pair: u.pair, reason: u.unscored })),
+        shadow: pack.shadow, shadowError: pack.shadowError,
       });
+    }
+    if (action === 'shadow') {
+      const [open, ledger] = await Promise.all([
+        rGet('terminal:shadow:open').catch(() => null),
+        rGet('terminal:shadow:ledger').catch(() => null),
+      ]);
+      const rows = ledger || [];
+      return res.status(200).json({ ok: true, open: open || [], settled: rows.length, scorecard: shadowScorecard(rows), ledger: rows.slice(-60) });
     }
     if (action === 'get') {
       const pack = await rGet('terminal:screen');

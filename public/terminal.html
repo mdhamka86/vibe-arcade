@@ -439,9 +439,15 @@ function Desk({state,refresh}){
             are, not only on the Board tab — otherwise a degraded run is indistinguishable from a
             normal one, which is the failure mode this whole audit kept turning up. */}
         {ideas.screen && (ideas.screen.usedScreen
-          ? <div className="note" style={{marginBottom:8}}><span className="steel">SCREENED</span> {ideas.screen.scored}/{ideas.screen.universeSize} pairs measured and ranked ({ideas.screen.label}). Shortlist: {ideas.screen.shownTop.map(s=>s.pair).join(', ')}.
-              {ideas.screen.offBoard&&ideas.screen.offBoard.length>0 && <span className="ambr"> Off-board pick{ideas.screen.offBoard.length>1?'s':''}: {ideas.screen.offBoard.join(', ')} — check the thesis explains why.</span>}</div>
-          : <div className="alertbox a-amber">⚠ HUNTED UNSCREENED — {ideas.screen.label}. No measured ranking of the board was available, so these ideas came from the news wire and prices alone. Re-run the screen from the Board tab for a fuller sweep.</div>)}
+          ? <div className="note" style={{marginBottom:8}}>
+              <span className="steel">SCREENED</span> {ideas.screen.perPairAnalysed!=null?`${ideas.screen.perPairAnalysed} pairs individually analysed`:`${ideas.screen.scored} pairs ranked`} of {ideas.screen.universeSize} ({ideas.screen.label}).
+              {ideas.screen.consolidation
+                ? <> Field read <b>{ideas.screen.consolidation.field_quality}</b>; the desk head selected {(ideas.screen.consolidation.picks||[]).map(p=>`${p.pair} ${p.direction}`).join(' and ')}.</>
+                : <> No consolidation pass{ideas.screen.consolidationError?` (${ideas.screen.consolidationError})`:''} — reads weighed directly.</>}
+              {ideas.screen.unanalysed&&ideas.screen.unanalysed.length>0 && <span className="ambr"> {ideas.screen.unanalysed.length} pair{ideas.screen.unanalysed.length>1?'s':''} unscored this run ({ideas.screen.unanalysed.map(u=>u.pair).join(', ')}) — no read, not a rejection.</span>}
+              {ideas.screen.offBoard&&ideas.screen.offBoard.length>0 && <span className="ambr"> Off-board pick{ideas.screen.offBoard.length>1?'s':''}: {ideas.screen.offBoard.join(', ')} — check the thesis explains why.</span>}
+            </div>
+          : <div className="alertbox a-amber">⚠ HUNTED UNSCREENED — {ideas.screen.label}. No per-pair analysis was available, so these ideas came from the news wire and prices alone. Re-run the screen from the Board tab for a fuller sweep.</div>)}
         {ideas.brainConditions && <div className="note" style={{marginBottom:8}}><span className="steel">CONDITIONS</span> sibling breakout engine is FLAT on {ideas.brainConditions.flat}/{ideas.brainConditions.live} USD majors — {ideas.brainConditions.flat/ideas.brainConditions.live>0.7?'the dollar complex is chopping, expect less follow-through':'there is genuine direction about'}.</div>}
         {ideas.marginWarning && <div className="alertbox a-amber">⚠ {ideas.marginWarning}</div>}
         {ideas.vitalsAge && !ideas.vitalsAge.fresh && <div className="alertbox a-amber">⚠ Margin figures below are computed from vitals that are {ideas.vitalsAge.label}. Sync a fresh positions screenshot before sizing on them.</div>}
@@ -1000,19 +1006,46 @@ function Board(){
       </div>}
       {pack && <div className="card">
         <div className="meta">
-          <span>{pack.scored}/{pack.universeSize} pairs scored</span>
+          <span>{pack.scored}/{pack.universeSize} pairs analysed</span>
           <span className="dim">in {(pack.tookMs/1000).toFixed(1)}s</span>
+          {pack.unscored&&pack.unscored.length>0 && <span className="ambr">{pack.unscored.length} unscored</span>}
           {pack.unscoreable&&pack.unscoreable.length>0 && <span className="ambr">{pack.unscoreable.length} unscoreable</span>}
         </div>
-        <div className="note" style={{marginTop:6}}>Scored in code on identical factors — daily ATR, energy vs the pair's own baseline, position in its 20-day range, trend separation, scheduled catalysts inside the hold window, and fit against your open book. No model was asked; these are measurements.</div>
+        <div className="note" style={{marginTop:6}}>Each pair is first measured in code — daily ATR, energy vs its own baseline, position in its 20-day range, trend separation, scheduled catalysts inside the hold window, fit against your open book — and then given <b>its own dedicated analyst pass</b>, a separate reasoning call that saw only that pair. Below is what the desk actually thought about every one of them.</div>
+        {pack.timings && <div className="note" style={{marginTop:4}}><span className="dim">TIMING</span> candles {(pack.timings.candlesMs/1000).toFixed(1)}s · per-pair analysis {(pack.timings.stage1Ms/1000).toFixed(1)}s · consolidation {(pack.timings.stage2Ms/1000).toFixed(1)}s <span className="dim">(budget {(pack.timings.budgetMs/1000)}s)</span></div>}
+        {pack.shadow && <div className="note" style={{marginTop:4}}><span className="steel">SHADOW LEDGER</span> {pack.shadow.opened} call{pack.shadow.opened===1?'':'s'} recorded for testing · {pack.shadow.settled} settled this run · {pack.shadow.stillOpen} open <span className="dim">— paper only, nothing is executed</span></div>}
+      </div>}
+
+      {/* STAGE 2 — the consolidation. Shown above the field because it is the conclusion drawn
+          from it, and because the two picks here are what actually reach the Desk. */}
+      {pack && pack.consolidation && <div className="card" style={{borderColor:'var(--green)'}}>
+        <div className="eyebrow">The desk head's read of the field</div>
+        <div className="row" style={{gap:8,marginBottom:6}}>
+          <span className={'badge '+(pack.consolidation.field_quality==='RICH'?'b-ok':pack.consolidation.field_quality==='THIN'?'b-amber':'b-note')}>FIELD {pack.consolidation.field_quality}</span>
+        </div>
+        <div className="note">{pack.consolidation.field_read}</div>
+        {(pack.consolidation.picks||[]).map((p,i)=>(
+          <div key={i} className="note" style={{marginTop:8}}>
+            <span className="hl">{p.pair}</span> <span className={'badge '+(p.direction==='BUY'?'b-buy':'b-sell')}>{p.direction}</span> <span className={'conv-'+(p.conviction||'').replace(/[^A-Z]/gi,'')}>{p.conviction}</span>
+            <div style={{marginTop:3}}>{p.why_this_one}</div>
+            {p.independence && <div className="dim" style={{marginTop:2}}>vs the other pick: {p.independence}</div>}
+          </div>
+        ))}
+        {(pack.consolidation.runners_up||[]).length>0 && <div className="note" style={{marginTop:8}}><span className="steel">RUNNERS-UP</span> {pack.consolidation.runners_up.join('  ·  ')}</div>}
+      </div>}
+      {pack && !pack.consolidation && pack.consolidationError && <div className="alertbox a-amber">
+        No field consolidation this run — {pack.consolidationError}. The per-pair reads below still stand; the desk will weigh them itself.
       </div>}
       {ranked.map((r,i)=>(
         <div key={r.pair} className="card" style={{borderColor: i<8?'var(--steel)':'var(--line)'}}>
           <div className="row" style={{justifyContent:'space-between',alignItems:'center',cursor:'pointer'}} onClick={()=>setOpenPair(openPair===r.pair?null:r.pair)}>
             <span className="hl">
               <span className="dim" style={{marginRight:8}}>{i+1}</span>{r.pair}
-              <span className={'badge '+(r.preferredDirection==='BUY'?'b-buy':'b-sell')} style={{marginLeft:8}}>{r.preferredDirection}</span>
-              <span className="dim" style={{marginLeft:6,fontSize:11}}>{r.directionBasis==='TREND'?'per trend':'per book-fit'}</span>
+              {r.llm
+                ? <><span className={'badge '+(r.llm.direction==='BUY'?'b-buy':r.llm.direction==='SELL'?'b-sell':'b-note')} style={{marginLeft:8}}>{r.llm.direction==='STAND_ASIDE'?'STAND ASIDE':r.llm.direction}</span>
+                    {r.llm.direction!=='STAND_ASIDE' && <span className={'conv-'+(r.llm.conviction||'').replace(/[^A-Z]/gi,'')} style={{marginLeft:6,fontSize:11}}>{r.llm.conviction}</span>}</>
+                : <><span className={'badge '+(r.preferredDirection==='BUY'?'b-buy':'b-sell')} style={{marginLeft:8}}>{r.preferredDirection}</span>
+                    <span className="dim" style={{marginLeft:6,fontSize:11}}>{r.directionBasis==='TREND'?'per trend':'per book-fit'}</span></>}
             </span>
             <span className={i<8?'green':'dim'}>{r.score}</span>
           </div>
@@ -1020,7 +1053,19 @@ function Board(){
           <div style={{height:4,background:'var(--line)',borderRadius:2,marginTop:6,overflow:'hidden'}}>
             <div style={{height:'100%',width:Math.max(0,Math.min(100,(r.score/Math.max(best,1))*100))+'%',background:i<8?'var(--green)':'var(--steel)'}}></div>
           </div>
-          <div className="note" style={{marginTop:6}}>{r.why}</div>
+          {/* THE ANALYST'S READ — the substance of the per-pair upgrade. This is what the desk
+              actually thought about this specific pair, not a number derived from it. */}
+          {r.llm
+            ? <>
+                <div className="thesis" style={{marginTop:6}}>{r.llm.read}</div>
+                <div className="meta" style={{marginTop:4}}>
+                  {r.llm.keyRisk && <span className="ambr">RISK {r.llm.keyRisk}</span>}
+                  {r.llm.catalystDependency && <span className="steel">{r.llm.catalystDependency}</span>}
+                </div>
+                {r.llm.entry!=null && <div className="note" style={{marginTop:4}}><span className="dim">INDICATIVE AT SCREEN TIME</span> entry {r.llm.entry} · TP {r.llm.tp} · SL {r.llm.sl} <span className="dim">(the desk re-anchors these to live prices before proposing)</span></div>}
+                {r.shadowRejected && <div className="note" style={{marginTop:4}}><span className="ambr">NOT SHADOW-TRACKED</span> {r.shadowRejected}</div>}
+              </>
+            : <div className="note" style={{marginTop:6}}>{r.why}</div>}
           {openPair===r.pair && r.factors && <div style={{marginTop:8}}>
             <div className="meta">
               <span>ATR {r.factors.atrD1Pips}p/day</span>
@@ -1035,14 +1080,29 @@ function Board(){
               : <div className="note" style={{marginTop:4}}><span className="dim">NO scheduled catalyst inside the hold window</span></div>}
             <div className="note" style={{marginTop:4}}><span className="steel">SCORE PARTS</span> {Object.entries(r.parts||{}).filter(([,v])=>v!==0).map(([k,v])=>`${k} ${v>0?'+':''}${v}`).join('  ·  ')}</div>
             <div className="note" style={{marginTop:4}}><span className="steel">BOOK FIT</span> scored for {r.factors.bookFit.scoredFor} · BUY net {r.factors.bookFit.buy.net} · SELL net {r.factors.bookFit.sell.net}</div>
+            {r.detScore!=null && <div className="note" style={{marginTop:4}}><span className="dim">Ranked on the analyst's {r.score}/100. The deterministic factor score was {r.detScore} — the evidence the analyst was given, kept visible so the two can be compared.</span></div>}
           </div>}
         </div>
       ))}
+      {/* Two distinct silences, deliberately not merged. "The analyst call failed" and "we had no
+          price history" are different claims about a pair, and flattening them into one bucket
+          would be lying by omission — as would leaving either out of the board entirely. */}
+      {pack && pack.unscored && pack.unscored.length>0 && <div className="card" style={{borderColor:'var(--amber-dim)'}}>
+        <div className="eyebrow">Unscored — the analyst pass did not complete</div>
+        <div className="note">These pairs were measured but their individual analysis call failed or was cut short. They are <b>not</b> judged and rejected — the desk simply has no read on them this run, and did not rank them rather than guess.</div>
+        {pack.unscored.map(u=>(
+          <div key={u.pair} className="note" style={{marginTop:6}}>
+            <span className="ambr">{u.pair}</span> — {u.unscored}
+            {u.factors && <span className="dim"> · measured anyway: ATR {u.factors.atrD1Pips}p/day, range pos {u.factors.rangePos}, energy {u.factors.volRatio}x</span>}
+          </div>
+        ))}
+      </div>}
       {pack && pack.unscoreable && pack.unscoreable.length>0 && <div className="card">
-        <div className="eyebrow">Could not be scored</div>
+        <div className="eyebrow">Unscoreable — not enough price history</div>
         <div className="note">These are listed rather than dropped — a pair missing from a ranking should never be indistinguishable from a pair that ranked last.</div>
         {pack.unscoreable.map(u=><div key={u.pair} className="note" style={{marginTop:4}}><span className="ambr">{u.pair}</span> {u.unscoreable}</div>)}
       </div>}
+      {pack && pack.shadowError && <div className="note" style={{marginTop:8}}><span className="ambr">SHADOW LEDGER</span> did not update this run: {pack.shadowError}. The board itself is unaffected.</div>}
       {!pack && !err && <div className="note">Loading the board…</div>}
     </div>
   );

@@ -156,10 +156,18 @@ function screenLines(ranked, from, to) {
       f.volRatio != null ? `energy ${f.volRatio}x own baseline` : null,
       f.rangePos != null ? `range pos ${f.rangePos}` : null,
       f.trendSeparationAtr != null ? `trend ${f.trendSeparationAtr > 0 ? '+' : ''}${f.trendSeparationAtr} ATR` : null,
-      f.catalysts && f.catalysts.next ? `next: ${f.catalysts.ccy || f.catalysts.next.ccy} ${f.catalysts.next.title} ${f.catalysts.next.when} (${f.catalysts.next.impact}, in ${f.catalysts.next.hoursOut}h)` : 'no scheduled catalyst in window',
-      `book-fit favours ${r.preferredDirection}`,
+      f.catalysts && f.catalysts.next ? `next: ${f.catalysts.next.ccy} ${f.catalysts.next.title} ${f.catalysts.next.when} (${f.catalysts.next.impact}, in ${f.catalysts.next.hoursOut}h)` : 'no scheduled catalyst in window',
     ].filter(Boolean);
-    return `${from + n + 1}. ${r.pair} [score ${r.score}] ${bits.join(' · ')}\n     why: ${r.why}`;
+    // The overnight analyst's own read, where there is one. This is the substance of the upgrade:
+    // the shortlist arrives already reasoned about, pair by pair, rather than as bare numbers.
+    const l = r.llm;
+    const head = l
+      ? `${from + n + 1}. ${r.pair} [analyst ${l.score}/100, ${l.direction}${l.direction !== 'STAND_ASIDE' ? `, ${l.conviction}` : ''}]`
+      : `${from + n + 1}. ${r.pair} [score ${r.score}]`;
+    const body = l
+      ? `\n     read: ${l.read}${l.keyRisk ? `\n     key risk: ${l.keyRisk}` : ''}${l.catalystDependency ? `\n     catalyst: ${l.catalystDependency}` : ''}${l.entry != null ? `\n     indicative levels at screen time: entry ${l.entry}, TP ${l.tp}, SL ${l.sl} (RE-ANCHOR these to the live price below)` : ''}`
+      : `\n     why: ${r.why}`;
+    return `${head} ${bits.join(' · ')}${body}`;
   }).join('\n');
 }
 // Aging ladder derived from the doctrine above: OK inside the intended window, NOTE at the
@@ -683,7 +691,7 @@ export function currencyExposure(positions) {
 }
 // Human-readable posture line for the prompt. States the net side of every currency the book
 // actually touches, so "you are long GBP three ways" is visible rather than inferable.
-function exposureLine(exp) {
+export function exposureLine(exp) {
   const rows = Object.entries(exp || {}).filter(([, v]) => Math.abs(v) > 1e-9)
     .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
   if (!rows.length) return 'FLAT — no currency exposure on the book';
@@ -1017,9 +1025,16 @@ async function actIdeas(force) {
   const screen = screenAge(screenPack);
   // Used only while genuinely current; past SCREEN_USABLE_MS it is dropped outright rather than
   // quietly aged into the prompt.
-  const screenRanked = (screen.state === 'FRESH' || screen.state === 'STALE') && screenPack
-    ? (screenPack.ranked || []).filter((r) => !r.alreadyOpen)
-    : [];
+  const screenUsable = (screen.state === 'FRESH' || screen.state === 'STALE') && !!screenPack;
+  const screenRanked = screenUsable ? (screenPack.ranked || []).filter((r) => !r.alreadyOpen) : [];
+  // The consolidation is only honoured if its picks survive the already-open filter — a pair that
+  // was opened between the screen running and now is no longer a candidate, however well it read.
+  const screenConsolidation = (() => {
+    if (!screenUsable || !screenPack.consolidation) return null;
+    const c = screenPack.consolidation;
+    const picks = (c.picks || []).filter((p) => screenRanked.some((r) => r.pair === normPair(p.pair)));
+    return picks.length ? { ...c, picks } : null;
+  })();
   // Pattern feeds follow the board when there is one: the top 8 candidates get technical context
   // whether they are majors or crosses, plus DXY for dollar backdrop.
   const PATTERN_PAIRS = screenRanked.length
@@ -1165,12 +1180,22 @@ ${digest(news, 30)}
 PATTERN DESK — real trader setups from TradingView, per pair (technical/chart-pattern context to weigh ALONGSIDE the news; these are crowd ideas, not gospel, but they show where technical attention sits):
 ${patternDigest}
 ${brainConditions ? `\nMARKET CONDITIONS CROSS-CHECK:\n${brainConditions.line}\n` : ''}
-${screenRanked.length ? `OVERNIGHT SCREEN — THE WHOLE BOARD, MEASURED AND RANKED (${screen.label}${screen.state === 'STALE' ? '; treat the numbers as indicative, re-check anything you act on' : ''}).
-Every tradeable pair was scored in code on identical factors — daily ATR, energy versus the pair's own baseline, position in its 20-day range, trend separation, scheduled catalysts inside the hold window, and how it sits against the book's existing currency exposure. ${screenPack.scored} of ${screenPack.universeSize} pairs scored. Pairs already open in the book are excluded.
-THIS IS THE FUNNEL. You are not choosing from a list of names any more; these are measurements. The top candidates:
-${screenLines(screenRanked, 0, 8)}
+${screenRanked.length ? `OVERNIGHT SCREEN — THE WHOLE BOARD, MEASURED AND INDIVIDUALLY ANALYSED (${screen.label}${screen.state === 'STALE' ? '; treat the numbers as indicative, re-check anything you act on' : ''}).
+Every tradeable pair was measured in code on identical factors, and then EACH ONE was given its own dedicated analyst pass — a separate reasoning call that saw only that pair, with its full evidence and the news touching it. ${screenPack.scored} of ${screenPack.universeSize} pairs completed both stages. Pairs already open in the book are excluded.${(screenPack.unscored || []).length ? ` ${screenPack.unscored.length} pair(s) could not be analysed this run (${screenPack.unscored.slice(0, 4).map((u) => u.pair).join(', ')}) — they are absent from the list below, not judged and rejected.` : ''}
 
-How to use it: these 8 are the board's best by measured factors, and your two ideas should normally come from here. You are NOT forbidden from proposing something outside the top 8 — the screen measures structure and cannot read tonight's news — but if you do, say explicitly in the thesis what the wire tells you that the screen could not see. "I preferred a different pair" is not a reason.` : `OVERNIGHT SCREEN: UNAVAILABLE this run (${screen.label}). You are hunting UNSCREENED — there is no measured ranking of the board tonight, so survey the universe yourself as thoroughly as you can and be honest in desk_note that the board was not pre-measured.`}
+THIS IS THE FUNNEL, AND IT HAS ALREADY DONE REAL WORK. These are not bare rankings; each carries an analyst's read:
+${screenLines(screenRanked, 0, 8)}
+${screenConsolidation ? `
+THE DESK HEAD'S CONSOLIDATION — a further pass that read every analyst's verdict and compared the whole field, which no individual analyst could do:
+Field quality: ${screenConsolidation.field_quality || 'n/a'}. ${screenConsolidation.field_read || ''}
+Selected: ${(screenConsolidation.picks || []).map((p) => `${p.pair} ${p.direction} (${p.conviction}) — ${p.why_this_one}${p.independence ? ` [independence: ${p.independence}]` : ''}`).join('\n          ') || 'none'}
+${(screenConsolidation.runners_up || []).length ? `Runners-up: ${screenConsolidation.runners_up.join(' | ')}` : ''}
+
+YOUR JOB IS NOT TO REDO THAT WORK. Build tonight's two proposals around the selected pairs above. What you add is what the overnight pass could NOT have: the LIVE price, the current margin position, tonight's wire, and the imminent calendar. So:
+- Re-anchor EVERY level to the live reference prices below. The screen's indicative levels are from screen time and are almost certainly stale by now.
+- If live conditions have genuinely invalidated a selection — the move already happened, the catalyst has passed, tonight's wire contradicts it — say so plainly in the thesis and substitute from the runners-up or the ranked list above. That is a legitimate and expected outcome, not a failure.
+- If you go outside this list entirely, name explicitly what the wire tells you that the overnight pass could not see. "I preferred a different pair" is not a reason.` : `
+No consolidation pass was available this run${screenPack.consolidationError ? ` (${screenPack.consolidationError})` : ''}, so weigh the individual analyst reads above yourself and pick the two best. Re-anchor all levels to the live prices below.`}` : `OVERNIGHT SCREEN: UNAVAILABLE this run (${screen.label}). You are hunting UNSCREENED — there is no measured ranking of the board tonight and no per-pair analysis, so survey the universe yourself as thoroughly as you can and be honest in desk_note that the board was not pre-measured.`}
 
 TASK: Propose exactly 2 INTERDAY ideas: opened now, intended to work over ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} DAYS, with a ${HORIZON.ceilingDays}-day absolute ceiling. This is his actual trading rhythm — he is not a day-trader and does not scalp. Build theses that need two or three sessions to play out and levels with the room to survive that long. Do NOT propose a trade whose whole life is a single session, and do NOT propose one that needs a fortnight.
 
@@ -1301,7 +1326,11 @@ Reminder: every price you output is checked against live rates after you respond
     at: screenPack ? screenPack.at : null,
     universeSize: screenPack ? screenPack.universeSize : null,
     scored: screenPack ? screenPack.scored : null,
-    shownTop: screenRanked.slice(0, 8).map((r) => ({ pair: r.pair, score: r.score, dir: r.preferredDirection })),
+    shownTop: screenRanked.slice(0, 8).map((r) => ({ pair: r.pair, score: r.score, dir: (r.llm && r.llm.direction) || r.preferredDirection, read: r.llm ? r.llm.read : null })),
+    perPairAnalysed: screenRanked.filter((r) => !!r.llm).length,
+    unanalysed: (screenUsable && screenPack.unscored ? screenPack.unscored : []).map((u) => ({ pair: u.pair, reason: u.unscored })),
+    consolidation: screenConsolidation ? { picks: screenConsolidation.picks, field_quality: screenConsolidation.field_quality, field_read: screenConsolidation.field_read } : null,
+    consolidationError: screenUsable ? (screenPack.consolidationError || null) : null,
     // Did the ideas actually come from the shortlist, or did the model go off-board? Recorded
     // so it can be reviewed rather than assumed.
     offBoard: (ideas.ideas || []).map((i) => normPair(i.pair)).filter((p) => !screenRanked.slice(0, 16).some((r) => r.pair === p)),
