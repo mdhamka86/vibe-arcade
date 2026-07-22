@@ -614,8 +614,20 @@ function exposureLine(exp) {
 // Does this proposed idea STACK onto risk the book already carries?
 // Returns the legs that add to an existing same-sign exposure. `heavy` means the stack is
 // material enough to be sent back for a genuinely fresh idea rather than merely annotated:
-// either BOTH legs stack (the proposal is a near-duplicate of the book's posture), or one leg
-// more than doubles an existing exposure.
+// either BOTH legs stack materially (the proposal is a near-duplicate of the book's posture),
+// or one material leg is more than doubled.
+//
+// MATERIALITY MATTERS, and leaving it out produced a real false positive. Run against his live
+// book — long AUDUSD 0.05 and short GBPUSD 0.03 among others — the net USD exposure is a 0.02
+// lot RESIDUAL, the arithmetic leftover of two positions that mostly cancel. Without a floor,
+// a fresh 0.03-lot EURUSD idea "more than doubles" that residual and got BLOCKED as stacked
+// risk, which is nonsense: there is no meaningful USD position to stack onto. A gate that
+// blocks good ideas on rounding noise starves the screen and teaches him to ignore it, which
+// is the same failure the PAIR_RANGES note warns about further down this file.
+//
+// So: every same-side leg is still REPORTED (it is true, and cheap to say), but only legs at
+// or above one normal clip can cap conviction or block.
+const STACK_MATERIAL_LOTS = 0.05;
 function correlationCheck(idea, exp) {
   const p = normPair(idea && idea.pair);
   const dir = (idea && idea.direction || '').toUpperCase();
@@ -635,12 +647,15 @@ function correlationCheck(idea, exp) {
       existing: +Math.abs(existing).toFixed(2),
       adding: +adding.toFixed(2),
       combined: +(Math.abs(existing) + adding).toFixed(2),
+      material: Math.abs(existing) >= STACK_MATERIAL_LOTS,
     });
   }
-  // "more than doubles" is only a meaningful test when we know the proposed size; when lots are
-  // missing we fall back to the both-legs test alone rather than inventing a magnitude.
-  const doubles = stacked.some((x) => x.adding > 0 && x.adding >= x.existing);
-  return { stacked, heavy: stacked.length >= 2 || doubles };
+  const material = stacked.filter((x) => x.material);
+  // "more than doubles" is only a meaningful test when we know the proposed size AND there is a
+  // real position underneath it; when lots are missing we fall back to the both-legs test alone
+  // rather than inventing a magnitude.
+  const doubles = material.some((x) => x.adding > 0 && x.adding >= x.existing);
+  return { stacked, material, heavy: material.length >= 2 || doubles };
 }
 
 // ================= MARGIN ARITHMETIC (audit finding 3) =================
@@ -817,9 +832,12 @@ function auditIdeaAgainst(i, ctx, nowMs = Date.now()) {
   const corr = correlationCheck(i, ctx.exposure);
   a.correlation = corr;
   if (corr.stacked.length) {
-    const desc = corr.stacked.map((x) => `${x.side} ${x.ccy} (book ${x.existing} + ${x.adding} = ${x.combined} lots)`).join(', ');
-    if (corr.heavy) a.blocking.push(`${i.pair} ${i.direction} stacks existing risk: ${desc}`);
-    else { a.warnings.push(`Stacks onto existing ${desc}. This is a bigger bet on a currency you already hold, not fresh risk.`); capTo('MED'); }
+    const desc = (rows) => rows.map((x) => `${x.side} ${x.ccy} (book ${x.existing} + ${x.adding} = ${x.combined} lots)`).join(', ');
+    if (corr.heavy) a.blocking.push(`${i.pair} ${i.direction} stacks existing risk: ${desc(corr.material)}`);
+    else if (corr.material.length) { a.warnings.push(`Stacks onto existing ${desc(corr.material)}. This is a bigger bet on a currency you already hold, not fresh risk.`); capTo('MED'); }
+    // Immaterial overlap is stated for honesty but must not cap: it is usually the residual of
+    // two positions that largely cancel, and treating that as stacked risk blocks good ideas.
+    else a.notes = (a.notes || []).concat(`Minor overlap with ${desc(corr.stacked)} — too small to count as stacking.`);
   }
 
   // 4) MARGIN FLOOR, recomputed in code from the live vitals rather than trusted from prose

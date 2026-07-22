@@ -85,6 +85,7 @@ function buildGuards(src, { quiet = false } = {}) {
   out += grabReq(/function redFolderImminent[\s\S]*?\n\}\n/, 'redFolderImminent()');
   out += grabReq(/function currencyExposure[\s\S]*?\n\}\n/, 'currencyExposure()');
   out += grabReq(/function exposureLine[\s\S]*?\n\}\n/, 'exposureLine()');
+  out += grabReq(/const STACK_MATERIAL_LOTS = [^\n]+\n/, 'STACK_MATERIAL_LOTS');
   out += grabReq(/function correlationCheck[\s\S]*?\n\}\n/, 'correlationCheck()');
   out += grabReq(/const LEVERAGE = [^\n]+\n/, 'LEVERAGE');
   out += grabReq(/const CONTRACT = [^\n]+\n/, 'CONTRACT');
@@ -102,7 +103,7 @@ function buildGuards(src, { quiet = false } = {}) {
   out += grabReq(/function auditIdeaAgainst[\s\S]*?\n\}\n/, 'auditIdeaAgainst()');
   out += `\nmodule.exports={HORIZON,ageFlag,num,normPair,pipSize,checkLevels,refFor,YF_SYMBOL,
     calLine,calLines,UNIVERSE_CCYS,calByCurrency,resolveCatalyst,RED_FOLDER_GUARD_MIN,redFolderImminent,
-    currencyExposure,exposureLine,correlationCheck,LEVERAGE,CONTRACT,usdPerUnit,estMarginUSD,
+    currencyExposure,exposureLine,correlationCheck,STACK_MATERIAL_LOTS,LEVERAGE,CONTRACT,usdPerUnit,estMarginUSD,
     projectedMarginLevel,MARGIN_FLOOR_PCT,MARGIN_PREFER_PCT,VITALS_FRESH_MS,vitalsAge,shadowScorecard,
     CONVICTION_RUNG,sessionPhase,ideaIsDupe,auditIdeaAgainst};`;
   const Module = require('module');
@@ -253,6 +254,37 @@ check('BOTH legs stacking IS heavy', G.correlationCheck({ pair: 'GBPJPY', direct
 check('a size that doubles an existing exposure IS heavy',
   G.correlationCheck({ pair: 'GBPJPY', direction: 'BUY', lots: 0.20 }, exp).heavy === true);
 check('flat book: nothing can stack', G.correlationCheck({ pair: 'GBPJPY', direction: 'BUY', lots: 0.05 }, {}).stacked.length === 0);
+
+// MATERIALITY — regression for a false positive found by running the gate against his REAL
+// live book. Long AUDUSD 0.05 + short GBPUSD 0.03 leaves a net SHORT USD of 0.02 lots: not a
+// position, just the arithmetic residual of two trades that mostly cancel. A fresh 0.03-lot
+// EURUSD idea "more than doubles" that residual, and without a materiality floor the gate
+// BLOCKED it as stacked risk. Blocking good ideas on rounding noise starves the screen.
+const realBook = [
+  { pair: 'EURCHF', direction: 'SELL', lots: 0.04 }, { pair: 'AUDUSD', direction: 'BUY', lots: 0.05 },
+  { pair: 'GBPJPY', direction: 'BUY', lots: 0.03 }, { pair: 'AUDNZD', direction: 'BUY', lots: 0.03 },
+  { pair: 'AUDJPY', direction: 'BUY', lots: 0.03 }, { pair: 'GBPUSD', direction: 'SELL', lots: 0.03 },
+];
+const realExp = G.currencyExposure(realBook);
+check('real book nets LONG AUD 0.11 across three positions', Math.abs(realExp.AUD - 0.11) < 1e-9);
+check('real book nets SHORT JPY 0.06 across two', Math.abs(realExp.JPY + 0.06) < 1e-9);
+check('real book leaves a 0.02 USD residual', Math.abs(Math.abs(realExp.USD) - 0.02) < 1e-9);
+check('a 0.02-lot residual does NOT block a fresh idea (the false positive)',
+  G.correlationCheck({ pair: 'EURUSD', direction: 'BUY', lots: 0.03 }, realExp).heavy === false);
+check('...and does not cap conviction either', (() => {
+  const a = G.auditIdeaAgainst(goodIdea(), baseCtx({ exposure: realExp }));
+  return a.cap === null && a.blocking.length === 0;
+})());
+check('...but the overlap is still reported honestly, not hidden',
+  G.correlationCheck({ pair: 'EURUSD', direction: 'BUY', lots: 0.03 }, realExp).stacked.length === 1);
+// The floor must not swallow the real thing it exists to catch.
+check('a MATERIAL long-AUD stack still warns and caps', (() => {
+  const a = G.auditIdeaAgainst({ pair: 'AUD/CAD', direction: 'BUY', entry_zone: '0.9872', tp: '0.9960', sl: '0.9810', lots: '0.03' }, baseCtx({ exposure: realExp }));
+  return a.cap === 'MED' && a.blocking.length === 0;
+})());
+check('a MATERIAL both-leg stack (long AUD + short JPY) still BLOCKS',
+  G.correlationCheck({ pair: 'AUDJPY', direction: 'BUY', lots: 0.03 }, realExp).heavy === true);
+check('materiality floor is one normal clip', G.correlationCheck({ pair: 'AUDCAD', direction: 'BUY', lots: 0.03 }, realExp).material.length === 1);
 
 console.log('\n=== 5. MARGIN ARITHMETIC + FLOOR (B3) ===');
 // Calibration anchor: the figure quoted in the engine prompt as observed live.
@@ -492,9 +524,15 @@ const MUTATIONS = [
   },
   {
     gate: 'B2 correlation escalation to blocking',
-    from: `  return { stacked, heavy: stacked.length >= 2 || doubles };`,
-    to: `  return { stacked, heavy: false };`,
+    from: `  return { stacked, material, heavy: material.length >= 2 || doubles };`,
+    to: `  return { stacked, material, heavy: false };`,
     probe: (g) => g.auditIdeaAgainst({ pair: 'GBPJPY', direction: 'BUY', entry_zone: '218.08', tp: '220.50', sl: '216.80', lots: '0.02' }, baseCtx({ exposure: bothLegs })).blocking.length > 0,
+  },
+  {
+    gate: 'B2 materiality floor (no blocking on residuals)',
+    from: `const STACK_MATERIAL_LOTS = 0.05;`,
+    to: `const STACK_MATERIAL_LOTS = 0;`,
+    probe: (g) => g.correlationCheck({ pair: 'EURUSD', direction: 'BUY', lots: 0.03 }, realExp).heavy === false,
   },
   {
     gate: 'B2 exposure sign convention',
