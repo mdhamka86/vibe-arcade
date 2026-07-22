@@ -18,6 +18,22 @@
 //   ?url=   required, http(s) URL to probe
 //   ?ua=    optional: "chrome" | "iphone" | "none"   (default chrome)
 //   ?ms=    optional timeout ms (default 15000, max 30000)
+//   ?h=     optional request header, "Name: value". Repeatable.
+//   ?method= optional, GET (default) or POST
+//   ?body=  optional request body (implies POST if ?method= is absent)
+//
+// HEADERS AND POST ADDED 22/07/2026, for the Australia source hunt. The question
+// was whether racing.com's GraphQL API answers from syd1, and it could not be asked:
+// it is an AWS AppSync endpoint that needs an x-api-key header and a POST query, and
+// a GET without the header returns a clean 401 that proves only that the network path
+// is open. "The path is open" is not "the authed call works", and that gap is exactly
+// where this project has been burned before — PMU 403s from a dev box and works from
+// syd1, TAB returns a 200 with an HTML geo-block body locally and real JSON from syd1.
+// A scouting tool that cannot make the call you need to scout answers the wrong question.
+//
+// This widens the tool: it can now send arbitrary headers and POST bodies, which makes
+// the ?key= guard load-bearing rather than decorative. Same lifespan note as above —
+// this file goes when the adapters are locked.
 
 const PROBE_KEY = "outsider-probe-1907";
 
@@ -63,7 +79,23 @@ export default async (req, res) => {
     try {
       const headers = { Accept: "*/*" };
       if (ua !== "none" && UAS[ua]) headers["User-Agent"] = UAS[ua];
-      const r = await fetch(target, { signal: ctrl.signal, headers, redirect: "follow" });
+      // ?h=Name: value, repeatable. Split on the FIRST colon only — header values
+      // routinely contain colons (URLs, timestamps) and splitting on all of them
+      // would quietly truncate the value rather than fail.
+      for (const raw of u.searchParams.getAll("h")) {
+        const i = String(raw).indexOf(":");
+        if (i <= 0) continue;
+        headers[String(raw).slice(0, i).trim()] = String(raw).slice(i + 1).trim();
+      }
+      const body = u.searchParams.get("body");
+      const method = (u.searchParams.get("method") || (body ? "POST" : "GET")).toUpperCase();
+      if (body && !headers["Content-Type"] && !headers["content-type"])
+        headers["Content-Type"] = "application/json";
+      const r = await fetch(target, {
+        signal: ctrl.signal, headers, method,
+        body: method === "GET" || method === "HEAD" ? undefined : body,
+        redirect: "follow",
+      });
       const text = await r.text();
       const stripped = text
         .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -83,6 +115,10 @@ export default async (req, res) => {
       out = {
         url: target,
         ua,
+        method,
+        // names only, never values: this echoes back into logs and a header is
+        // where a credential lives.
+        sentHeaders: Object.keys(headers),
         status: r.status,
         contentType: r.headers.get("content-type") || null,
         bytes: text.length,
