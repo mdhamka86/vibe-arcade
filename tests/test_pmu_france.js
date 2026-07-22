@@ -197,7 +197,20 @@ const C = (Rn, Cn, dist, partants, startMs, extra) => Object.assign({ R: Rn, C: 
     const code = src.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
     check('adapter is invoked from stageSources', code.includes('pmuFranceSource(pack, m)'));
     check('scoped to FR meets only', /filter\(\(m\) => m\.region === "FR"\)/.test(code));
-    check('no other region is named in the wiring', !/pmuFranceSource[\s\S]{0,400}region === "(AU|SA|UK|JP|HK|MY|TR|KR|DE)"/.test(code));
+    // The France adapter must be gated by the FR filter and nothing else. This used to
+    // assert that no other region appeared within 400 characters, which was a proxy for
+    // that and stopped being one on 22/07/2026 when the Australian adapters were wired in
+    // directly below — a passing proxy that fails the moment a NEIGHBOUR appears was
+    // testing adjacency, not scoping. Assert the real thing: the region filter that
+    // governs the pmuFranceSource call is FR.
+    const callIdx = code.indexOf('pmuFranceSource(pack, m)');
+    const before = code.slice(0, callIdx);
+    const regionFilters = [...before.matchAll(/m\.region === "([A-Z]{2})"/g)];
+    check('the region filter governing the FR call is FR',
+      callIdx > 0 && regionFilters.length > 0 &&
+      regionFilters[regionFilters.length - 1][1] === 'FR');
+    check('pmuFranceSource is invoked exactly once',
+      code.split('pmuFranceSource(pack, m)').length - 1 === 1);
     check('attached AFTER the region fan-out (per meet, not per region)',
       code.indexOf('m.sources = (byRegion') < code.indexOf('pmuFranceSource(pack, m)'));
     check('source is tagged kind:"card"', code.includes('kind: "card"'));

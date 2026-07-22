@@ -378,12 +378,26 @@ function pmuCoursesFromProgramme(prog) {
 // Coupon order is deliberately NOT an invariant. 08/07 matched 14/14 races at 100%
 // of names with the assignments out of start-time order — SGPools numbers its
 // coupon its own way. Ordering is reported for diagnosis and never gates anything.
+// GENERALISED 22/07/2026 for Australia. This function was written for PMU but nothing
+// in it is French: it matches a coupon to a day's races by runner name. The four opts
+// below are what it took to point it at TAB, and every default reproduces the French
+// behaviour byte for byte — including the unresolved-reason strings the FR suite asserts.
 async function matchCard(sgRaces, courses, getNames, opts) {
   const o = opts || {};
   const FLOOR = o.floor == null ? 0.5 : o.floor;   // house law: >=50% by name
   const SLACK = o.slack == null ? 2 : o.slack;     // declared vs carded runners
   const MAX_TRY = o.maxTry == null ? 8 : o.maxTry; // candidates tried per race
   const BUDGET = o.budget == null ? 40 : o.budget; // total participants fetches
+  // PREFILTER tolerance on distance, in metres. 0 means exact and keeps France as it
+  // was. Australia needs slack: Pinjarra R6 on 22/07 is 1600m on the SGPools coupon and
+  // 1613m on TAB, because AU tracks publish true measured distances and the coupon
+  // rounds them. Exact matching drops the right race out of the tight candidate set and
+  // falls back to the wide one, which still worked today but only by luck of ordering.
+  // This is a PREFILTER, never a matching signal — names decide, same as ever.
+  const DIST_TOL = o.distTol == null ? 0 : o.distTol;
+  // What to call the source in an unresolved reason, and how to render one of its races.
+  const LABEL = o.label || "PMU";
+  const refOf = o.refOf || ((c) => "R" + c.R + "/C" + c.C);
   const assigned = [];
   const unresolved = [];
   const used = new Set();
@@ -398,7 +412,7 @@ async function matchCard(sgRaces, courses, getNames, opts) {
       continue;
     }
     const fresh = courses.filter((c) => !used.has(c.R + "|" + c.C));
-    let cands = fresh.filter((c) => c.dist === d && Math.abs(c.partants - n) <= SLACK);
+    let cands = fresh.filter((c) => Math.abs(c.dist - d) <= DIST_TOL && Math.abs(c.partants - n) <= SLACK);
     if (!cands.length) cands = fresh.filter((c) => Math.abs(c.partants - n) <= SLACK);
     cands = cands
       .sort((a, b) => Math.abs(a.partants - n) - Math.abs(b.partants - n) || a.startMs - b.startMs)
@@ -420,7 +434,7 @@ async function matchCard(sgRaces, courses, getNames, opts) {
         raceNo: sr.raceNo, ...best.c,
         sgDist: d, sgField: n,
         overlap: Math.round(best.overlap * 100) / 100,
-        pmuNames: best.names,
+        srcNames: best.names,
         tried: cands.length,
       });
     } else {
@@ -429,12 +443,12 @@ async function matchCard(sgRaces, courses, getNames, opts) {
       unresolved.push({
         raceNo: sr.raceNo, sgDist: d, sgField: n,
         why: best
-          ? "best of " + cands.length + " candidate(s) was PMU R" + best.c.R + "/C" + best.c.C +
+          ? "best of " + cands.length + " candidate(s) was " + LABEL + " " + refOf(best.c) +
             " at " + Math.round(best.overlap * 100) + "% runner-name overlap, under the " +
             Math.round(FLOOR * 100) + "% floor — treated as a different race"
           : (cands.length
               ? "none of " + cands.length + " candidate course(s) returned runners"
-              : "no PMU course at " + d + "m with " + n + "±" + SLACK + " runners anywhere in the day's programme"),
+              : "no " + LABEL + " course at " + d + "m with " + n + "±" + SLACK + " runners anywhere in the day's programme"),
       });
     }
   }
@@ -444,12 +458,19 @@ async function matchCard(sgRaces, courses, getNames, opts) {
     if (assigned[i].startMs < assigned[i - 1].startMs) monotonic = false;
   const byReunion = {};
   for (const a of assigned) (byReunion[a.R] = byReunion[a.R] || []).push(a);
+  // The group key is a PMU réunion number for France and a TAB venue mnemonic for
+  // Australia. The old unconditional .map(Number) turned "CBY" into NaN and reported
+  // "across reunions NaN + NaN" — coercing an identifier to a number because it usually
+  // looked like one. Sort numerically only when the keys really are numbers.
+  const keys = Object.keys(byReunion);
+  const allNumeric = keys.length > 0 && keys.every((k) => /^-?\d+$/.test(k));
   return {
     assigned, unresolved, monotonic, fetches,
     confidence: (sgRaces || []).length ? assigned.length / sgRaces.length : 0,
-    // SGPools France is a COUPON CONTAINER and routinely merges several PMU
-    // réunions (22/07 = R4+R5, 08/07 = R3+R4, 07/07 = R1+R4). Never assume one.
-    reunions: Object.keys(byReunion).map(Number).sort((a, b) => a - b),
+    // SGPools is a COUPON CONTAINER and routinely merges several source meets — France
+    // 22/07 = R4+R5, 08/07 = R3+R4; Australia 22/07 = Doomben+Canterbury interleaved
+    // race by race. Never assume one.
+    reunions: allNumeric ? keys.map(Number).sort((a, b) => a - b) : keys.slice().sort(),
     venues: [...new Set(assigned.map((a) => a.hippo))],
   };
 }
@@ -476,7 +497,7 @@ function pmuSourceText(pack, meet, m) {
     // Runners PMU declares that the SGPools card does not name, and vice versa —
     // usually a late scratching, and worth the model seeing rather than hiding.
     const card = new Set((sg.runners || []).map((h) => normName(h.name)));
-    const extra = (a.pmuNames || []).filter((x) => !card.has(normName(x)));
+    const extra = (a.srcNames || []).filter((x) => !card.has(normName(x)));
     if (extra.length) L.push("  PMU also declares (not on the SGPools card, likely scratched/added): " + extra.join(", "));
   }
   for (const u of m.unresolved)
@@ -530,6 +551,419 @@ async function pmuFranceSource(pack, meet) {
   };
 }
 
+// ============================================================================
+// AUSTRALIA: two sources — TAB is the CARD, racing.com is the OPINION
+// ============================================================================
+// WHY THIS EXISTS. Every Australian pundit source died. racenet, punters, racing.com,
+// skyracing and racingandsports are all Cloudflare-walled, and justhorseracing — the
+// last one that worked — started 403ing. On 22/07/2026 the trawl fetched racingnsw's
+// homepage for all three AU meets, it named 0 of 468 card runners, and all three went
+// ssotBlind: "There is NO data edge here today". Australia is on the coupon nearly
+// every day and none of it could be bet.
+//
+// This is the France fix applied to Australia, and it needs TWO sources because the
+// French one only solved half the problem. PMU ended France's card blindness but a
+// racecard carries no view, so `isOpinionSource` correctly refuses to count it and
+// ext===0 still vetoes every leg. Australia needs both halves:
+//
+//   TAB (api.beta.tab.com.au) — the CARD. Tabcorp's tote API, the direct analogue of
+//   PMU: date-addressable (/racing/dates/YYYY-MM-DD), meeting-addressable
+//   (/meetings/R/{venue}/races/{n}), structured runners. Already trusted by tabPrices.
+//   Verified 22/07: all 38 SGPools AU races matched at 100% runner-name overlap.
+//
+//   racing.com (graphql.rmdprod.racing.com) — the OPINION. The site is Cloudflare-
+//   walled but its AWS AppSync API behind it is not, exactly as PMU's API sat behind
+//   its SPA shell. Named analysts, per-race ranked selections with reasoning, and a
+//   best bet / best value / roughie per meeting. Verified 22/07: all 8 published tips
+//   resolved to the right horse at the right saddlecloth number on the SGPools card.
+//
+// BOTH ARE PROVEN FROM PRODUCTION, which is the only proof that counts. TAB returns a
+// 200 with an HTML geo-block body from a dev box and real JSON from syd1 — a 200 that
+// lies, which is why tabFetchJson below refuses to trust a status code. racing.com's
+// authed POST was confirmed from syd1 through /api/probe before a line of it was built.
+//
+// NUMBERING. Neither source's race numbers are ever carried across. SGPools interleaves
+// two source meets into one renumbered coupon — 22/07 "Australia" ran Doomben R1,
+// Canterbury R1, Doomben R2, Canterbury R2… so SGPools R13 is Doomben R7, and
+// racing.com's own "R7" tip means SGPools R13. Venue labels are worse than useless:
+// "Australia (Melbourne)" carried a South Australian meeting on 22/07 and
+// "Australia (Perth)" was Rockhampton, Queensland on 21/07. Names decide. Always.
+
+const TAB_BASE = "https://api.beta.tab.com.au/v1/tab-info-service/racing/dates/";
+// TAB's `jurisdiction` selects a pricing jurisdiction, NOT a geographic filter: NSW
+// returns the whole national list (verified — Pinjarra WA and Sandown VIC both arrive
+// through it), so all three SGPools AU containers are served by one call.
+const TAB_JURISDICTION = "NSW";
+const AU_LOCATIONS = new Set(["NSW", "VIC", "QLD", "SA", "WA", "TAS", "ACT", "NT"]);
+// Runaway guard on the per-race fan-out, not a coverage decision. A normal Saturday is
+// ~45 AU races. If this ever bites it is reported, never silently swallowed.
+const TAB_RACE_CAP = 90;
+
+// TAB's geo-block is an HTML page served with HTTP 200, so `r.ok` is worthless here and
+// a caller checking only the status would parse a login page as a racecard. asJson does
+// throw on it, but the resulting error reads like a parser bug rather than what it is.
+async function tabFetchJson(url, ms) {
+  const r = await fetchWithTimeout(url, ms || 15000, true, { ua: "iphone" });
+  if (!r.ok) {
+    const geo = /JSON|Unexpected token|<!DOCTYPE/i.test(String(r.error || ""));
+    return { ok: false, error: geo
+      ? "TAB served a non-JSON body (this is the HTML geo-block page, which comes back " +
+        "with HTTP 200 — the request did not reach the API): " + r.error
+      : r.error };
+  }
+  if (!r.body || typeof r.body !== "object") return { ok: false, error: "TAB returned a non-object body" };
+  return { ok: true, body: r.body };
+}
+
+// Pull the whole day's Australian racing from TAB: one meetings call, then every AU
+// race. Deliberately eager rather than lazy. The meetings list carries distance but NOT
+// field size, so a lazy matcher would have nothing to prefilter on and would pay for
+// up to 8 speculative fetches per race; fetching all ~40 up front costs less, is a
+// fixed known price, and hands the matcher a complete pool that needs no network at all.
+async function tabDayRaces(pack) {
+  const d = String(pack.date || "").split("/");
+  if (d.length !== 3) return { ok: false, error: "unusable pack date " + pack.date, races: [] };
+  const tabDate = d[2] + "-" + d[1] + "-" + d[0];
+  const list = await tabFetchJson(TAB_BASE + tabDate + "/meetings?jurisdiction=" + TAB_JURISDICTION, 20000);
+  if (!list.ok) return { ok: false, error: "TAB meetings: " + list.error, races: [] };
+
+  const meetings = (list.body.meetings || []).filter(
+    (m) => m.raceType === "R" && m.venueMnemonic && AU_LOCATIONS.has(String(m.location || "").toUpperCase()));
+  if (!meetings.length)
+    // TAB is a live wagering feed, not an archive: it serves today and tomorrow and
+    // returns {"meetings":[]} — a 200, valid JSON, silently empty — for any past date.
+    // Say that, rather than letting an empty pool look like a matching failure.
+    return { ok: false, races: [], error:
+      "TAB listed no Australian thoroughbred meetings for " + pack.date +
+      ". TAB carries today and tomorrow only and purges past days (a previous date returns " +
+      "an empty list, and its races 404), so this is expected for a backfill and a real " +
+      "outage otherwise." };
+
+  const jobs = [];
+  for (const m of meetings)
+    for (const r of m.races || [])
+      jobs.push({ venue: m.venueMnemonic, meetingName: m.meetingName || m.venueMnemonic,
+        location: m.location, raceNumber: r.raceNumber });
+  const capped = jobs.length > TAB_RACE_CAP ? jobs.length - TAB_RACE_CAP : 0;
+  const wanted = jobs.slice(0, TAB_RACE_CAP);
+
+  const races = [];
+  const errors = [];
+  const CONC = 6;
+  let i = 0;
+  await Promise.all(Array.from({ length: CONC }, async () => {
+    while (i < wanted.length) {
+      const j = wanted[i++];
+      const u = TAB_BASE + tabDate + "/meetings/R/" + encodeURIComponent(j.venue) +
+        "/races/" + j.raceNumber + "?jurisdiction=" + TAB_JURISDICTION;
+      const r = await tabFetchJson(u, 12000);
+      if (!r.ok) { errors.push(j.venue + " R" + j.raceNumber + ": " + r.error); continue; }
+      const runners = (r.body.runners || []).map((x) => ({
+        no: x.runnerNumber != null ? x.runnerNumber : x.number,
+        name: x.runnerName,
+        barrier: x.barrierNumber == null ? null : x.barrierNumber,
+        jockey: x.riderDriverName || null,
+        trainer: x.trainerName || null,
+        weight: x.handicapWeight == null ? null : x.handicapWeight,
+        last5: x.last5Starts || null,
+        scratched: String((x.fixedOdds || {}).bettingStatus || "").toLowerCase() === "scratched",
+      })).filter((x) => x.name);
+      races.push({
+        // the {R, C, dist, partants, startMs} shape matchCard eats. R is a venue
+        // mnemonic here rather than a réunion number; matchCard treats it as an
+        // opaque key, which is what the grouping fix above made safe.
+        R: j.venue, C: r.body.raceNumber || j.raceNumber,
+        hippo: j.meetingName, pays: j.location,
+        dist: parseDistM(r.body.raceDistance),
+        partants: runners.filter((x) => !x.scratched).length,
+        startMs: r.body.raceStartTime ? Date.parse(r.body.raceStartTime) : 0,
+        discipline: "", libelle: r.body.raceName || "",
+        runners,
+      });
+    }
+  }));
+  races.sort((a, b) => a.startMs - b.startMs);
+  return {
+    ok: races.length > 0, races, fetched: wanted.length, capped,
+    meetings: meetings.map((m) => m.venueMnemonic + " (" + m.location + ")"),
+    errors,
+    error: races.length ? null : "TAB listed " + meetings.length + " AU meeting(s) but no race returned runners",
+  };
+}
+
+// Render one matched AU card. Numbers are SGPools' own — see the numbering note above.
+function tabSourceText(pack, meet, m, day) {
+  const L = [];
+  L.push("TAB OFFICIAL RACECARD for " + meet.venue + ", card date " + pack.date +
+    " — matched to the SGPools coupon by runner name, race by race.");
+  L.push("Matched " + m.assigned.length + " of " + (meet.raceMap || []).length +
+    " SGPools races across " + (m.reunions.length > 1 ? "TAB meetings " : "TAB meeting ") +
+    m.reunions.join(" + ") + " (" + m.venues.join(" + ") + ").");
+  L.push("Horse and race numbers below are the SGPools card's own. TAB numbers its races " +
+    "within each venue, and this coupon interleaves venues and renumbers them, so TAB's " +
+    "race numbers are deliberately not carried across.");
+  for (const a of m.assigned) {
+    const sg = (meet.raceMap || []).find((r) => r.raceNo === a.raceNo) || {};
+    const src = (day.races || []).find((r) => r.R === a.R && r.C === a.C) || {};
+    const when = a.startMs ? new Date(a.startMs).toISOString().slice(11, 16) + "Z" : "?";
+    const byName = {};
+    (src.runners || []).forEach((x) => { byName[normName(x.name)] = x; });
+    L.push("");
+    L.push("SGPools R" + a.raceNo + " = " + a.R + " race " + a.C + " (" + a.hippo + ", " + a.pays + ")  " +
+      (a.libelle || "") + "  " + a.dist + "m  off " + when +
+      "  [" + Math.round(a.overlap * 100) + "% runner-name agreement]");
+    for (const h of sg.runners || []) {
+      const t = byName[normName(h.name)];
+      const bits = [];
+      if (t) {
+        if (t.barrier != null) bits.push("barrier " + t.barrier);
+        if (t.jockey) bits.push(t.jockey);
+        if (t.trainer) bits.push("tr. " + t.trainer);
+        if (t.weight != null) bits.push(t.weight + "kg");
+        if (t.last5) bits.push("last5 " + t.last5);
+        if (t.scratched) bits.push("SCRATCHED");
+      }
+      // "not named by TAB" is a REAL signal — that runner failed the name match and its
+      // number cannot be trusted against this source. It must not be said about a horse
+      // TAB named but carried no detail for, which is what an `if (bits.length)` test
+      // alone did: on the first live run every correctly-matched runner was labelled
+      // unnamed, turning a clean 100% card into one that read as entirely unverified.
+      L.push("  " + h.no + " " + h.name +
+        (t ? (bits.length ? "  (" + bits.join(", ") + ")" : "") : "  (NOT named by TAB on this race)"));
+    }
+    const card = new Set((sg.runners || []).map((h) => normName(h.name)));
+    const extra = (a.srcNames || []).filter((x) => !card.has(normName(x)));
+    if (extra.length) L.push("  TAB also declares (not on the SGPools card, likely scratched/added): " + extra.join(", "));
+  }
+  for (const u of m.unresolved)
+    L.push("\nSGPools R" + u.raceNo + ": NO TAB RACE MATCHED — " + u.why);
+  return L.join("\n");
+}
+
+// Build the TAB card source for ONE AU meet against an already-fetched day.
+// `claimed` is shared across the day's meets: SGPools splits Australian racing into
+// several coupon containers, and without a shared claim set two containers can both
+// match the same TAB race. Names make that unlikely, not impossible, and "unlikely" is
+// how the 17/07 wrong-horse bet happened.
+async function tabAustraliaSource(pack, meet, day, claimed) {
+  if (!day.ok)
+    return { id: "tab-racecard", kind: "card", ok: false, error: day.error, chars: 0, text: "" };
+  const pool = (day.races || []).filter((r) => !claimed.has(r.R + "|" + r.C) && r.runners.length);
+  const byKey = {};
+  pool.forEach((r) => { byKey[r.R + "|" + r.C] = r.runners.map((x) => x.name); });
+  // Every race is already in hand, so this never touches the network — matchCard's own
+  // fetch budget is irrelevant here and is raised out of the way rather than left to
+  // silently truncate a big card.
+  const getNames = async (R, C) => byKey[R + "|" + C] || null;
+
+  const sgRaces = (meet.raceMap || []).map((r) => ({
+    raceNo: r.raceNo, dist: r.dist, fieldSize: r.fieldSize, runners: r.runners,
+  }));
+  const m = await matchCard(sgRaces, pool, getNames, {
+    distTol: 20, budget: Infinity, maxTry: 24,
+    label: "TAB", refOf: (c) => c.R + " race " + c.C,
+  });
+  for (const a of m.assigned) claimed.add(a.R + "|" + a.C);
+
+  // PRICE REF. tabPrices used to rediscover this same mapping at propose time with a
+  // distance-gated scan under a 50-fetch cap, and could miss. The card match has just
+  // established it definitively by name, so record it and let the price stage do a
+  // direct lookup instead of searching for something we already found.
+  for (const a of m.assigned) {
+    const race = (meet.raceMap || []).find((r) => r.raceNo === a.raceNo);
+    if (race) race.priceRef = { src: "tab", venue: a.R, srcRaceNo: a.C };
+  }
+
+  const text = tabSourceText(pack, meet, m, day);
+  return {
+    id: "tab-racecard",
+    kind: "card",
+    ok: m.assigned.length > 0,
+    error: m.assigned.length ? null : "TAB carried no race matching any SGPools race on this card",
+    chars: text.length,
+    text: m.assigned.length ? text : "",
+    tab: {
+      meetings: m.reunions, venues: m.venues, monotonic: m.monotonic,
+      matched: m.assigned.length, of: sgRaces.length,
+      dayFetches: day.fetched, dayCapped: day.capped, dayErrors: day.errors,
+      races: m.assigned.map((a) => ({
+        sgRaceNo: a.raceNo, venue: a.R, srcRaceNo: a.C, dist: a.dist,
+        startMs: a.startMs, libelle: a.libelle, overlap: a.overlap,
+      })),
+      unresolved: m.unresolved,
+    },
+  };
+}
+
+// ---- racing.com: the OPINION half ----
+// AWS AppSync behind the Cloudflare-walled site. The key is the one racing.com ships to
+// every browser that loads the site, so it is public in the only sense that matters
+// here, and it can be rotated without warning. NOTHING may depend on this source
+// surviving: every failure path below degrades Australia to card-only (visible and
+// verified, still not bettable) and none of them throws.
+const RDC_GRAPHQL = "https://graphql.rmdprod.racing.com";
+const RDC_KEY = "da2-6nsi4ztsynar3l3frgxf77q5fe";
+const RDC_QUERY =
+  "query($d:String!){GetMeetingByDate(date:$d){venueName state isTab " +
+  "meetTips{shortComment longComment tipster{tipsterName} " +
+  "bestBet{comment raceEntryItem{horseName raceNumber raceEntryNumber}} " +
+  "bestValue{comment raceEntryItem{horseName raceNumber raceEntryNumber}} " +
+  "bestRoughie{comment raceEntryItem{horseName raceNumber raceEntryNumber}}} " +
+  "races{raceNumber raceTips{tipType comment tipster{tipsterName} " +
+  "tips{position comment raceEntryItem{horseName raceNumber raceEntryNumber}}}}}}";
+
+// racing.com hands some prose back as a JSON-ENCODED STRING rather than an object.
+// Reading .comment straight off it yields undefined, which renders as a source that
+// fetched perfectly and said nothing — the exact failure shape the SSOT gate exists to
+// catch, arriving from a source that would otherwise pass it.
+function rdcText(v) {
+  if (!v) return "";
+  let s = v;
+  if (typeof s === "string") {
+    const t = s.trim();
+    if (t.startsWith("{") || t.startsWith("[")) {
+      try { const o = JSON.parse(t); s = (o && (o.comment || o.text)) || ""; } catch (e) { s = t; }
+    }
+  } else if (typeof s === "object") {
+    s = s.comment || s.text || "";
+  }
+  return String(s || "").replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+}
+
+async function rdcDayTips(pack) {
+  const d = String(pack.date || "").split("/");
+  if (d.length !== 3) return { ok: false, error: "unusable pack date " + pack.date, meets: [] };
+  const iso = d[2] + "-" + d[1] + "-" + d[0];
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const r = await fetch(RDC_GRAPHQL, {
+      method: "POST", signal: ctrl.signal,
+      headers: { "Content-Type": "application/json", "x-api-key": RDC_KEY },
+      body: JSON.stringify({ query: RDC_QUERY, variables: { d: iso } }),
+    });
+    if (!r.ok) return { ok: false, error: "racing.com HTTP " + r.status, meets: [] };
+    const j = await r.json();
+    // A rotated key comes back as a 401, but a REVOKED field or a schema change comes
+    // back as a 200 with an errors array and data:null. Both are failures; only one
+    // looks like one.
+    if (j.errors && j.errors.length)
+      return { ok: false, meets: [], error: "racing.com GraphQL: " +
+        j.errors.map((e) => e.message || e.errorType).join("; ").slice(0, 200) };
+    const meets = ((j.data || {}).GetMeetingByDate || []).filter((m) => m.isTab === 1);
+    return { ok: meets.length > 0, meets,
+      error: meets.length ? null : "racing.com returned no TAB meetings for " + pack.date };
+  } catch (e) {
+    return { ok: false, meets: [],
+      error: e.name === "AbortError" ? "racing.com timeout after 20000ms" : String(e.message || e) };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// Resolve racing.com's tips onto ONE SGPools meet, by runner name.
+//
+// There is no venue correspondence to maintain and none is attempted: a tip belongs to
+// this coupon container if and only if the horse it names is on this container's card.
+// That is what partitions the day's tips across "Australia", "Australia (Melbourne)"
+// and "Australia (Perth)" correctly even though the labels are meaningless, and it is
+// what converts racing.com's own race numbers into this coupon's — on 22/07 its
+// Doomben "R7" best bet is SGPools R13, and a source that carried its own numbering
+// across would have staked the wrong race.
+function rdcSourceForMeet(pack, meet, day) {
+  if (!day.ok) return { id: "racing-com-tips", ok: false, error: day.error, chars: 0, text: "" };
+
+  const where = {};   // normalised horse name -> { raceNo, no, name }
+  (meet.raceMap || []).forEach((r) =>
+    (r.runners || []).forEach((h) => { where[normName(h.name)] = { raceNo: r.raceNo, no: h.no, name: h.name }; }));
+
+  const L = [];
+  const resolved = [];
+  const foreign = [];
+  const say = (e, kind, comment) => {
+    const it = e && e.raceEntryItem;
+    if (!it || !it.horseName) return null;
+    const hit = where[normName(it.horseName)];
+    if (!hit) { foreign.push(it.horseName); return null; }
+    resolved.push(hit);
+    const note = rdcText(comment || e.comment);
+    return "  " + kind + ": SGPools R" + hit.raceNo + " #" + hit.no + " " + hit.name +
+      "  [racing.com carded it as its own R" + it.raceNumber + " #" + it.raceEntryNumber + "]" +
+      (note ? "\n      " + note : "");
+  };
+
+  for (const m of day.meets || []) {
+    const block = [];
+    for (const t of m.meetTips || []) {
+      const who = ((t.tipster || {}).tipsterName || "").trim();
+      const lines = [
+        say(t.bestBet, "BEST BET"),
+        say(t.bestValue, "BEST VALUE"),
+        say(t.bestRoughie, "ROUGHIE"),
+      ].filter(Boolean);
+      const note = rdcText(t.shortComment) || rdcText(t.longComment);
+      if (lines.length) {
+        block.push("  -- " + (who || "racing.com") + " --");
+        block.push(...lines);
+        if (note) block.push("      " + note.slice(0, 700));
+      }
+    }
+    for (const r of m.races || []) {
+      for (const rt of r.raceTips || []) {
+        const who = ((rt.tipster || {}).tipsterName || "").trim();
+        const picks = (rt.tips || [])
+          .slice()
+          .sort((a, b) => (a.position || 99) - (b.position || 99))
+          .map((x) => {
+            const it = x.raceEntryItem || {};
+            const hit = it.horseName ? where[normName(it.horseName)] : null;
+            if (!hit) { if (it.horseName) foreign.push(it.horseName); return null; }
+            resolved.push(hit);
+            return (x.position ? x.position + ". " : "") + "SGPools R" + hit.raceNo + " #" + hit.no + " " + hit.name;
+          })
+          .filter(Boolean);
+        if (!picks.length) continue;
+        const note = rdcText((rt.tips || []).map((x) => x.comment).find(Boolean)) || rdcText(rt.comment);
+        block.push("  -- " + (who || "racing.com") + (rt.tipType ? ", " + rt.tipType : "") +
+          " on racing.com's own race " + r.raceNumber + " --");
+        block.push("      " + picks.join("  |  "));
+        if (note) block.push("      " + note.slice(0, 900));
+      }
+    }
+    if (block.length) {
+      L.push("");
+      L.push(m.venueName + " (" + m.state + "):");
+      L.push(...block);
+    }
+  }
+
+  if (!resolved.length)
+    return { id: "racing-com-tips", ok: false, chars: 0, text: "",
+      error: "racing.com published tips for " + (day.meets || []).length +
+        " Australian meeting(s) but none named a horse on the SGPools card for " + meet.venue +
+        " — these tips are about the other AU coupon containers" };
+
+  const races = new Set(resolved.map((r) => r.raceNo));
+  const head = [
+    "RACING.COM TIPS for " + meet.venue + ", card date " + pack.date +
+      " — every selection resolved to the SGPools coupon by horse NAME.",
+    "Named analysts' selections and reasoning covering " + races.size + " of " +
+      (meet.raceMap || []).length + " races on this card.",
+    "RACE AND HORSE NUMBERS BELOW ARE THE SGPools CARD'S OWN. racing.com numbers races " +
+      "within a single venue; this coupon interleaves two venues and renumbers them, so " +
+      "its numbering is shown in brackets for reference only and must never be bet from.",
+  ];
+  if (foreign.length)
+    head.push("Selections dropped as belonging to another coupon container: " +
+      [...new Set(foreign)].length + " horse(s) not on this card.");
+  const text = head.join("\n") + "\n" + L.join("\n");
+  return {
+    id: "racing-com-tips", ok: true, error: null, chars: text.length, text,
+    rdc: { racesCovered: races.size, of: (meet.raceMap || []).length,
+      selections: resolved.length, dropped: [...new Set(foreign)].length },
+  };
+}
+
 // TAB: AU meets. One meetings call, then lazy race fetches gated by distance and
 // capped, with a learned venue+offset shortcut (SGPools integrates venues in
 // contiguous renumbered blocks, so once R5=venue X race 2, R6 is very likely
@@ -572,8 +1006,20 @@ async function tabPrices(pack, stats) {
     for (const race of m.raceMap || []) {
       const dist = parseDistM(race.dist);
       let matched = null;
+      // 0. THE CARD MATCH, if the trawl already did it. tabAustraliaSource establishes
+      // this exact mapping by runner name at 8am and writes it to race.priceRef, so the
+      // scan below is rediscovering something already known — and could miss, under a
+      // 50-fetch cap it does not share with anything. Still VERIFIED by name rather than
+      // trusted: a priceRef can arrive on a re-read pack from an earlier day, and an
+      // unverified shortcut is how a price lands on the wrong horse.
+      const ref = race.priceRef;
+      if (ref && ref.src === "tab" && ref.venue && ref.srcRaceNo) {
+        const rb = await getRace(ref.venue, ref.srcRaceNo);
+        if (rb && nameOverlap(race.runners, (rb.runners || []).map((x) => x.runnerName)) >= 0.5)
+          matched = { venue: ref.venue, body: rb };
+      }
       // 1. learned-offset shortcut
-      if (last) {
+      if (!matched && last) {
         const rb = await getRace(last.venue, race.raceNo + last.offset);
         if (rb && nameOverlap(race.runners, (rb.runners || []).map((x) => x.runnerName)) >= 0.5)
           matched = { venue: last.venue, body: rb };
@@ -896,6 +1342,56 @@ async function stageSources(pack) {
         }
       })
   );
+
+  // ---- AUSTRALIA ONLY: the TAB racecard + racing.com tips, attached PER MEET ----
+  // Same reason as France: these match against THIS meet's runner map, so they cannot
+  // ride the region fan-out that gave three Australian meets the identical racingnsw
+  // homepage. The day's data is fetched ONCE and shared by every AU meet.
+  //
+  // The meets are matched SEQUENTIALLY, unlike France's Promise.all. SGPools splits
+  // Australian racing across up to three coupon containers on the same day, drawing
+  // from the same pool of TAB races; `claimed` carries across them so one TAB race can
+  // never be handed to two containers. Parallel matching cannot share that safely, and
+  // the whole pass is ~40 cached lookups over a pool fetched in about a second.
+  const auMeets = pack.meets.filter((m) => m.region === "AU");
+  if (auMeets.length) {
+    let tabDay = { ok: false, races: [], error: "TAB day fetch did not run" };
+    try {
+      tabDay = await tabDayRaces(pack);
+    } catch (e) {
+      tabDay = { ok: false, races: [], error: "TAB day fetch threw: " + String(e.message || e) };
+    }
+    // racing.com is explicitly NON-LOAD-BEARING: its key is a client-side key that can
+    // be rotated without notice. Every failure here is caught, reported on the source,
+    // and leaves the TAB card path untouched — Australia degrades to card-only
+    // (verified but unbettable), which is strictly better than a trawl that dies.
+    let rdcDay = { ok: false, meets: [], error: "racing.com fetch did not run" };
+    try {
+      rdcDay = await rdcDayTips(pack);
+    } catch (e) {
+      rdcDay = { ok: false, meets: [], error: "racing.com threw: " + String(e.message || e) };
+    }
+
+    const claimed = new Set();
+    for (const m of auMeets) {
+      try {
+        m.sources.push(await tabAustraliaSource(pack, m, tabDay, claimed));
+      } catch (e) {
+        m.sources.push({
+          id: "tab-racecard", kind: "card", ok: false,
+          error: "TAB adapter threw: " + String(e.message || e), chars: 0, text: "",
+        });
+      }
+      try {
+        m.sources.push(rdcSourceForMeet(pack, m, rdcDay));
+      } catch (e) {
+        m.sources.push({
+          id: "racing-com-tips", ok: false,
+          error: "racing.com adapter threw: " + String(e.message || e), chars: 0, text: "",
+        });
+      }
+    }
+  }
   // ============================================================================
   // THE SSOT GATE — the SGPools race card is the single source of truth.
   // ============================================================================
@@ -1393,3 +1889,4 @@ export const config = { maxDuration: 300 };
 // rather than a copy of them. matchCard takes its runner-name lookup by injection
 // precisely so it can be exercised without a network.
 export { matchCard, pmuCoursesFromProgramme, pmuSourceText };
+export { tabAustraliaSource, tabSourceText, rdcSourceForMeet, rdcText };
