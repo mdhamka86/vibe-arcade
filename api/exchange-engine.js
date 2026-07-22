@@ -1967,6 +1967,17 @@ async function actLearn(priceMap) {
   return { clock: t, graded, reflection, guidance: s.guidance, guidanceMeta: s.guidanceMeta };
 }
 
+// A measured hunt takes ~41s in production (22/07/2026): three news trawls now spanning
+// two regions and ~30 feeds, Massive enrichment, live quotes, a month of closes per name
+// for the volatility ceiling, the earnings calendar, and one or two Claude calls. This file
+// had NO declared duration while every comparable sibling does (trawl 300, propose 120,
+// stewards 120, odds2 45), so it was running on the platform default with no headroom and
+// no statement of intent. 120s leaves genuine room for a slow feed or a retry.
+//
+// This is also the ceiling that makes the synchronous hunt untenable to widen further —
+// which is the argument for moving candidate discovery to a cron-built pack.
+export const config = { maxDuration: 120 };
+
 // ---------- Test surface ----------
 // Exported so tests/test_exchange_market.js drives the REAL money-gates rather than a
 // reimplementation of them. The suite hard-fails if these stop being exported, on the
