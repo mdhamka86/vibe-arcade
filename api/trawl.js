@@ -1490,6 +1490,15 @@ async function stageSources(pack) {
     const live = (m.sources || []).filter((s) => s.ok && s.text && !s.ssotFail);
     const rejected = (m.sources || []).filter((s) => s.ssotFail);
     m.ssotRejected = rejected.map((s) => ({ id: s.id, why: s.ssotFail }));
+    // CLEAR BEFORE RE-DECIDING. This verdict is about the sources that were just swept,
+    // but the pack it is written onto is loaded back from Redis, so a run that only
+    // re-runs `stage=sources` inherits the previous run's flag. That was found the
+    // moment Australia was fixed: the AU meets came back with a full TAB card naming
+    // 183 of 183 runners and racing.com's tips alongside it, and every one of them was
+    // still stamped "There is NO data edge here today: do not select from this meet"
+    // from the sweep before. A stale verdict suppresses a meet that is now sourced,
+    // and it reads exactly like a fresh one.
+    delete m.ssotBlind;
     // A meet whose every source failed the gate is UNSOURCED, and must be said so
     // plainly. This is precisely the 17/07 South Africa case: sources fetched fine,
     // all of them described other meetings, and the model was handed them as if

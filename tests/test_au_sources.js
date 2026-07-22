@@ -319,6 +319,11 @@ const clone = (o) => JSON.parse(JSON.stringify(o));
       /try \{[\s\S]{0,120}tabDayRaces\(pack\)[\s\S]{0,200}catch/.test(code));
     check("France's adapter is not invoked for AU meets",
       !/auMeets[\s\S]{0,600}pmuFranceSource/.test(code));
+    // A stage=sources re-run loads the pack back from Redis, so the previous run's
+    // ssotBlind verdict rides along unless it is cleared. The first live AU run came
+    // back fully sourced and still stamped "NO data edge here today".
+    check("the ssotBlind verdict is cleared before being re-decided",
+      /delete m\.ssotBlind;[\s\S]{0,400}m\.ssotBlind =/.test(code));
     check("the dead AU tipster adapters are left alone (not silently revived)",
       /AU: \[[\s\S]{0,600}justhorseracing/.test(raw));
   }
