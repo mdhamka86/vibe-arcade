@@ -16,6 +16,12 @@ const R_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const R_TOK = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
 const MODEL = 'claude-sonnet-4-6';
 
+// Stamped onto every idea the hunt produces. actGet demotes anything carrying a
+// different value to thesis-only, because a cached idea from an older deploy has a
+// price that was never verified against a market feed. Bump this whenever a change
+// makes previously-cached ideas untrustworthy to display.
+const IDEA_SCHEMA = 2;
+
 // ---------- Redis ----------
 async function rGet(key) {
   const r = await fetch(`${R_URL}/get/${key}`, { headers: { Authorization: `Bearer ${R_TOK}` } });
@@ -463,6 +469,7 @@ Respond ONLY with JSON, no markdown:
   // ONE annotation pass for every idea, whichever branch produced it. The two branches
   // used to carry near-identical copies of this logic, which is how they drifted.
   (ideas.ideas || []).forEach((i) => {
+    i.schema = IDEA_SCHEMA; // marks this idea as having been through the priced pipeline
     const q = realFor(i);
     const cls = classifyTicker(i.ticker || i.name, i.exchange);
     const offU = offUniverse(i);
@@ -1570,17 +1577,42 @@ async function actGet() {
       ideas.qualifyingCount = ideas.ideas.filter((i) => i.qualifies).length;
     }
   }
-  // Recompute session state at READ time, never from the cached blob: an idea generated
-  // at 08:00 saying "SGX open" is simply wrong by 17:00, and a stale open-badge is the
-  // one thing on this card that would make him act.
   if (ideas && Array.isArray(ideas.ideas)) {
     for (const i of ideas.ideas) {
+      // Backfill market metadata for ideas written by an older deploy. Free — the
+      // classifier is pure, so this costs no network call on a page load.
+      if (!i.market) {
+        const c = classifyTicker(i.ticker || i.name, i.exchange);
+        if (c.ok) { i.market = c.market; i.market_label = c.label; i.currency = i.currency || c.currency; }
+      }
+
+      // STALE PRE-REWORK BLOB. Ideas cached before the pricing fix carry a price that was
+      // never checked against a real feed — that is exactly how a Sony card reading 2820
+      // survived in today's cache while Tokyo traded at 3425. The 8h window would serve it
+      // for the rest of the session, so anything without the current schema is demoted to
+      // thesis-only rather than shown at a number nothing ever verified. Self-clearing:
+      // the next hunt writes the current schema.
+      if (i.schema !== IDEA_SCHEMA) {
+        i.unpriced = true;
+        i.thesis_only = true;
+        i.current_price = null;
+        i.price_note = 'Confirm live price on NOVA';
+        i.conviction = 'LOW';
+        i.qualifies = false;
+        i.levels_broken = true;
+        i.level_warning = 'NO VERIFIED PRICE: this idea was generated before the desk could price non-US markets, so its quoted price was never checked against the market. Treat it as a thesis only — confirm the live price on NOVA and set your own levels. Re-run the hunt for a fully priced card.';
+      }
+
+      // Recompute session state at READ time, never from the cached blob: an idea
+      // generated at 08:00 saying "SGX open" is simply wrong by 17:00, and a stale
+      // open-badge is the one thing on this card that would make him act.
       if (i.market && SUPPORTED.includes(i.market)) {
         const st = marketStatus(i.market);
         i.market_status = st;
         i.market_open = st.open;
       }
     }
+    ideas.qualifyingCount = ideas.ideas.filter((i) => i.qualifies).length;
   }
   const vitals = computeVitals(s.book);
   // coaching: compare current goals to the last saved snapshot to notice improvements
