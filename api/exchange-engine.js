@@ -665,11 +665,21 @@ Respond ONLY with JSON, no markdown:
   let earnMap = await getEarningsDates(quoteReqs, t.dateKey, addDays(t.dateKey, 45)).catch(() => ({}));
   const volFor = (i) => volMap[(i.ticker || i.name || '').toUpperCase()] ?? null;
   const earnFor = (i) => earnMap[(i.ticker || i.name || '').toUpperCase()] ?? null;
-  // The earnings calendar only speaks for dated EARNINGS-type catalysts. A technical
-  // breakout must not be silently rewritten to the next results date.
+  // The earnings calendar only speaks for EARNINGS-shaped catalysts: a technical breakout
+  // must not be silently rewritten to the next results date.
+  //
+  // But the TYPE LABEL alone is not enough to decide that. Observed in production: an idea
+  // whose catalyst read "Earnings report 2026-07-28" was typed MOMENTUM (the model was also
+  // citing a live price move), which dodged the calendar check entirely — exactly the hole
+  // the check exists to close, reachable by mislabelling. So the catalyst TEXT is consulted
+  // too, and any catalyst that talks about earnings gets its date verified against the real
+  // calendar whatever it calls itself.
+  const EARNINGS_WORDS = /\b(earnings|results|guidance|quarterly|q[1-4]\b|interim|full[- ]year)\b/i;
   const verifiedFor = (i) => {
     const ty = String(i.catalyst_type || '').toUpperCase();
-    return (ty === 'EARNINGS' || ty === 'GUIDANCE') ? earnFor(i) : null;
+    if (ty === 'EARNINGS' || ty === 'GUIDANCE') return earnFor(i);
+    if (EARNINGS_WORDS.test(String(i.catalyst || ''))) return earnFor(i);
+    return null;
   };
 
   // TRADEABLE-UNIVERSE GATE (22/07/2026). Tradeability used to be prompt-English only:
