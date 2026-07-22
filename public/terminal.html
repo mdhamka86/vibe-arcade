@@ -1087,6 +1087,16 @@ function Board(){
       {/* Two distinct silences, deliberately not merged. "The analyst call failed" and "we had no
           price history" are different claims about a pair, and flattening them into one bucket
           would be lying by omission — as would leaving either out of the board entirely. */}
+      {pack && pack.held && pack.held.length>0 && <div className="card">
+        <div className="eyebrow">Already open — measured, not analysed</div>
+        <div className="note">You already hold these, so they cannot be fresh ideas and the desk deliberately did not spend an analyst call on them. Their measured factors are still here.</div>
+        {pack.held.map(h=>(
+          <div key={h.pair} className="note" style={{marginTop:6}}>
+            <span className="steel">{h.pair}</span>
+            {h.factors && <span className="dim"> ATR {h.factors.atrD1Pips}p/day · range pos {h.factors.rangePos} · energy {h.factors.volRatio}x · trend {h.factors.trendSeparationAtr>0?'+':''}{h.factors.trendSeparationAtr} ATR</span>}
+          </div>
+        ))}
+      </div>}
       {pack && pack.unscored && pack.unscored.length>0 && <div className="card" style={{borderColor:'var(--amber-dim)'}}>
         <div className="eyebrow">Unscored — the analyst pass did not complete</div>
         <div className="note">These pairs were measured but their individual analysis call failed or was cut short. They are <b>not</b> judged and rejected — the desk simply has no read on them this run, and did not rank them rather than guess.</div>

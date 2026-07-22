@@ -525,11 +525,20 @@ export async function runScreen(nowMs = Date.now()) {
   const measurable = rows.filter((r) => r.score != null).sort((a, b) => b.score - a.score);
   const unscoreable = rows.filter((r) => r.score == null);
 
-  // ---- STAGE 1: one Sonnet call per pair ----
+  // A pair already open in the book is NOT a candidate: the engine's dupe gate blocks it and it
+  // could never become a proposal. Spending an analyst call on it wastes a call, and letting it
+  // into Stage 2's field lets the desk head spend a pick on something that will simply be
+  // dropped downstream — while the consolidation prompt told it they were already excluded.
+  // They stay on the board with their measured factors, clearly marked; they just do not
+  // consume reasoning that the actual candidates need.
+  const candidates = measurable.filter((r) => !r.alreadyOpen);
+  const heldRows = measurable.filter((r) => r.alreadyOpen);
+
+  // ---- STAGE 1: one Sonnet call per candidate ----
   const news = await getNews('forex').catch(() => []);
   const ctx = { news, exposureLine: exposureLine(exposure), holdCeilingHours: SCREEN_CONFIG.holdCeilingHours };
   const stage1Started = Date.now();
-  const { scored, unscored } = await runStage1(measurable, ctx, {
+  const { scored, unscored } = await runStage1(candidates, ctx, {
     concurrency: PAIR_CONCURRENCY,
     deadline: started + RUN_BUDGET_MS,
   });
@@ -575,8 +584,13 @@ export async function runScreen(nowMs = Date.now()) {
     tookMs: Date.now() - started,
     timings: { candlesMs: candlesMs, stage1Ms, stage2Ms, budgetMs: RUN_BUDGET_MS },
     universeSize: SCREEN_PAIRS.length,
+    candidateCount: candidates.length,
     scored: ranked.length,
     ranked,
+    // Measured, shown on the board, deliberately NOT sent for analysis — see the candidates
+    // split above. Separate from `unscored`: "we chose not to analyse this because you already
+    // hold it" is a different statement from "the analysis failed".
+    held: heldRows.map((r) => ({ pair: r.pair, detScore: r.score, factors: r.factors, why: r.why })),
     // THREE honest categories, deliberately not merged. "We had no price history" and "the
     // analyst call failed" and "we ran out of time" are different claims about a pair, and a
     // board that flattened them into one silence would be lying by omission.
@@ -691,6 +705,7 @@ export default async function handler(req, res) {
       return res.status(200).json({
         ok: true, at: pack.at, tookMs: pack.tookMs, timings: pack.timings, model: pack.model,
         scored: pack.scored, universeSize: pack.universeSize,
+        candidateCount: pack.candidateCount, held: (pack.held || []).map((h) => h.pair),
         top: pack.ranked.slice(0, 8).map((r) => ({ pair: r.pair, score: r.score, detScore: r.detScore, dir: r.llm.direction, conviction: r.llm.conviction, read: r.llm.read })),
         consolidation: pack.consolidation, consolidationError: pack.consolidationError,
         unscoreable: pack.unscoreable.map((u) => ({ pair: u.pair, reason: u.unscoreable })),

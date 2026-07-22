@@ -341,6 +341,21 @@ async function withStubbedClaude(payload, fn) {
   check('...while preserving the deterministic factors alongside it',
     r1.scored.every((r) => r.factors && r.factors.atrD1Pips != null));
 
+  console.log('\n=== 14b. ALREADY-OPEN PAIRS DO NOT CONSUME ANALYST CALLS ===');
+  // Found in the first production run: AUDUSD, which he already holds, got a Stage-1 call and
+  // reached the consolidation field — while the consolidation prompt told the desk head that
+  // open pairs were already excluded. That is a wasted call, a pick that gets silently dropped
+  // downstream by the engine's dupe gate, and a prompt asserting something untrue.
+  check('the screen splits candidates from held pairs before Stage 1',
+    /const candidates = measurable\.filter\(\(r\) => !r\.alreadyOpen\)/.test(SCREEN_SRC));
+  check('...and Stage 1 runs over candidates, not everything measurable',
+    /runStage1\(candidates, ctx/.test(SCREEN_SRC));
+  check('...with held pairs still published for the board', /held: heldRows\.map/.test(SCREEN_SRC));
+  check('the consolidation prompt\'s claim that open pairs are excluded is now TRUE',
+    /Pairs already open are excluded from the field below/.test(SCREEN_SRC) && /runStage1\(candidates/.test(SCREEN_SRC));
+  check('held is reported separately from unscored — different claims, different buckets',
+    /held:/.test(SCREEN_SRC) && /unscored,/.test(SCREEN_SRC));
+
   console.log('\n=== 15. PARTIAL FAILURE — one bad call must not tank the run ===');
   // THE headline risk. Twenty-odd network calls will not all succeed forever.
   const flaky = async (row) => {
