@@ -89,6 +89,79 @@ const HORIZON = {
 HORIZON.label = `${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day interday`;
 // The calendar deliberately reaches BEYOND the trade's own life — see the note in getCalendar().
 const CALENDAR_LOOKAHEAD_HOURS = HORIZON.ceilingHours + 48;
+
+// ---------- OVERNIGHT SCREEN: staleness contract ----------
+// terminal-screen.js writes a ranked board to `terminal:screen`. This engine reads it as
+// ADDITIVE context and never depends on it: if the board is missing or old, idea generation runs
+// exactly as it did before, and says on screen that it ran unscreened.
+//
+// The thresholds are generous BECAUSE the screen's factors are daily-derived — a 20-day range
+// and a 14-day ATR do not meaningfully move in six hours. (This is exactly why forex-brain's
+// verdicts could NOT be consumed the same way: a 90-minute breakout trigger is worthless an hour
+// later, whereas a daily-structure board is not.)
+//
+// Past SCREEN_USABLE_MS the board is ignored ENTIRELY and the fact is surfaced. A cron can fail
+// silently for days; an idea engine that quietly gets worse without saying so is the exact
+// failure class this codebase has already been bitten by (vitals with no timestamp, a function
+// with no declared timeout). Degradation must be loud.
+//
+// Lives here, in the consumer, and is imported BY terminal-screen — the dependency runs one way
+// only, screen -> engine, so there is no import cycle between two handlers.
+export const SCREEN_FRESH_MS = 12 * 3600e3;
+export const SCREEN_USABLE_MS = 36 * 3600e3;
+export function screenAge(pack, nowMs = Date.now()) {
+  if (!pack || !pack.at) return { state: 'MISSING', ageMs: null, label: 'no screen has been run' };
+  const ageMs = nowMs - Date.parse(pack.at);
+  if (!Number.isFinite(ageMs) || ageMs < 0) return { state: 'MISSING', ageMs: null, label: 'screen timestamp unreadable' };
+  const hrs = ageMs / 3600e3;
+  if (ageMs <= SCREEN_FRESH_MS) return { state: 'FRESH', ageMs, label: `screened ${hrs < 1 ? Math.round(ageMs / 60000) + 'm' : hrs.toFixed(1) + 'h'} ago` };
+  if (ageMs <= SCREEN_USABLE_MS) return { state: 'STALE', ageMs, label: `screen is ${hrs.toFixed(0)}h old — factors may have moved` };
+  return { state: 'EXPIRED', ageMs, label: `screen is ${Math.round(hrs / 24)}d old and was ignored` };
+}
+
+// ---------- forex-brain as a CONDITIONS signal (and nothing more) ----------
+// The sibling engine publishes a verdict per USD major on a 90-minute TTL. Those verdicts are
+// NOT trade ideas for this desk: they are H1 range-breakouts with a 90-minute life, and this
+// desk holds 2-3 days. Consuming them as ideas would import a foreign horizon.
+//
+// What IS informative is the AGGREGATE. forex-brain's doctrine is "FLAT is the default and the
+// common answer", so when it nonetheless finds direction in most of the majors, that is a read
+// on conditions — the dollar complex is trending rather than chopping. One line, in desk_note.
+//
+// Read-only, fail-silent, and expiry-aware: an expired verdict says nothing about right now, so
+// stale ones are excluded rather than counted. If the whole thing is unavailable the desk simply
+// does not mention it.
+const BRAIN_MAJORS = ['EURUSD', 'USDJPY', 'GBPUSD', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD'];
+async function readBrainConditions(nowMs = Date.now()) {
+  const verdicts = await Promise.all(BRAIN_MAJORS.map((s) => rGet(`forex:verdict:${s}`).catch(() => null)));
+  const live = verdicts.filter((v) => v && v.expiresAt && Date.parse(v.expiresAt) > nowMs);
+  if (live.length < 3) return null; // too thin to characterise conditions honestly
+  const flat = live.filter((v) => v.direction === 'FLAT').length;
+  const directional = live.filter((v) => v.direction === 'BUY' || v.direction === 'SELL');
+  return {
+    live: live.length, flat, directional: directional.length,
+    line: `forex-brain (sibling breakout engine, 90-min horizon — CONDITIONS ONLY, not an idea source): FLAT on ${flat}/${live.length} USD majors right now${directional.length ? `, directional on ${directional.map((v) => `${v.symbol} ${v.direction}`).join(', ')}` : ''}. It defaults to FLAT, so a high FLAT count suggests the dollar complex is chopping rather than trending; a low one suggests genuine direction. Use this to calibrate how much follow-through to expect, NOT to pick a pair.`,
+  };
+}
+
+// Render a slice of the ranked board for the prompt. `from`/`to` let the retry show a DIFFERENT
+// slice than the first attempt — the shortlist is what makes a second hunt possible at all.
+function screenLines(ranked, from, to) {
+  const slice = (ranked || []).slice(from, to);
+  if (!slice.length) return '- no candidates in this slice';
+  return slice.map((r, n) => {
+    const f = r.factors || {};
+    const bits = [
+      f.atrD1Pips != null ? `ATR ${f.atrD1Pips}p/day` : null,
+      f.volRatio != null ? `energy ${f.volRatio}x own baseline` : null,
+      f.rangePos != null ? `range pos ${f.rangePos}` : null,
+      f.trendSeparationAtr != null ? `trend ${f.trendSeparationAtr > 0 ? '+' : ''}${f.trendSeparationAtr} ATR` : null,
+      f.catalysts && f.catalysts.next ? `next: ${f.catalysts.ccy || f.catalysts.next.ccy} ${f.catalysts.next.title} ${f.catalysts.next.when} (${f.catalysts.next.impact}, in ${f.catalysts.next.hoursOut}h)` : 'no scheduled catalyst in window',
+      `book-fit favours ${r.preferredDirection}`,
+    ].filter(Boolean);
+    return `${from + n + 1}. ${r.pair} [score ${r.score}] ${bits.join(' · ')}\n     why: ${r.why}`;
+  }).join('\n');
+}
 // Aging ladder derived from the doctrine above: OK inside the intended window, NOTE at the
 // top of it, AMBER at the ceiling, RED once genuinely past it. Under the old one-day ladder
 // these same holds read AMBER/RED on days 2 and 3.
@@ -130,7 +203,9 @@ async function claude(userContent, maxTokens = 2000) {
 
 // ---------- Economic calendar (Forex Factory weekly feed, Redis-cached 6h to
 // respect their rate limit of ~2 pulls per 5 minutes) ----------
-async function getCalendar() {
+// Exported so terminal-screen.js can share the parser AND the `terminal:cal` cache rather than
+// growing a second Forex Factory reader. One definition, one cache, one rate-limit budget.
+export async function getCalendar() {
   const cached = await rGet('terminal:cal');
   if (cached && Date.now() - cached.ts < 6 * 3600 * 1000) return cached.events;
   try {
@@ -587,7 +662,10 @@ function bookView(book) {
 //
 // A forex position is two currency bets, not one. BUY GBPJPY is long GBP AND short JPY. Netting
 // those legs across the book is what turns a list of rows into a risk picture.
-function currencyExposure(positions) {
+// Exported so the overnight screen scores book-fit against the SAME netting the idea gate uses.
+// If these ever diverge, the screen would rank a pair as fresh risk that the gate then blocks
+// as stacked — so they must be one function, not two that agree today.
+export function currencyExposure(positions) {
   const exp = {};
   for (const p of positions || []) {
     const pr = normPair(p.pair);
@@ -913,15 +991,41 @@ async function actIdeas(force) {
   if (t.isWeekend && !force) return { clock: t, weekend: true, ideas: cached || null };
 
   const s = await loadAll();
-  // major pairs to pull real per-symbol pattern setups for (TradingView trader ideas).
-  // This gives the desk genuine technical/pattern context, not just news headlines.
-  // TradingView pattern feeds: kept to the liquid majors + DXY to control request volume.
-  const PATTERN_PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCHF', 'USDCAD', 'NZDUSD', 'DXY'];
+  // PATTERN FEEDS (audit finding 9). This was a fixed list of 7 majors + DXY, while the prompt
+  // told the model to survey 12 crosses as well — so the crosses were ordered to be considered
+  // and given strictly less evidence than the majors, which is a thumb on the scale disguised as
+  // breadth. The screen now tells us which pairs are actually worth the request budget, so the
+  // feeds FOLLOW THE BOARD: the top-ranked candidates get pattern context whether they are
+  // majors or crosses. Falls back to the old fixed list when no board is available, so an
+  // unscreened run is no worse than it was before.
+  const FALLBACK_PATTERN_PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCHF', 'USDCAD', 'NZDUSD', 'DXY'];
   // LIVE-PRICE coverage is WIDER (audit finding 4): the prompt surveys crosses too, so they
   // must get live prices + ATR, not just the daily ECB fallback. These are batched Yahoo calls,
   // all verified fetchable, so covering them doesn't balloon the pattern-feed request count.
+  // Extended to cover the FULL screened universe: if the board can rank EURNZD or GBPCAD into
+  // the top 8, the prompt must be able to price it, or the level validator fails it closed for a
+  // pair the desk itself just recommended.
   const PRICE_PAIRS = ['EURUSD', 'GBPUSD', 'USDJPY', 'AUDUSD', 'USDCHF', 'USDCAD', 'NZDUSD', 'DXY',
-    'EURGBP', 'EURJPY', 'GBPJPY', 'EURAUD', 'GBPAUD', 'AUDJPY', 'NZDJPY', 'CADJPY', 'CHFJPY', 'EURCHF', 'GBPCHF', 'AUDCAD', 'AUDNZD'];
+    'EURGBP', 'EURJPY', 'GBPJPY', 'EURAUD', 'GBPAUD', 'AUDJPY', 'NZDJPY', 'CADJPY', 'CHFJPY', 'EURCHF', 'GBPCHF', 'AUDCAD', 'AUDNZD',
+    'EURCAD', 'GBPCAD', 'NZDCAD', 'EURNZD', 'GBPNZD'];
+  // The board is read FIRST, because it decides which pairs are worth spending pattern-feed
+  // requests on. Both reads are additive: a failure degrades the hunt, it does not break it.
+  const [screenPack, brainConditions] = await Promise.all([
+    rGet('terminal:screen').catch(() => null),
+    readBrainConditions().catch(() => null),
+  ]);
+  const screen = screenAge(screenPack);
+  // Used only while genuinely current; past SCREEN_USABLE_MS it is dropped outright rather than
+  // quietly aged into the prompt.
+  const screenRanked = (screen.state === 'FRESH' || screen.state === 'STALE') && screenPack
+    ? (screenPack.ranked || []).filter((r) => !r.alreadyOpen)
+    : [];
+  // Pattern feeds follow the board when there is one: the top 8 candidates get technical context
+  // whether they are majors or crosses, plus DXY for dollar backdrop.
+  const PATTERN_PAIRS = screenRanked.length
+    ? [...new Set([...screenRanked.slice(0, 8).map((r) => r.pair), 'DXY'])]
+    : FALLBACK_PATTERN_PAIRS;
+
   const [news, rates, cal, patternSets] = await Promise.all([
     getNews('forex'), refRates(), getCalendar(),
     Promise.all(PATTERN_PAIRS.map(async (sym) => ({ sym, ideas: await getSymbolIdeas(sym).catch(() => []) }))),
@@ -1060,6 +1164,13 @@ ${digest(news, 30)}
 
 PATTERN DESK — real trader setups from TradingView, per pair (technical/chart-pattern context to weigh ALONGSIDE the news; these are crowd ideas, not gospel, but they show where technical attention sits):
 ${patternDigest}
+${brainConditions ? `\nMARKET CONDITIONS CROSS-CHECK:\n${brainConditions.line}\n` : ''}
+${screenRanked.length ? `OVERNIGHT SCREEN — THE WHOLE BOARD, MEASURED AND RANKED (${screen.label}${screen.state === 'STALE' ? '; treat the numbers as indicative, re-check anything you act on' : ''}).
+Every tradeable pair was scored in code on identical factors — daily ATR, energy versus the pair's own baseline, position in its 20-day range, trend separation, scheduled catalysts inside the hold window, and how it sits against the book's existing currency exposure. ${screenPack.scored} of ${screenPack.universeSize} pairs scored. Pairs already open in the book are excluded.
+THIS IS THE FUNNEL. You are not choosing from a list of names any more; these are measurements. The top candidates:
+${screenLines(screenRanked, 0, 8)}
+
+How to use it: these 8 are the board's best by measured factors, and your two ideas should normally come from here. You are NOT forbidden from proposing something outside the top 8 — the screen measures structure and cannot read tonight's news — but if you do, say explicitly in the thesis what the wire tells you that the screen could not see. "I preferred a different pair" is not a reason.` : `OVERNIGHT SCREEN: UNAVAILABLE this run (${screen.label}). You are hunting UNSCREENED — there is no measured ranking of the board tonight, so survey the universe yourself as thoroughly as you can and be honest in desk_note that the board was not pre-measured.`}
 
 TASK: Propose exactly 2 INTERDAY ideas: opened now, intended to work over ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} DAYS, with a ${HORIZON.ceilingDays}-day absolute ceiling. This is his actual trading rhythm — he is not a day-trader and does not scalp. Build theses that need two or three sessions to play out and levels with the room to survive that long. Do NOT propose a trade whose whole life is a single session, and do NOT propose one that needs a fortnight.
 
@@ -1104,12 +1215,36 @@ Reminder: every price you output is checked against live rates after you respond
   const auditIdea = (i) => auditIdeaAgainst(i, ctx);
   const isBad = (i) => auditIdea(i).blocking.length > 0;
 
-  if ((ideas.ideas || []).some(isBad)) {
+  // RETRY — now a genuine SECOND HUNT, not a second guess (audit finding 10).
+  // It used to fire only on a validity failure and re-ask the identical question, so a run that
+  // came back thin came back thin twice. Two changes: it also fires when the board is there and
+  // NOTHING cleared the conviction bar, and it hands over the NEXT slice of the ranked shortlist
+  // — candidates 9-16, pairs the first attempt was never shown. That is only possible because a
+  // measured shortlist now exists; without the screen there is no second slice to offer, so the
+  // conviction-triggered retry is deliberately gated on having one.
+  const clearsBar = (i) => ['MED-HIGH', 'HIGH'].includes((i.conviction || '').toUpperCase());
+  const nothingClears = (ideas.ideas || []).length > 0 && !(ideas.ideas || []).some(clearsBar);
+  const haveSecondSlice = screenRanked.length > 8;
+  const needRetry = (ideas.ideas || []).some(isBad) || (nothingClears && haveSecondSlice);
+
+  if (needRetry) {
     const rejects = (ideas.ideas || []).flatMap((i) => auditIdea(i).blocking);
+    const seen = (ideas.ideas || []).map((i) => `${i.pair} ${i.direction}`).join(', ') || 'none';
+    const reason = rejects.length
+      ? `REJECTED, fix and resubmit two clean ideas. Every reason below is a CODE-ENFORCED gate, not a preference:\n${rejects.map((r) => '- ' + r).join('\n')}`
+      : `Your first pass produced nothing above MED conviction (${seen}). That may well be the honest read — but before settling on it, LOOK AT THE REST OF THE BOARD. You were shown the top 8; here are the next candidates you have not considered. If after genuinely weighing these the honest answer is still that nothing clears the bar, say so plainly and return your best two at their true conviction. Do not inflate anything to fill the slot.`;
     try {
       const second = await claude(prompt +
-        `\n\nREJECTED, fix and resubmit two clean ideas. Every reason below is a CODE-ENFORCED gate, not a preference:\n${rejects.map((r) => '- ' + r).join('\n')}\n\nBanned pairs+direction tonight: ${[...banned].map((b) => b.replace('|', ' ')).join(', ') || 'none'}. Open book: ${openPairs.join(', ') || 'none'}. Net currency exposure: ${exposureLine(exposure)}.`, 2200);
-      if (second.ideas && !second.ideas.some(isBad)) ideas = second;
+        `\n\n${reason}\n` +
+        (haveSecondSlice ? `\nNEXT CANDIDATES FROM THE SCREEN (ranked 9-16, not shown to you above):\n${screenLines(screenRanked, 8, 16)}\n` : '') +
+        `\nAlready proposed this run (do not simply repeat them): ${seen}.\nBanned pairs+direction tonight: ${[...banned].map((b) => b.replace('|', ' ')).join(', ') || 'none'}. Open book: ${openPairs.join(', ') || 'none'}. Net currency exposure: ${exposureLine(exposure)}.`, 2200);
+      // Accept the retry only if it is clean AND at least as good as what it replaces: a second
+      // pass that is merely different must not displace a valid first pass.
+      if (second.ideas && second.ideas.length && !second.ideas.some(isBad)) {
+        const firstWasBad = (ideas.ideas || []).some(isBad);
+        const secondClears = second.ideas.some(clearsBar);
+        if (firstWasBad || secondClears) { ideas = second; ideas.fromRetry = true; }
+      }
     } catch { /* fall through to flagging */ }
   }
 
@@ -1159,6 +1294,19 @@ Reminder: every price you output is checked against live rates after you respond
   }
   ideas.exposureBefore = exposure;
   ideas.vitalsAge = vAge;
+  // Screen provenance. `usedScreen: false` is as important to record as true: it is how the UI
+  // can say "this hunt ran unscreened" instead of presenting a degraded run as a normal one.
+  ideas.screen = {
+    state: screen.state, label: screen.label, usedScreen: screenRanked.length > 0,
+    at: screenPack ? screenPack.at : null,
+    universeSize: screenPack ? screenPack.universeSize : null,
+    scored: screenPack ? screenPack.scored : null,
+    shownTop: screenRanked.slice(0, 8).map((r) => ({ pair: r.pair, score: r.score, dir: r.preferredDirection })),
+    // Did the ideas actually come from the shortlist, or did the model go off-board? Recorded
+    // so it can be reviewed rather than assumed.
+    offBoard: (ideas.ideas || []).map((i) => normPair(i.pair)).filter((p) => !screenRanked.slice(0, 16).some((r) => r.pair === p)),
+  };
+  if (brainConditions) ideas.brainConditions = { live: brainConditions.live, flat: brainConditions.flat, directional: brainConditions.directional };
   ideas.generatedAt = t.iso;
   ideas.dateKey = t.dateKey;
 

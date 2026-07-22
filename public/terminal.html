@@ -435,6 +435,14 @@ function Desk({state,refresh}){
         {ideas.stand_down && <div className="alertbox a-amber">STAND DOWN advisory: the engine rates this session poor. Only genuinely strong setups are worth taking; treat anything shown with extra scepticism.</div>}
         {/* Book-level facts the per-idea cards cannot show: what taking BOTH would do to margin,
             the posture they would be added to, and whether the vitals behind all of it are current. */}
+        {/* Screen provenance. A hunt that ran without the board must SAY so here, where the ideas
+            are, not only on the Board tab — otherwise a degraded run is indistinguishable from a
+            normal one, which is the failure mode this whole audit kept turning up. */}
+        {ideas.screen && (ideas.screen.usedScreen
+          ? <div className="note" style={{marginBottom:8}}><span className="steel">SCREENED</span> {ideas.screen.scored}/{ideas.screen.universeSize} pairs measured and ranked ({ideas.screen.label}). Shortlist: {ideas.screen.shownTop.map(s=>s.pair).join(', ')}.
+              {ideas.screen.offBoard&&ideas.screen.offBoard.length>0 && <span className="ambr"> Off-board pick{ideas.screen.offBoard.length>1?'s':''}: {ideas.screen.offBoard.join(', ')} — check the thesis explains why.</span>}</div>
+          : <div className="alertbox a-amber">⚠ HUNTED UNSCREENED — {ideas.screen.label}. No measured ranking of the board was available, so these ideas came from the news wire and prices alone. Re-run the screen from the Board tab for a fuller sweep.</div>)}
+        {ideas.brainConditions && <div className="note" style={{marginBottom:8}}><span className="steel">CONDITIONS</span> sibling breakout engine is FLAT on {ideas.brainConditions.flat}/{ideas.brainConditions.live} USD majors — {ideas.brainConditions.flat/ideas.brainConditions.live>0.7?'the dollar complex is chopping, expect less follow-through':'there is genuine direction about'}.</div>}
         {ideas.marginWarning && <div className="alertbox a-amber">⚠ {ideas.marginWarning}</div>}
         {ideas.vitalsAge && !ideas.vitalsAge.fresh && <div className="alertbox a-amber">⚠ Margin figures below are computed from vitals that are {ideas.vitalsAge.label}. Sync a fresh positions screenshot before sizing on them.</div>}
         {ideas.exposureBefore && Object.keys(ideas.exposureBefore).length>0 && <div className="card">
@@ -948,6 +956,98 @@ function Vitals({state}){
 }
 
 // ---------- App shell ----------
+// ---------------------------------------------------------------------------
+// THE BOARD — the overnight screen, shown in full.
+// This exists to be the honest answer to "did the desk actually look everywhere, or did it just
+// tell me it did?". Every tradeable pair, its score, the factors behind the score, and the plain
+// reason. Nothing is hidden: pairs that could not be scored are listed as such rather than
+// quietly dropped, and a stale or missing board says so at the top instead of showing yesterday's
+// ranking as though it were tonight's.
+function Board(){
+  const [pack,setPack]=useState(null);
+  const [age,setAge]=useState(null);
+  const [err,setErr]=useState(null);
+  const [busy,setBusy]=useState(false);
+  const [openPair,setOpenPair]=useState(null);
+  const load=useCallback(async()=>{
+    try{
+      const r=await fetch('/api/terminal-screen?action=get').then(x=>x.json());
+      if(!r.ok) throw new Error(r.error||'screen unavailable');
+      setPack(r.screen); setAge(r.age); setErr(null);
+    }catch(e){ setErr(e.message); }
+  },[]);
+  useEffect(()=>{ load(); },[load]);
+  const rerun=async()=>{
+    setBusy(true);
+    try{ await fetch('/api/terminal-screen?action=run').then(x=>x.json()); await load(); }
+    catch(e){ setErr(e.message); }
+    finally{ setBusy(false); }
+  };
+  const stateCls={FRESH:'a-green',STALE:'a-amber',EXPIRED:'a-red',MISSING:'a-red'};
+  const ranked=(pack&&pack.ranked)||[];
+  const best=ranked.length?Math.max(...ranked.map(r=>r.score)):0;
+  return (
+    <div className="wrap">
+      <div className="row" style={{justifyContent:'space-between',alignItems:'center'}}>
+        <div className="eyebrow"><Ic n="brain"/>The board</div>
+        <button className="ghost" disabled={busy} onClick={rerun}>{busy?<span className="spin">◐</span>:'Re-screen now'}</button>
+      </div>
+      {err && <div className="alertbox a-red">Board unavailable: {err}</div>}
+      {age && <div className={'alertbox '+(stateCls[age.state]||'a-amber')}>
+        {age.state==='FRESH'?'✓ ':'⚠ '}{age.label}
+        {age.state==='EXPIRED'&&' — the desk is hunting UNSCREENED until this refreshes.'}
+        {age.state==='MISSING'&&' — the desk is hunting UNSCREENED.'}
+      </div>}
+      {pack && <div className="card">
+        <div className="meta">
+          <span>{pack.scored}/{pack.universeSize} pairs scored</span>
+          <span className="dim">in {(pack.tookMs/1000).toFixed(1)}s</span>
+          {pack.unscoreable&&pack.unscoreable.length>0 && <span className="ambr">{pack.unscoreable.length} unscoreable</span>}
+        </div>
+        <div className="note" style={{marginTop:6}}>Scored in code on identical factors — daily ATR, energy vs the pair's own baseline, position in its 20-day range, trend separation, scheduled catalysts inside the hold window, and fit against your open book. No model was asked; these are measurements.</div>
+      </div>}
+      {ranked.map((r,i)=>(
+        <div key={r.pair} className="card" style={{borderColor: i<8?'var(--steel)':'var(--line)'}}>
+          <div className="row" style={{justifyContent:'space-between',alignItems:'center',cursor:'pointer'}} onClick={()=>setOpenPair(openPair===r.pair?null:r.pair)}>
+            <span className="hl">
+              <span className="dim" style={{marginRight:8}}>{i+1}</span>{r.pair}
+              <span className={'badge '+(r.preferredDirection==='BUY'?'b-buy':'b-sell')} style={{marginLeft:8}}>{r.preferredDirection}</span>
+              <span className="dim" style={{marginLeft:6,fontSize:11}}>{r.directionBasis==='TREND'?'per trend':'per book-fit'}</span>
+            </span>
+            <span className={i<8?'green':'dim'}>{r.score}</span>
+          </div>
+          {/* score bar, so relative standing is readable at a glance */}
+          <div style={{height:4,background:'var(--line)',borderRadius:2,marginTop:6,overflow:'hidden'}}>
+            <div style={{height:'100%',width:Math.max(0,Math.min(100,(r.score/Math.max(best,1))*100))+'%',background:i<8?'var(--green)':'var(--steel)'}}></div>
+          </div>
+          <div className="note" style={{marginTop:6}}>{r.why}</div>
+          {openPair===r.pair && r.factors && <div style={{marginTop:8}}>
+            <div className="meta">
+              <span>ATR {r.factors.atrD1Pips}p/day</span>
+              {r.factors.atrH4Pips!=null && <span className="dim">H4 {r.factors.atrH4Pips}p</span>}
+              <span>range pos {r.factors.rangePos}</span>
+              <span>energy {r.factors.volRatio}x</span>
+              <span>trend {r.factors.trendSeparationAtr>0?'+':''}{r.factors.trendSeparationAtr} ATR</span>
+            </div>
+            {r.factors.range20 && <div className="note" style={{marginTop:4}}><span className="dim">20-DAY RANGE</span> {r.factors.range20.low} – {r.factors.range20.high} · now {r.factors.last}</div>}
+            {r.factors.catalysts && r.factors.catalysts.next
+              ? <div className="note" style={{marginTop:4}}><span className="steel">NEXT CATALYST</span> {r.factors.catalysts.next.ccy} {r.factors.catalysts.next.title} · {r.factors.catalysts.next.when} · in {r.factors.catalysts.next.hoursOut}h [{r.factors.catalysts.next.impact}] <span className="dim">({r.factors.catalysts.high} High / {r.factors.catalysts.medium} Medium in window)</span></div>
+              : <div className="note" style={{marginTop:4}}><span className="dim">NO scheduled catalyst inside the hold window</span></div>}
+            <div className="note" style={{marginTop:4}}><span className="steel">SCORE PARTS</span> {Object.entries(r.parts||{}).filter(([,v])=>v!==0).map(([k,v])=>`${k} ${v>0?'+':''}${v}`).join('  ·  ')}</div>
+            <div className="note" style={{marginTop:4}}><span className="steel">BOOK FIT</span> scored for {r.factors.bookFit.scoredFor} · BUY net {r.factors.bookFit.buy.net} · SELL net {r.factors.bookFit.sell.net}</div>
+          </div>}
+        </div>
+      ))}
+      {pack && pack.unscoreable && pack.unscoreable.length>0 && <div className="card">
+        <div className="eyebrow">Could not be scored</div>
+        <div className="note">These are listed rather than dropped — a pair missing from a ranking should never be indistinguishable from a pair that ranked last.</div>
+        {pack.unscoreable.map(u=><div key={u.pair} className="note" style={{marginTop:4}}><span className="ambr">{u.pair}</span> {u.unscoreable}</div>)}
+      </div>}
+      {!pack && !err && <div className="note">Loading the board…</div>}
+    </div>
+  );
+}
+
 function App(){
   const [tab,setTab]=useState('desk');
   const [state,setState]=useState(null);
@@ -973,11 +1073,12 @@ function App(){
     <Tape/>
     {engineErr && <div className="wrap" style={{paddingBottom:0}}><div className="alertbox a-red">Engine offline: {engineErr}. Check ANTHROPIC_API_KEY and the Upstash variables in Vercel, then reload.</div></div>}
     {tab==='desk' && <Desk state={state} refresh={refresh}/>}
+    {tab==='board' && <Board/>}
     {tab==='book' && <Book state={state} refresh={refresh}/>}
     {tab==='aar' && <Archive state={state}/>}
     {tab==='vitals' && <Vitals state={state}/>}
     <nav className="tabs">
-      {[['desk','Desk','desk'],['book','Book','book'],['aar','Review','aar'],['vitals','Vitals','vitals']].map(([k,l,ic])=>
+      {[['desk','Desk','desk'],['board','Board','brain'],['book','Book','book'],['aar','Review','aar'],['vitals','Vitals','vitals']].map(([k,l,ic])=>
         <button key={k} className={tab===k?'on':''} onClick={()=>setTab(k)}><Ic n={ic}/>{l}</button>)}
     </nav>
   </>);
