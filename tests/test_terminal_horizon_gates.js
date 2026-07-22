@@ -94,6 +94,8 @@ function buildGuards(src, { quiet = false } = {}) {
   out += grabReq(/function projectedMarginLevel[\s\S]*?\n\}\n/, 'projectedMarginLevel()');
   out += grabReq(/const MARGIN_FLOOR_PCT = [^\n]+\n/, 'MARGIN_FLOOR_PCT');
   out += grabReq(/const MARGIN_PREFER_PCT = [^\n]+\n/, 'MARGIN_PREFER_PCT');
+  out += grabReq(/const LOT_STEP = [^\n]+\n/, 'LOT_STEP');
+  out += grabReq(/function maxLotsWithinFloor[\s\S]*?\n\}\n/, 'maxLotsWithinFloor()');
   out += grabReq(/const VITALS_FRESH_MS = [^\n]+\n/, 'VITALS_FRESH_MS');
   out += grabReq(/function vitalsAge[\s\S]*?\n\}\n/, 'vitalsAge()');
   out += grabReq(/function shadowScorecard[\s\S]*?\n\}\n/, 'shadowScorecard()');
@@ -104,7 +106,7 @@ function buildGuards(src, { quiet = false } = {}) {
   out += `\nmodule.exports={HORIZON,ageFlag,num,normPair,pipSize,checkLevels,refFor,YF_SYMBOL,
     calLine,calLines,UNIVERSE_CCYS,calByCurrency,resolveCatalyst,RED_FOLDER_GUARD_MIN,redFolderImminent,
     currencyExposure,exposureLine,correlationCheck,STACK_MATERIAL_LOTS,LEVERAGE,CONTRACT,usdPerUnit,estMarginUSD,
-    projectedMarginLevel,MARGIN_FLOOR_PCT,MARGIN_PREFER_PCT,VITALS_FRESH_MS,vitalsAge,shadowScorecard,
+    projectedMarginLevel,MARGIN_FLOOR_PCT,MARGIN_PREFER_PCT,LOT_STEP,maxLotsWithinFloor,VITALS_FRESH_MS,vitalsAge,shadowScorecard,
     CONVICTION_RUNG,sessionPhase,ideaIsDupe,auditIdeaAgainst};`;
   const Module = require('module');
   const m = new Module();
@@ -278,11 +280,18 @@ check('...and does not cap conviction either', (() => {
 check('...but the overlap is still reported honestly, not hidden',
   G.correlationCheck({ pair: 'EURUSD', direction: 'BUY', lots: 0.03 }, realExp).stacked.length === 1);
 // The floor must not swallow the real thing it exists to catch.
-check('a MATERIAL long-AUD stack still warns and caps', (() => {
+// POLICY CHANGE: correlation is REPORTED, never penalised. He manages his own exposure; the
+// desk's job is to say what the trade is worth and note what it would add to. A material stack
+// must still be DETECTED and surfaced — it just no longer touches conviction or blocks.
+check('a MATERIAL long-AUD stack is surfaced as a risk NOTE', (() => {
   const a = G.auditIdeaAgainst({ pair: 'AUD/CAD', direction: 'BUY', entry_zone: '0.9872', tp: '0.9960', sl: '0.9810', lots: '0.03' }, baseCtx({ exposure: realExp }));
-  return a.cap === 'MED' && a.blocking.length === 0;
+  return a.riskNotes.some((n) => /Adds to existing exposure/.test(n)) && /LONG AUD/.test(a.riskNotes.join(' '));
 })());
-check('a MATERIAL both-leg stack (long AUD + short JPY) still BLOCKS',
+check('...and does NOT cap conviction', (() => {
+  const a = G.auditIdeaAgainst({ pair: 'AUD/CAD', direction: 'BUY', entry_zone: '0.9872', tp: '0.9960', sl: '0.9810', lots: '0.03' }, baseCtx({ exposure: realExp }));
+  return a.cap === null && a.blocking.length === 0;
+})());
+check('correlationCheck still DETECTS a material both-leg stack (detection intact)',
   G.correlationCheck({ pair: 'AUDJPY', direction: 'BUY', lots: 0.03 }, realExp).heavy === true);
 check('materiality floor is one normal clip', G.correlationCheck({ pair: 'AUDCAD', direction: 'BUY', lots: 0.03 }, realExp).material.length === 1);
 
@@ -354,21 +363,98 @@ check('a clean idea has no warnings', clean.warnings.length === 0);
 check('a clean idea is not conviction-capped', clean.cap === null);
 check('a clean idea carries verified margin arithmetic', clean.margin.verified === true && clean.margin.projectedPct > 150);
 // Each gate, in isolation, must block or cap.
-check('GATE margin: 0.10 lots at 172% is BLOCKED',
-  G.auditIdeaAgainst(goodIdea({ lots: '0.10' }), baseCtx()).blocking.some((b) => /margin level/.test(b)));
-check('GATE margin: stale vitals cannot certify, so it caps to MED', (() => {
+// ---- THE SPLIT: conviction = trade quality; margin/correlation = his book, reported only ----
+check('GATE margin: an oversized 0.10 lots RESIZES rather than blocking', (() => {
+  const a = G.auditIdeaAgainst(goodIdea({ lots: '0.10' }), baseCtx());
+  return a.blocking.length === 0 && a.margin.breachedAtRequested === true && a.margin.resizedTo > 0;
+})());
+check('...and does NOT cap conviction (a size error is not a quality verdict)',
+  G.auditIdeaAgainst(goodIdea({ lots: '0.10' }), baseCtx()).cap === null);
+check('...surfacing both numbers so the correction is visible', (() => {
+  const a = G.auditIdeaAgainst(goodIdea({ lots: '0.10' }), baseCtx());
+  return a.riskNotes.some((n) => /0\.10 lots/.test(n) && /resized to/.test(n));
+})());
+check('GATE margin: stale vitals is a NOTE, not a conviction cap', (() => {
   const a = G.auditIdeaAgainst(goodIdea(), baseCtx({ vitals: VITALS_STALE, vitalsUsable: false, vAge: G.vitalsAge(VITALS_STALE) }));
-  return a.cap === 'MED' && a.margin.verified === false && a.warnings.some((w) => /UNVERIFIED/.test(w));
+  return a.cap === null && a.margin.verified === false && a.riskNotes.some((n) => /UNVERIFIED/.test(n));
 })());
-check('GATE margin: stale vitals does NOT block (that would brick the desk)',
+check('GATE margin: stale vitals still does not block',
   G.auditIdeaAgainst(goodIdea(), baseCtx({ vitals: VITALS_STALE, vitalsUsable: false, vAge: G.vitalsAge(VITALS_STALE) })).blocking.length === 0);
-check('GATE correlation: single-leg stack warns and caps to MED', (() => {
+check('GATE correlation: a single-leg stack is noted, not capped', (() => {
   const a = G.auditIdeaAgainst({ pair: 'GBPJPY', direction: 'BUY', entry_zone: '218.08', tp: '220.50', sl: '216.80', lots: '0.02', conviction: 'HIGH' }, baseCtx({ exposure: exp }));
-  return a.cap === 'MED' && a.blocking.length === 0 && a.correlation.stacked.length === 1;
+  return a.cap === null && a.blocking.length === 0 && a.correlation.stacked.length === 1 && a.riskNotes.length > 0;
 })());
-check('GATE correlation: both-leg stack is BLOCKED',
-  G.auditIdeaAgainst({ pair: 'GBPJPY', direction: 'BUY', entry_zone: '218.08', tp: '220.50', sl: '216.80', lots: '0.02' }, baseCtx({ exposure: bothLegs }))
-    .blocking.some((b) => /stacks existing risk/.test(b)));
+check('GATE correlation: even a both-leg stack no longer blocks',
+  G.auditIdeaAgainst({ pair: 'GBPJPY', direction: 'BUY', entry_zone: '218.08', tp: '220.50', sl: '216.80', lots: '0.02' }, baseCtx({ exposure: bothLegs })).blocking.length === 0);
+check('THE HEADLINE: a HIGH-quality idea on a heavily-stacked book stays HIGH', (() => {
+  const a = G.auditIdeaAgainst({ pair: 'GBPJPY', direction: 'BUY', entry_zone: '218.08', tp: '220.50', sl: '216.80', lots: '0.02',
+    conviction: 'HIGH', catalyst: { event: 'CPI y/y', stance: 'TRADE_INTO' } }, baseCtx({ exposure: bothLegs }));
+  return a.cap === null && a.blocking.length === 0;
+})());
+// ...but genuine TRADE-quality doubts must still cap, or the split has gone too far.
+check('quality still caps: an invented catalyst caps to MED even with a clean book',
+  G.auditIdeaAgainst(goodIdea({ catalyst: { event: 'Quarterly Vibes Index', stance: 'TRADE_INTO' } }), baseCtx({ exposure: {} })).cap === 'MED');
+check('quality still caps: an unpriceable pair still blocks and caps to LOW', (() => {
+  const a = G.auditIdeaAgainst({ pair: 'USDSEK', direction: 'BUY', entry_zone: '10.50', tp: '10.70', sl: '10.40', lots: '0.02' }, baseCtx({ exposure: {} }));
+  return a.blocking.length > 0 && a.cap === 'LOW';
+})());
+check('quality still caps: an imminent unacknowledged print still blocks',
+  G.auditIdeaAgainst(goodIdea(), baseCtx({ cal: CAL_IMMINENT })).blocking.length > 0);
+
+console.log('\n=== 8b. THE HARD FLOOR RESIZES — and still protects the floor ===');
+// The floor is the one place margin still has teeth. It must bind on SIZE without ever
+// removing the idea, and the resized size must actually respect it.
+const FLOOR = G.MARGIN_FLOOR_PCT;
+const fitLots = G.maxLotsWithinFloor('EURUSD', VITALS_NOW, RATES, LIVE);
+check('maxLotsWithinFloor returns a positive tradeable size here', fitLots >= G.LOT_STEP);
+check('THE INVARIANT: the resized size does NOT breach the floor',
+  G.projectedMarginLevel(VITALS_NOW, G.estMarginUSD('EURUSD', fitLots, RATES, LIVE)) >= FLOOR);
+check('...and it is the LARGEST such size (one more step DOES breach)',
+  G.projectedMarginLevel(VITALS_NOW, G.estMarginUSD('EURUSD', +(fitLots + G.LOT_STEP).toFixed(2), RATES, LIVE)) < FLOOR);
+check('the result is a clean lot step, not a float artefact',
+  Math.abs(fitLots * 100 - Math.round(fitLots * 100)) < 1e-9);
+check('an already-fine size is left alone', (() => {
+  const a = G.auditIdeaAgainst(goodIdea({ lots: '0.02' }), baseCtx());
+  return a.margin.resizedTo == null && a.margin.breachedAtRequested !== true;
+})());
+check('...and reports the headroom instead', G.auditIdeaAgainst(goodIdea({ lots: '0.02' }), baseCtx()).margin.headroomLots >= 0.02);
+// No room at all: the idea must STILL survive, stated honestly.
+const BROKE = { balance: 2100, equity: 2000, margin: 1900, freeMargin: 100, marginLevel: 105, ts: new Date().toISOString() };
+check('when nothing fits, maxLots returns 0 rather than a negative size',
+  G.maxLotsWithinFloor('EURUSD', BROKE, RATES, LIVE) === 0);
+check('...never a negative size, across exhausted accounts', (() => {
+  for (const inUse of [1400, 1900, 5000, 50000]) {
+    const f = G.maxLotsWithinFloor('EURUSD', { equity: 2000, margin: inUse }, RATES, LIVE);
+    if (!(f === 0 || f > 0)) return false;
+    if (f < 0) return false;
+  }
+  return true;
+})());
+check('...the idea is NOT blocked', (() => {
+  const a = G.auditIdeaAgainst(goodIdea({ lots: '0.05' }), baseCtx({ vitals: BROKE, vAge: G.vitalsAge(BROKE) }));
+  return a.blocking.length === 0 && a.margin.noSizeFits === true;
+})());
+check('...NOT conviction-capped', G.auditIdeaAgainst(goodIdea({ lots: '0.05' }), baseCtx({ vitals: BROKE, vAge: G.vitalsAge(BROKE) })).cap === null);
+check('...and says so plainly', G.auditIdeaAgainst(goodIdea({ lots: '0.05' }), baseCtx({ vitals: BROKE, vAge: G.vitalsAge(BROKE) }))
+  .riskNotes.some((n) => /No tradeable size fits/.test(n)));
+check('unpriceable base returns null, never a bogus size', G.maxLotsWithinFloor('SEKJPY', VITALS_NOW, RATES, {}) === null);
+check('missing equity returns null', G.maxLotsWithinFloor('EURUSD', { margin: 100 }, RATES, LIVE) === null);
+// Sweep the invariant across sizes and account states — one worked example is not a guarantee.
+check('INVARIANT HOLDS across a sweep of account states', (() => {
+  for (const eq of [500, 1200, 2000, 5000, 20000]) {
+    for (const inUse of [0, 100, 800, 1163, 3000]) {
+      const v = { equity: eq, margin: inUse, ts: new Date().toISOString() };
+      for (const pair of ['EURUSD', 'USDJPY', 'GBPJPY', 'AUDNZD']) {
+        const f = G.maxLotsWithinFloor(pair, v, RATES, LIVE);
+        if (f == null) return false;
+        if (f === 0) continue;               // nothing fits: nothing to verify
+        const p = G.projectedMarginLevel(v, G.estMarginUSD(pair, f, RATES, LIVE));
+        if (!(p >= FLOOR)) return false;     // the floor must never be breached by a resize
+      }
+    }
+  }
+  return true;
+})());
 check('GATE levels: unpriceable pair is BLOCKED and capped to LOW', (() => {
   const a = G.auditIdeaAgainst({ pair: 'USDSEK', direction: 'BUY', entry_zone: '10.50', tp: '10.70', sl: '10.40', lots: '0.02' }, baseCtx());
   return a.blocking.length > 0 && a.cap === 'LOW';
@@ -475,7 +561,13 @@ if (UI_SRC) {
   check('UI: horizon constants declared', /const HZ=\{targetMin:2,targetMax:3,ceilingDays:4,redAtDays:5\}/.test(UI_SRC));
   check('UI: "past its intended life" no longer fires from day 1', !/p\.ageDays>=1\?<span className="ambr"> · past its intended life/.test(UI_SRC));
   check('UI: surfaces the recomputed margin', /MARGIN \(recomputed\)/.test(UI_SRC));
-  check('UI: surfaces stacked exposure', /STACKS EXISTING RISK/.test(UI_SRC));
+  check('UI: surfaces added exposure without framing it as a penalty', /ADDS TO EXPOSURE/.test(UI_SRC));
+  check('UI: says exposure has not affected conviction', /has not affected the conviction above/.test(UI_SRC));
+  check('UI: separates book facts from trade doubts', /idea\.risk_notes/.test(UI_SRC) && /YOUR BOOK/.test(UI_SRC) && /noted, not counted against the idea/.test(UI_SRC));
+  check('UI: shows the resize on the lot size itself', /resized from \{idea\.lotsRequested\}/.test(UI_SRC));
+  check('UI: shows both margin figures for a resize', /resized to \{idea\.marginCheck\.resizedTo\} lots/.test(UI_SRC));
+  check('UI: has a no-size-fits state', /no tradeable size fits your/.test(UI_SRC));
+  check('UI: explains what conviction measures', /Conviction rates the QUALITY of the trade only/.test(UI_SRC));
   check('UI: surfaces the red-folder warning', /HIGH-IMPACT PRINT IMMINENT/.test(UI_SRC));
   check('UI: surfaces a surviving blocking finding', /idea\.gate_warning/.test(UI_SRC));
 } else {
@@ -499,10 +591,39 @@ const MUTATIONS = [
     probe: (g) => !g.checkLevels({ pair: 'USDSEK', direction: 'BUY', entry_zone: '10.50', tp: '10.70', sl: '10.40' }, null).ok,
   },
   {
-    gate: 'B3 margin floor',
-    from: `if (projected < MARGIN_FLOOR_PCT) a.blocking.push(`,
-    to: `if (false && projected < MARGIN_FLOOR_PCT) a.blocking.push(`,
-    probe: (g) => g.auditIdeaAgainst(goodIdea({ lots: '0.10' }), baseCtx()).blocking.some((b) => /margin level/.test(b)),
+    // THE FLOOR MUST STILL BIND. It no longer blocks the idea — it binds the SIZE — so the
+    // mutation to catch is one that lets an oversized lot through unresized.
+    gate: 'HARD FLOOR: an oversized lot is detected and resized',
+    from: `    if (projected < MARGIN_FLOOR_PCT) {`,
+    to: `    if (false) {`,
+    probe: (g) => {
+      const a = g.auditIdeaAgainst(goodIdea({ lots: '0.10' }), baseCtx());
+      return a.margin.resizedTo > 0 && a.margin.breachedAtRequested === true;
+    },
+  },
+  {
+    // ...and the resized size must genuinely respect the floor. Rounding UP would silently
+    // re-breach the very thing the resize exists to protect.
+    gate: 'HARD FLOOR: the resize rounds DOWN, never up',
+    from: `  const stepped = Math.floor(raw / LOT_STEP) * LOT_STEP;`,
+    to: `  const stepped = Math.ceil(raw / LOT_STEP) * LOT_STEP;`,
+    probe: (g) => {
+      const f = g.maxLotsWithinFloor('EURUSD', VITALS_NOW, RATES, LIVE);
+      return g.projectedMarginLevel(VITALS_NOW, g.estMarginUSD('EURUSD', f, RATES, LIVE)) >= g.MARGIN_FLOOR_PCT;
+    },
+  },
+  {
+    gate: 'HARD FLOOR: an exhausted account yields no size rather than a negative one',
+    from: `  if (!(budget > 0)) return 0; // already at or through the floor; nothing fits`,
+    to: `  if (false) return 0;`,
+    probe: (g) => g.maxLotsWithinFloor('EURUSD', { equity: 2000, margin: 1900 }, RATES, LIVE) === 0,
+  },
+  {
+    // The split itself: margin must NOT be able to reach the conviction band any more.
+    gate: 'SPLIT: margin never caps conviction',
+    from: `      a.riskNotes.push(\`At \${i.lots} lots this would project \${projected}%, under your \${MARGIN_FLOOR_PCT}% floor`,
+    to: `      capTo('MED'); a.riskNotes.push(\`At \${i.lots} lots this would project \${projected}%, under your \${MARGIN_FLOOR_PCT}% floor`,
+    probe: (g) => g.auditIdeaAgainst(goodIdea({ lots: '0.10' }), baseCtx()).cap === null,
   },
   {
     gate: 'B3 margin arithmetic (leverage)',
@@ -523,10 +644,13 @@ const MUTATIONS = [
     probe: (g) => g.correlationCheck({ pair: 'GBPJPY', direction: 'BUY', lots: 0.05 }, exp).stacked.length === 1,
   },
   {
-    gate: 'B2 correlation escalation to blocking',
-    from: `  return { stacked, material, heavy: material.length >= 2 || doubles };`,
-    to: `  return { stacked, material, heavy: false };`,
-    probe: (g) => g.auditIdeaAgainst({ pair: 'GBPJPY', direction: 'BUY', entry_zone: '218.08', tp: '220.50', sl: '216.80', lots: '0.02' }, baseCtx({ exposure: bothLegs })).blocking.length > 0,
+    // Correlation no longer blocks, so the guard worth protecting is that it is still REPORTED.
+    // A silent stack is exactly what he asked to keep seeing.
+    gate: 'SPLIT: a material stack is still reported as a risk note',
+    from: `    if (corr.material.length) a.riskNotes.push(\`Adds to existing exposure:`,
+    to: `    if (false) a.riskNotes.push(\`Adds to existing exposure:`,
+    probe: (g) => g.auditIdeaAgainst({ pair: 'AUD/CAD', direction: 'BUY', entry_zone: '0.9872', tp: '0.9960', sl: '0.9810', lots: '0.03' }, baseCtx({ exposure: realExp }))
+      .riskNotes.some((n) => /Adds to existing exposure/.test(n)),
   },
   {
     gate: 'B2 materiality floor (no blocking on residuals)',

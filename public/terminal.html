@@ -331,7 +331,9 @@ function IdeaCard({idea,rec,onTaken,onPassed}){
       </div>
       <div className="grid2">
         <div className="kv"><div className="k">ENTRY ZONE</div><div className="v">{idea.entry_zone}</div></div>
-        <div className="kv"><div className="k">LOTS</div><div className="v">{idea.lots}</div></div>
+        <div className="kv"><div className="k">LOTS</div><div className="v">{idea.lots}
+          {idea.resized && <span className="ambr" style={{fontSize:11,display:'block',fontWeight:400}}>resized from {idea.lotsRequested} to fit your floor</span>}
+        </div></div>
         <div className="kv"><div className="k">TAKE PROFIT</div><div className="v green">{idea.tp}</div></div>
         <div className="kv"><div className="k">STOP LOSS</div><div className="v red">{idea.sl}</div></div>
       </div>
@@ -339,7 +341,7 @@ function IdeaCard({idea,rec,onTaken,onPassed}){
         <span>HORIZON {idea.horizon}</span>
         {idea.rr!=null && <span className={idea.rr>=1.5?'green':'ambr'}>R:R {idea.rr}</span>}
         {idea.slPips!=null && <span className="dim">SL {idea.slPips}p{idea.tpPips!=null?' · TP '+idea.tpPips+'p':''}</span>}
-        <span className={'conv-'+(idea.conviction||'').replace(/[^A-Z]/gi,'')}>CONVICTION {idea.conviction}</span>
+        <span className={'conv-'+(idea.conviction||'').replace(/[^A-Z]/gi,'')} title="Conviction rates the QUALITY of the trade only — catalyst, trend, structure, levels, sources. Your margin level and existing exposure never lower it; those appear as separate notes below.">CONVICTION {idea.conviction}</span>
       </div>
       <div className="thesis">{idea.thesis}</div>
       {Array.isArray(idea.sources) && idea.sources.length>0 && <div className="note" style={{marginTop:8}}>
@@ -355,18 +357,29 @@ function IdeaCard({idea,rec,onTaken,onPassed}){
       {idea.gate_warning && <div className="alertbox a-red" style={{marginTop:8}}>⛔ {idea.gate_warning}</div>}
       {idea.level_warning && <div className="alertbox a-amber" style={{marginTop:8}}>⚠ {idea.level_warning}</div>}
       {idea.redFolder && <div className="alertbox a-amber" style={{marginTop:8}}>📅 HIGH-IMPACT PRINT IMMINENT: {idea.redFolder.ccy} {idea.redFolder.title} at {idea.redFolder.when}. The direction of that print is not knowable.</div>}
+      {/* Two channels, kept visually distinct. risk_flags are doubts about the TRADE and they do
+          cap conviction. risk_notes are facts about YOUR BOOK — margin, exposure — and they never
+          do; they are here to be noted and managed, not to hide the idea. */}
       {Array.isArray(idea.risk_flags) && idea.risk_flags.map((f,i)=>
         <div key={i} className="note" style={{marginTop:4,color:'var(--amber)'}}>⚠ {f}</div>)}
+      {Array.isArray(idea.risk_notes) && idea.risk_notes.length>0 && <div className="note" style={{marginTop:6,paddingLeft:8,borderLeft:'2px solid var(--steel)'}}>
+        <span className="steel">YOUR BOOK</span> <span className="dim">(noted, not counted against the idea)</span>
+        {idea.risk_notes.map((n,i)=><div key={i} style={{marginTop:3}}>· {n}</div>)}
+      </div>}
       <div className="note" style={{marginTop:8}}><span className="red">RISKS</span> {idea.risks}</div>
       {(idea.sizing_note||idea.margin_note) && <div className="note" style={{marginTop:4}}><span className="ambr">SIZING</span> {idea.sizing_note||idea.margin_note}</div>}
       {idea.marginCheck && <div className="note" style={{marginTop:4}}>
         <span className="steel">MARGIN (recomputed)</span> {idea.marginCheck.estUSD!=null?`~$${idea.marginCheck.estUSD} of margin`:'cost not computable'}
-        {idea.marginCheck.projectedPct!=null
-          ? <span className={idea.marginCheck.projectedPct<idea.marginCheck.floor?'red':idea.marginCheck.projectedPct<200?'ambr':'green'}> · projects margin level {idea.marginCheck.projectedPct}% (floor {idea.marginCheck.floor}%)</span>
+        {idea.marginCheck.resizedTo!=null
+          ? <span className="ambr"> · {idea.marginCheck.requestedLots} lots would project {idea.marginCheck.projectedPct}%, under your {idea.marginCheck.floor}% floor — resized to {idea.marginCheck.resizedTo} lots, projecting {idea.marginCheck.resizedProjectedPct}%</span>
+          : idea.marginCheck.noSizeFits
+          ? <span className="red"> · no tradeable size fits your {idea.marginCheck.floor}% floor right now</span>
+          : idea.marginCheck.projectedPct!=null
+          ? <span className={idea.marginCheck.projectedPct<200?'ambr':'green'}> · projects margin level {idea.marginCheck.projectedPct}% (floor {idea.marginCheck.floor}%){idea.marginCheck.headroomLots!=null?` · you could carry up to ${idea.marginCheck.headroomLots} lots here`:''}</span>
           : <span className="ambr"> · projected level UNVERIFIED</span>}
       </div>}
-      {idea.exposureStack && <div className="note" style={{marginTop:4,color:'var(--amber)'}}>
-        <span className="steel">STACKS EXISTING RISK</span> {idea.exposureStack.stacked.map(x=>`${x.side} ${x.ccy}: book ${x.existing} + ${x.adding} = ${x.combined} lots`).join('  ·  ')}
+      {idea.exposureStack && <div className="note" style={{marginTop:4}}>
+        <span className="steel">ADDS TO EXPOSURE</span> {idea.exposureStack.stacked.map(x=>`${x.side} ${x.ccy}: book ${x.existing} + ${x.adding} = ${x.combined} lots`).join('  ·  ')} <span className="dim">— yours to weigh; it has not affected the conviction above</span>
       </div>}
       {idea.catalystResolved && <div className="note" style={{marginTop:4}}>
         <span className="steel">CATALYST ({idea.catalystResolved.stance})</span> {idea.catalystResolved.ccy} {idea.catalystResolved.event} · {idea.catalystResolved.when} · in {idea.catalystResolved.hoursOut}h

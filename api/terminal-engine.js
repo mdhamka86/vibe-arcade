@@ -784,8 +784,40 @@ function projectedMarginLevel(vitals, addMargin) {
   if (!(denom > 0)) return null;
   return +((equity / denom) * 100).toFixed(1);
 }
-const MARGIN_FLOOR_PCT = 150;   // hard floor from the doctrine; below this a proposal is refused
+const MARGIN_FLOOR_PCT = 150;   // hard floor from the doctrine
 const MARGIN_PREFER_PCT = 200;  // preferred level if BOTH ideas were taken together
+const LOT_STEP = 0.01;          // MT5 minimum increment; a size below this cannot be traded
+
+// The largest lot size in `pair` that keeps the projected margin level at or above the floor.
+//
+// A FLOOR BREACH IS A FACT ABOUT LOT SIZE, NOT A JUDGEMENT ON THE TRADE. The gate used to
+// REJECT any idea whose proposed size breached the floor, which threw away the analysis with the
+// arithmetic — a genuinely good setup vanished because the model guessed 0.05 instead of 0.02.
+// Solving for the size that fits keeps the idea and corrects only the number that was wrong.
+//
+//   projected = equity / (marginInUse + lots * marginPerLot) * 100  >=  floorPct
+//   =>  lots <= ((equity * 100 / floorPct) - marginInUse) / marginPerLot
+//
+// Rounded DOWN to the broker's lot step: rounding up would re-breach the floor this exists to
+// protect. Returns 0 when no tradeable size fits, null when the maths cannot be done at all.
+function maxLotsWithinFloor(pair, vitals, rates, live, floorPct = MARGIN_FLOOR_PCT) {
+  const equity = num(vitals && vitals.equity);
+  if (equity == null || !(equity > 0)) return null;
+  const inUse = num(vitals && vitals.margin) ?? 0;
+  const perLot = estMarginUSD(pair, 1, rates, live);
+  if (perLot == null || !(perLot > 0)) return null;
+  const budget = (equity * 100 / floorPct) - inUse;
+  // THE guard against a negative size, and deliberately the only one. An earlier version also
+  // clamped the result with Math.max(0, …); the two were redundant, so removing either left the
+  // other silently covering for it and neither was independently testable — the mutation harness
+  // caught exactly that. One guard that is genuinely load-bearing beats two that alibi each other.
+  if (!(budget > 0)) return 0; // already at or through the floor; nothing fits
+  const raw = budget / perLot;
+  const stepped = Math.floor(raw / LOT_STEP) * LOT_STEP;
+  // toFixed(2) because floating point turns 0.06 into 0.060000000000000005, which then reads
+  // back as an absurd lot size in the UI and in the prompt.
+  return +stepped.toFixed(2);
+}
 // VITALS FRESHNESS. The engine already refuses to call a PRICE live at 6h old; margin and
 // equity were rendered into the prompt with no age at all, so a week-old sync would size
 // tonight's trades in silence. Same gate, same reasoning: we cannot verify a floor we cannot
@@ -899,8 +931,24 @@ function ideaIsDupe(i, ctx) {
   return ctx.banned.has(p + '|' + (i && i.direction)) || ctx.openPairs.includes(p);
 }
 
+// CONVICTION MEASURES THE TRADE, NOT THE BOOK.
+//
+// This gate used to fold three different kinds of judgement into one number. Trade quality
+// (is the setup real? does the catalyst check out? are the levels sane?) belongs in conviction.
+// But the book's margin level and its existing currency exposure are facts about the ACCOUNT,
+// not about the idea — and letting them lower the conviction band hid good ideas behind his own
+// risk position, which is his to manage, not the desk's to censor. A genuinely strong setup was
+// displayed as LOW because he happened to be carrying exposure that day.
+//
+// So findings now land in three buckets, and only two of them touch conviction:
+//   blocking[]   the idea cannot be shown as written — send it back        (quality/safety)
+//   warnings[]   real doubt about the TRADE — caps the conviction band     (quality)
+//   riskNotes[]  facts about HIS BOOK — shown alongside, never cap         (margin, correlation)
+//
+// The 150% floor survives as a hard gate, but it RESIZES rather than kills: a breach is
+// arithmetic about lot size, not a verdict on the setup.
 function auditIdeaAgainst(i, ctx, nowMs = Date.now()) {
-  const a = { blocking: [], warnings: [], cap: null, margin: null, correlation: null, catalyst: null, redFolder: null };
+  const a = { blocking: [], warnings: [], riskNotes: [], cap: null, margin: null, correlation: null, catalyst: null, redFolder: null };
   const capTo = (c) => { if (a.cap == null || CONVICTION_RUNG[c] < CONVICTION_RUNG[a.cap]) a.cap = c; };
 
   // 1) repeat / already-open exposure
@@ -914,34 +962,52 @@ function auditIdeaAgainst(i, ctx, nowMs = Date.now()) {
     if (lc.unanchored) capTo('LOW');
   }
 
-  // 3) CORRELATION against the book's real currency posture
+  // 3) CORRELATION — INFORMATIONAL ONLY. Never caps, never blocks.
+  // Stacking onto existing exposure is a fact about his book that he should SEE, and then decide
+  // about himself. It says nothing about whether the setup in front of him is any good, so it no
+  // longer touches the conviction band or refuses the idea.
   const corr = correlationCheck(i, ctx.exposure);
   a.correlation = corr;
   if (corr.stacked.length) {
-    const desc = (rows) => rows.map((x) => `${x.side} ${x.ccy} (book ${x.existing} + ${x.adding} = ${x.combined} lots)`).join(', ');
-    if (corr.heavy) a.blocking.push(`${i.pair} ${i.direction} stacks existing risk: ${desc(corr.material)}`);
-    else if (corr.material.length) { a.warnings.push(`Stacks onto existing ${desc(corr.material)}. This is a bigger bet on a currency you already hold, not fresh risk.`); capTo('MED'); }
-    // Immaterial overlap is stated for honesty but must not cap: it is usually the residual of
-    // two positions that largely cancel, and treating that as stacked risk blocks good ideas.
-    else a.notes = (a.notes || []).concat(`Minor overlap with ${desc(corr.stacked)} — too small to count as stacking.`);
+    const desc = (rows) => rows.map((x) => `${x.side} ${x.ccy} ${x.existing} + ${x.adding} = ${x.combined} lots`).join(', ');
+    if (corr.material.length) a.riskNotes.push(`Adds to existing exposure: ${desc(corr.material)}. Your call whether that concentration is acceptable.`);
+    else a.riskNotes.push(`Minor overlap with ${desc(corr.stacked)} — small enough to be book residue rather than real concentration.`);
   }
 
-  // 4) MARGIN FLOOR, recomputed in code from the live vitals rather than trusted from prose
+  // 4) MARGIN — the floor is a HARD GATE, but it RESIZES rather than kills.
+  // The level itself never caps conviction: how much room his account has is not evidence about
+  // the trade. What the floor does control is the SIZE, and a size that breaches it is corrected
+  // to the largest one that fits, with both numbers shown.
   const est = estMarginUSD(i.pair, i.lots, ctx.rates, ctx.live);
   const projected = ctx.vitalsUsable ? projectedMarginLevel(ctx.vitals, est) : null;
-  a.margin = { estUSD: est, projectedPct: projected, floor: MARGIN_FLOOR_PCT, verified: projected != null };
+  a.margin = { estUSD: est, projectedPct: projected, floor: MARGIN_FLOOR_PCT, verified: projected != null, requestedLots: num(i.lots) };
   if (projected != null) {
-    if (projected < MARGIN_FLOOR_PCT) a.blocking.push(`${i.pair} at ${i.lots} lots projects margin level ${projected}%, below the ${MARGIN_FLOOR_PCT}% floor`);
+    if (projected < MARGIN_FLOOR_PCT) {
+      const fit = maxLotsWithinFloor(i.pair, ctx.vitals, ctx.rates, ctx.live, MARGIN_FLOOR_PCT);
+      a.margin.breachedAtRequested = true;
+      if (fit != null && fit >= LOT_STEP) {
+        // Resize. The idea survives at a size that respects the floor.
+        a.margin.resizedTo = fit;
+        a.margin.resizedProjectedPct = projectedMarginLevel(ctx.vitals, estMarginUSD(i.pair, fit, ctx.rates, ctx.live));
+        a.riskNotes.push(`At ${i.lots} lots this would project ${projected}%, under your ${MARGIN_FLOOR_PCT}% floor — shown resized to ${fit} lots (projects ${a.margin.resizedProjectedPct}%). The setup is unchanged; only the size is.`);
+      } else {
+        // Nothing tradeable fits. Still not a blocking finding and still not a conviction cap:
+        // the idea is sound, his account simply has no room for it right now. Saying that
+        // plainly is more useful than hiding the idea and implying there was nothing to find.
+        a.margin.noSizeFits = true;
+        a.riskNotes.push(`No tradeable size fits your ${MARGIN_FLOOR_PCT}% floor right now — even ${LOT_STEP} lots would breach it. The idea stands; the room does not. Free margin first if you want it.`);
+      }
+    } else if (a.margin.requestedLots != null) {
+      a.margin.headroomLots = maxLotsWithinFloor(i.pair, ctx.vitals, ctx.rates, ctx.live, MARGIN_FLOOR_PCT);
+    }
   } else {
-    // Cannot verify => do not certify. Stale or missing vitals, or a base currency we cannot
-    // price, all land here. Capping is the honest response: the desk says "unverified" rather
-    // than either blocking a possibly-fine trade or blessing a possibly-fatal one.
+    // Unverifiable margin is a gap in what we know about HIS ACCOUNT, not about the trade, so it
+    // is stated and no longer caps the conviction band.
     const why = !ctx.vitals ? 'no account vitals synced yet'
       : (ctx.vAge && !ctx.vAge.fresh) ? `vitals are stale (${ctx.vAge.label})`
       : est == null ? 'could not price this pair to estimate margin'
       : 'equity missing from vitals';
-    a.warnings.push(`Margin floor UNVERIFIED: ${why}. Size this yourself before taking it.`);
-    capTo('MED');
+    a.riskNotes.push(`Margin impact UNVERIFIED: ${why}. Size this one yourself.`);
   }
 
   // 5) RED FOLDER — an imminent high-impact print on either leg
@@ -1206,15 +1272,15 @@ HONESTY STILL HOLDS: trawling hard means finding the best genuine setups, NOT in
 SIZING DOCTRINE (aggressive, margin-bounded):
 - Size these as AGGRESSIVELY as the margin arithmetic honestly allows. Do not default to timid clips when headroom is generous; equally, never let bravado outrun the maths. Note a ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day hold ties the margin up for the WHOLE of that window, so the headroom you consume is not returned by tonight's close.
 - Account leverage is approximately 1:20 (observed live: 0.10 lots EURUSD consumes ~$570 of margin; scale by notional for other pairs and lot sizes).
-- For EACH idea, compute the projected margin level if taken = equity / (current margin in use + estimated new margin) x 100. HARD FLOOR: projected margin level must stay above ${MARGIN_FLOOR_PCT}%. Prefer above ${MARGIN_PREFER_PCT}% if BOTH ideas were taken together. State the projected figure explicitly in sizing_note. THIS IS RECOMPUTED IN CODE FROM THE LIVE VITALS AFTER YOU RESPOND: a lot size that breaches the floor is rejected outright, so do the arithmetic properly rather than asserting a comfortable number.
-- Account for ACTIVE trades: margin already committed and correlation with open pairs both shrink the honest maximum. If the book is already heavy, say so plainly and size down; aggression means maximum JUSTIFIED size, not reckless size.
+- For EACH idea, compute the projected margin level if taken = equity / (current margin in use + estimated new margin) x 100. HARD FLOOR: projected margin level must stay above ${MARGIN_FLOOR_PCT}%. Prefer above ${MARGIN_PREFER_PCT}% if BOTH ideas were taken together. State the projected figure explicitly in sizing_note. THIS IS RECOMPUTED IN CODE FROM THE LIVE VITALS AFTER YOU RESPOND: if your lot size breaches the floor the desk RESIZES it down to the largest size that fits and shows both numbers — the idea is kept, only the size is corrected. So get the arithmetic right, but never drop or weaken an idea because of sizing.
+- Account for ACTIVE trades: margin already committed shrinks the honest maximum size. If the book is already heavy, say so in sizing_note and size accordingly.
 - FRESHNESS IS MANDATORY: do NOT propose any pair+direction combo from the idea history above that appeared in the last 3 days, unless a specific NEW named catalyst justifies it (name it explicitly in the thesis). Rotate the hunting ground; the market has dozens of pairs.
 - NEVER propose a pair that is already open in the book: that is adding, not a fresh idea.
-- CORRELATION IS RISK, AND IT IS CHECKED IN CODE. Read the NET CURRENCY EXPOSURE line above. A forex position is TWO currency bets: BUY GBPJPY is long GBP and short JPY. Proposing a new trade whose legs push the SAME WAY as exposure the book already carries is not a fresh idea, it is doubling an existing bet — and it is exactly how a correlated book gets margin-called on one bad print. If the book is already long GBP, a long GBPJPY stacks it. Prefer ideas whose legs are genuinely uncorrelated with the posture above, or that actively offset it. Any stacking that remains must be stated plainly in correlation_note; a proposal that stacks BOTH legs, or that more than doubles an existing currency exposure, will be REJECTED and sent back.
+- CORRELATION IS REPORTED, NOT PENALISED. Read the NET CURRENCY EXPOSURE line above. A forex position is TWO currency bets: BUY GBPJPY is long GBP and short JPY, so a trade whose legs push the same way as exposure the book already carries concentrates risk rather than diversifying it. State any such overlap plainly in correlation_note so he can see it — he manages his own exposure and will decide. Do NOT lower an idea's conviction, and do NOT decline to propose it, because it happens to touch a currency he already holds. A genuinely strong setup is still a strong setup on a concentrated book; the concentration is his call, the quality is yours.
 - CATALYST (required field): every idea must carry a "catalyst" object. If the thesis is anchored to a scheduled event, name it EXACTLY as it appears in the calendar above, give its Bangkok time, and set stance to TRADE_INTO (deliberately positioned for the event) or POSITION_CLEAR (deliberately sized/timed to avoid it). If the thesis genuinely rests on flow or technicals rather than a scheduled event, set stance NONE and say what the driver is instead — do not invent an event to fill the field. At least ONE of the two ideas must be genuinely event-anchored. Your catalyst claim is matched back against the real calendar in code; an event that is not on it will be flagged.
 - YOU MAY NOT WALK BLIND INTO A PRINT. If a High-impact event for either of a pair's currencies lands within the next ${RED_FOLDER_GUARD_MIN} minutes, you must either name that event as the idea's catalyst (stance TRADE_INTO or POSITION_CLEAR) or choose a different pair. This is enforced in code: an unacknowledged imminent print rejects the idea.
 - BREVITY, telegram style, zero filler: thesis max 40 words; risks max 25; sizing_note max 25; correlation_note max 15; desk_note max 50 words naming the session's single priority.
-- CONVICTION HONESTY: rate conviction on a four-rung scale, LOW, MED, MED-HIGH, HIGH. Reserve MED-HIGH and HIGH for setups with genuine convergence: a clear catalyst, multiple sources agreeing, and clean levels. Do NOT inflate conviction to seem useful. If the honest read is that nothing tonight clears MED-HIGH, say so in desk_note and mark the ideas at their true lower conviction. A quiet, honest LOW night is more valuable to him than a falsely confident one.
+- CONVICTION MEASURES THE TRADE, NOT HIS BOOK. Rate conviction on a four-rung scale, LOW, MED, MED-HIGH, HIGH, purely on the QUALITY of the setup: catalyst, trend, structure, level cleanliness, source convergence, event timing. Reserve MED-HIGH and HIGH for genuine convergence. Do NOT inflate conviction to seem useful — but equally, do NOT deflate it because of his margin level, his free margin, or overlap with positions he already holds. Those are facts about his account that the desk reports separately and that he manages himself; they are not evidence about whether this trade is good. A HIGH-quality setup is HIGH even if it would add to his exposure or need sizing down. If the honest read is that nothing tonight clears MED-HIGH on QUALITY, say so in desk_note and mark them at their true lower conviction.
 - ${t.isFriday ? `It is FRIDAY. A ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day hold opened now WILL sit through the weekend gap. Either state explicitly that the thesis survives the weekend and size for gap risk, or propose something intended to close before the Friday bell — say which, and do not leave it ambiguous.` : `Respect the ${HORIZON.ceilingDays}-day ceiling.`}
 - Estimate margin cost at suggested lots and sanity-check against free margin.
 - Prefer R:R of at least 1.5. LEVEL DISCIPLINE (critical, every number is validated after you respond): entry_zone must sit within ~1% of the live reference price. SL and TP on the correct sides (BUY: SL below entry, TP above; SELL: SL above, TP below). Stop distance must be sane for a ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} DAY trade: typically 40-150 pips on majors, never tighter than ~${HORIZON.minStopPips} pips (two days of noise will take it out) nor wider than ~${HORIZON.maxStopPips} pips. Size levels to recent volatility, NOT arbitrary round numbers. Every level must share the pair's order of magnitude (e.g. NZDUSD levels are ~0.56xx, never 1.5xxx). Double-check each number against the live price before finalising.
@@ -1290,29 +1356,45 @@ Reminder: every price you output is checked against live rates after you respond
     i.exposureStack = a.correlation && a.correlation.stacked.length ? a.correlation : null;
     i.catalystResolved = a.catalyst;
     if (a.redFolder) i.redFolder = { title: a.redFolder.title, ccy: a.redFolder.ccy, when: a.redFolder.when, impact: a.redFolder.impact };
+
+    // THE FLOOR RESIZES THE IDEA rather than removing it. Both numbers are kept: `lots` becomes
+    // the size that actually fits, `lotsRequested` preserves what the desk originally proposed,
+    // so the card can say "at 0.05 breaches your floor; shown at 0.02" instead of silently
+    // presenting a different trade than the one that was reasoned about.
+    if (a.margin && a.margin.resizedTo != null) {
+      i.lotsRequested = i.lots;
+      i.lots = String(a.margin.resizedTo);
+      i.resized = true;
+    }
+
     // Blocking findings that SURVIVED the retry must be visible, not silently downgraded.
     if (a.blocking.length) {
       i.gate_warning = `GATE: ${a.blocking.join(' | ')}. The desk asked for a replacement and did not get a clean one — treat this idea as unsafe as written.`;
+      i.convictionClaimed = i.convictionClaimed || i.conviction; // record what was overridden
       i.conviction = 'LOW';
     }
+    // Two separate channels, deliberately not merged: risk_flags are doubts about the TRADE and
+    // they cap conviction; risk_notes are facts about HIS BOOK and they never do.
     if (a.warnings.length) i.risk_flags = a.warnings;
+    if (a.riskNotes.length) i.risk_notes = a.riskNotes;
     // apply the conviction cap last, so it can only ever lower what the model claimed
     if (a.cap && CONVICTION_RUNG[(i.conviction || '').toUpperCase()] > CONVICTION_RUNG[a.cap]) {
       i.convictionClaimed = i.convictionClaimed || i.conviction;
       i.conviction = a.cap;
-      i.conviction_note = [(i.conviction_note || ''), `Capped to ${a.cap} by the risk gate: ${a.warnings.join(' ')}`].filter(Boolean).join(' ');
+      i.conviction_note = [(i.conviction_note || ''), `Capped to ${a.cap} on trade quality: ${a.warnings.join(' ')}`].filter(Boolean).join(' ');
     }
   });
 
-  // COMBINED margin: the floor is checked per-idea above, but he may take BOTH. If the pair of
-  // them together breaches the floor, that is a real breach and neither idea's own figure shows
-  // it — so it is stated once, plainly, at the top.
+  // COMBINED margin: each idea is individually sized to fit the floor, but they are sized
+  // INDEPENDENTLY — two ideas that each fit on their own can breach it together. That is a real
+  // arithmetic fact he needs, and no per-idea figure shows it. Computed from the POST-RESIZE
+  // sizes, or it would report on trades the desk is no longer proposing.
   if (vitalsUsable) {
     const totalMargin = (ideas.ideas || []).reduce((sum, i) => sum + (estMarginUSD(i.pair, i.lots, rates, live) || 0), 0);
     const combined = projectedMarginLevel(s.book.vitals, totalMargin);
     ideas.marginIfBothTaken = { estUSD: +totalMargin.toFixed(2), projectedPct: combined, floor: MARGIN_FLOOR_PCT, prefer: MARGIN_PREFER_PCT };
     if (combined != null && combined < MARGIN_FLOOR_PCT) {
-      ideas.marginWarning = `Taking BOTH ideas would put the margin level at ${combined}%, below the ${MARGIN_FLOOR_PCT}% floor. Take at most one, or size down.`;
+      ideas.marginWarning = `Each idea is sized to fit your ${MARGIN_FLOOR_PCT}% floor on its own, but taking BOTH would land at ${combined}%. Take one, or size the second down yourself.`;
     } else if (combined != null && combined < MARGIN_PREFER_PCT) {
       ideas.marginWarning = `Taking both leaves the margin level at ${combined}%, under the ${MARGIN_PREFER_PCT}% comfort mark. Workable, but there is little room left for a bad candle.`;
     }
