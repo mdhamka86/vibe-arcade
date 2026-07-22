@@ -72,6 +72,15 @@ function check(name, cond) {
   check('600519 -> 600519.SS', classifyTicker('600519', 'SSE').yahooSymbol === '600519.SS');
   check('NVDA stays NVDA', classifyTicker('NVDA', 'NASDAQ').yahooSymbol === 'NVDA');
   check('BRK.B class share survives', classifyTicker('BRK.B', 'NYSE').ok);
+  // Found by the seed-refresh check: the sanitiser stripped hyphens, so BRK-B became the
+  // non-existent BRKB and priced as nothing.
+  check('BRK-B keeps its hyphen', classifyTicker('BRK-B', 'NYSE').yahooSymbol === 'BRK-B');
+  check('BRK-B infers US from shape alone', classifyTicker('BRK-B', null).market === 'US');
+  // China spans two boards; appending the market default rewrote every Shenzhen code to
+  // Shanghai and made BYD, CATL, Midea, Gree and Wuliangye all unpriceable.
+  check('Shenzhen .SZ is preserved, not rewritten to .SS', classifyTicker('002594.SZ', 'SSE').yahooSymbol === '002594.SZ');
+  check('Shanghai .SS is preserved', classifyTicker('600519.SS', 'SSE').yahooSymbol === '600519.SS');
+  check('a bare China code still gets the .SS default', classifyTicker('600519', 'SSE').yahooSymbol === '600519.SS');
 
   console.log('=== 2. AMBIGUITY AND CONFLICT MUST FAIL SAFE, NEVER GUESS ===');
   const amb = classifyTicker('6758', null);

@@ -110,9 +110,11 @@ export function marketFromHint(exchangeHint) {
 // right when a model supplied the label and wrong when the seed did.
 export function classifyTicker(rawTicker, exchangeHint, opts = {}) {
   const raw = String(rawTicker == null ? '' : rawTicker).toUpperCase().trim();
-  // Keep letters, digits and dot. THE ORIGINAL BUG lived here: the old pattern was
-  // /[^A-Z.]/g, which deleted every digit and turned Asian codes into US tickers.
-  const sym = raw.replace(/[^A-Z0-9.]/g, '');
+  // Keep letters, digits, dot and HYPHEN. THE ORIGINAL BUG lived here: the old pattern was
+  // /[^A-Z.]/g, which deleted every digit and turned Asian codes into US tickers. The hyphen
+  // was added 22/07/2026 after the seed-refresh check found BRK-B silently unpriceable —
+  // stripping it produced "BRKB", which is not a symbol on any feed.
+  const sym = raw.replace(/[^A-Z0-9.-]/g, '');
   const hint = marketFromHint(exchangeHint);
   const fail = (reason, extra) => Object.freeze({
     ok: false, market: null, ticker: sym || null, yahooSymbol: null,
@@ -148,6 +150,8 @@ export function classifyTicker(rawTicker, exchangeHint, opts = {}) {
   const candidates = [];
   // US common stock is pure letters, 1-5 of them (NVDA, F, GOOGL).
   if (/^[A-Z]{1,5}$/.test(sym)) candidates.push('US');
+  // US class shares are written with a hyphen on the feed (BRK-B, BF-B).
+  if (/^[A-Z]{1,5}-[A-Z]$/.test(sym)) candidates.push('US');
   // SGX counters are 3-4 alphanumeric characters that mix letters AND digits, in any
   // arrangement. That mixture is the clean signature — US codes are pure letters and
   // the other Asian boards are pure digits, so nothing else looks like this:
@@ -201,10 +205,20 @@ function build(marketKey, body, sym, hint) {
       tz: null, isUS: false, supported: false, reason: `${marketKey} is not a NOVA market`,
     });
   }
-  // HK and China codes are zero-padded on Yahoo (700 -> 0700.HK).
+  // HK codes are zero-padded on the feed (700 -> 0700.HK).
   let core = body;
   if (marketKey === 'HKEX') core = body.replace(/^0+/, '').padStart(4, '0');
-  const yahooSymbol = marketKey === 'US' ? core : `${core}${m.yahooSuffix}`;
+
+  // PRESERVE AN EXPLICIT SUFFIX (22/07/2026). A market has ONE default suffix, but China
+  // spans two boards: Shanghai is .SS and Shenzhen is .SZ. Blindly appending the default
+  // rewrote every Shenzhen code to Shanghai, which is how BYD, CATL, Midea, Gree and
+  // Wuliangye all became unpriceable — a silent 3% hole in the universe that the seed
+  // refresh check caught. If the caller already told us the board, believe them.
+  const dotAt = sym.lastIndexOf('.');
+  const givenSuffix = dotAt > 0 ? sym.slice(dotAt) : null;
+  const suffix = (givenSuffix && BY_SUFFIX[givenSuffix] === marketKey) ? givenSuffix : m.yahooSuffix;
+
+  const yahooSymbol = marketKey === 'US' ? core : `${core}${suffix}`;
   return Object.freeze({
     ok: true,
     market: marketKey,
