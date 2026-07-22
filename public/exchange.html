@@ -113,6 +113,10 @@
   .b-amber{background:#3A2C10;color:var(--amber)} .b-red{background:var(--red-dim);color:var(--red)}
   .b-buy{background:var(--green-dim);color:var(--green)} .b-sell{background:var(--red-dim);color:var(--red)}
   .b-cfd{background:#2A2440;color:#B9A8E8} .b-eq{background:var(--panel2);color:var(--dim)} .b-etf{background:#123033;color:var(--steel-soft)}
+  /* Market-open badge. Green reads as "you can act on this right now"; muted grey as
+     "note it, but you cannot trade it yet" — the whole point of the feature. */
+  .b-open{background:#0E2E1C;color:#5FD08A;text-transform:none}
+  .b-shut{background:var(--panel2);color:var(--dim);text-transform:none}
   .conv-HIGH{color:var(--green)} .conv-MED{color:var(--amber)} .conv-LOW{color:var(--dim)}
   .conv-MEDHIGH,.conv-MED-HIGH{color:#8AD6A0}
   .note{font-size:12px;color:var(--ink2);line-height:1.6}
@@ -172,25 +176,73 @@ function ago(ts){
   if(s<86400) return Math.floor(s/3600)+'h ago';
   return Math.floor(s/86400)+'d ago';
 }
-function usMarketOpen(){
-  // NYSE/NASDAQ regular hours 09:30-16:00 ET, Mon-Fri. Rough guard from BKK (UTC+7).
-  const now=new Date();
-  const et=new Date(now.toLocaleString('en-US',{timeZone:'America/New_York'}));
-  const day=et.getDay(), h=et.getHours(), m=et.getMinutes();
-  if(day===0||day===6) return false;
-  const mins=h*60+m;
-  return mins>=570 && mins<960;
+// Session hours for the six markets NOVA offers, in each exchange's OWN local time,
+// paired with its IANA zone. Mirrors api/market-classifier.js — the engine owns the
+// per-idea badge; this drives the always-visible strip in the top bar.
+//
+// Deliberately NOT stored as Phuket/ICT windows: the US session crosses midnight in ICT
+// and shifts an hour twice a year with US DST, so any hardcoded ICT window is wrong for
+// part of the year. Local time + IANA zone is right in every season.
+const SESSIONS=[
+  {k:'TSE',  label:'Tokyo', tz:'Asia/Tokyo',         s:[[540,690],[750,930]]},   // 09:00-11:30, 12:30-15:30
+  {k:'SGX',  label:'SGX',   tz:'Asia/Singapore',     s:[[540,720],[780,1020]]},  // 09:00-12:00, 13:00-17:00
+  {k:'HKEX', label:'HKEX',  tz:'Asia/Hong_Kong',     s:[[570,720],[780,960]]},   // 09:30-12:00, 13:00-16:00
+  {k:'BURSA',label:'Bursa', tz:'Asia/Kuala_Lumpur',  s:[[540,750],[870,1020]]},  // 09:00-12:30, 14:30-17:00
+  {k:'CHINA',label:'China', tz:'Asia/Shanghai',      s:[[570,690],[780,900]]},   // 09:30-11:30, 13:00-15:00
+  {k:'US',   label:'US',    tz:'America/New_York',   s:[[570,960]]},             // 09:30-16:00
+];
+// Intl.formatToParts, NOT `new Date(d.toLocaleString('en-US',{timeZone}))`. That old
+// round-trip re-parsed a locale-formatted string, which no spec guarantees — it happens
+// to work in V8 and is a silent wrong-answer elsewhere.
+function zoneNow(tz){
+  const p=new Intl.DateTimeFormat('en-GB',{timeZone:tz,hour:'2-digit',minute:'2-digit',weekday:'short',hour12:false}).formatToParts(new Date());
+  const g=t=>(p.find(x=>x.type===t)||{}).value||'';
+  return {mins:(parseInt(g('hour'),10)%24)*60+parseInt(g('minute'),10), weekday:g('weekday')};
+}
+// Scheduled hours only — public holidays are not tracked. Said out loud in the UI.
+function marketOpenNow(m){
+  const n=zoneNow(m.tz);
+  if(n.weekday==='Sat'||n.weekday==='Sun') return false;
+  return m.s.some(([a,b])=>n.mins>=a&&n.mins<b);
 }
 const fmt=(n)=> (n==null||n==='')?'—':(typeof n==='number'?n.toLocaleString(undefined,{maximumFractionDigits:2}):n);
 
+// ---------- Market-open badge (Feature 4) ----------
+// The engine recomputes market_status at READ time, so this is never a stale snapshot
+// baked into the cached idea. "Scheduled hours only" is said out loud on purpose: public
+// holidays are not derivable from a weekday check, so on Chinese New Year these sessions
+// would otherwise claim SGX/HKEX/TSE are open. An honest badge beats a confident wrong one.
+function MarketBadge({status}){
+  if(!status||!status.known) return null;
+  const cls=status.open?'b-open':'b-shut';
+  const tip=(status.detail||'')+(status.sessionsPhuket?`  Sessions (your time): ${status.sessionsPhuket}.`:'')
+    +' Scheduled hours only — public holidays are not tracked.';
+  return (
+    <span className={'badge '+cls} title={tip}>
+      {status.label} {status.open?'OPEN':'SHUT'}
+      {!status.open&&status.nextOpenPhuket?<span className="dim" style={{fontWeight:400}}> · opens {status.nextOpenPhuket}</span>:null}
+    </span>
+  );
+}
+
+// Price with its native currency. Nothing here converts: he acts on NOVA in the
+// stock's own currency, so that is what the card shows. Affordability is the only
+// thing judged in dollars, and the engine does that conversion.
+const px=(v,ccy)=> (v==null||v==='')?'—':(ccy&&ccy!=='USD'?`${fmt(v)} ${ccy}`:fmt(v));
+
 // ---------- Gem idea card ----------
-function GemCard({idea,ledgerId,onPass,onFlag,onTake}){
+function GemCard({idea,ledgerId,onPass,onFlag,onTake,flagged}){
   const [busy,setBusy]=useState(false);
   const [taken,setTaken]=useState(false);
   const [outcome,setOutcome]=useState(null); // 'passed' | 'flagged'
   const conv=(idea.conviction||'').toUpperCase();
   const convCls='conv-'+conv.replace(/[^A-Z]/gi,'');
   const dirCls=idea.direction==='BUY'?'b-buy':'b-sell';
+  const ccy=idea.currency||null;
+  // BUG 2: the flag now comes from SERVER state (universe.unavailable) with the local
+  // click as an optimistic overlay. It used to be local state alone, so every refresh
+  // wiped the badge and the desk looked like it had forgotten.
+  const isFlagged=flagged||outcome==='flagged';
   return (
     <div className="card accent">
       <div className="between">
@@ -202,19 +254,38 @@ function GemCard({idea,ledgerId,onPass,onFlag,onTake}){
       </div>
       <div className="meta">
         {idea.exchange&&<span>{idea.exchange}</span>}
+        <MarketBadge status={idea.market_status}/>
         {idea.industry&&<span className="steel">{idea.industry}</span>}
         {idea.horizon&&<span className="dim">{idea.horizon}</span>}
-        {idea.daytime_tradeable && <span className="badge b-etf">DAYTIME</span>}
         <span className={convCls} style={{fontWeight:600}}>{conv}</span>
         {idea.rr!=null&&<span className={idea.rr>=1.5?'green':'ambr'}>R:R {idea.rr}</span>}
       </div>
-      <div className="levels">
-        <div className="lvl"><div className="lk">Current</div><div className="lv">{fmt(idea.current_price)}</div></div>
-        <div className="lvl"><div className="lk">Entry</div><div className={"lv "+(idea.levels_broken?'red':'ambr')}>{fmt(idea.entry)}</div></div>
-        <div className="lvl"><div className="lk">Target</div><div className="lv green">{fmt(idea.tp)}{idea.tpPct!=null&&<span className="dim" style={{fontSize:9}}> +{idea.tpPct}%</span>}</div></div>
-        <div className="lvl"><div className="lk">Stop</div><div className="lv red">{fmt(idea.sl)}{idea.slPct!=null&&<span className="dim" style={{fontSize:9}}> -{idea.slPct}%</span>}</div></div>
-      </div>
-      {idea.levels_recomputed && !idea.levels_broken && <div className="note" style={{marginTop:6}}><span className="steel">◆ LEVELS ADJUSTED</span> The desk's original levels were anchored to a stale price; these entry/target/stop have been recomputed around the real live price of {fmt(idea.current_price)}. Confirm on your chart.</div>}
+      {isFlagged && <div className="alertbox a-amber" style={{marginTop:10,marginBottom:0}}>
+        <Ic n="x"/> Marked NOT ON NOVA. The desk will not propose {idea.ticker||idea.name} again.
+      </div>}
+      {idea.off_universe && <div className="alertbox a-red" style={{marginTop:10,marginBottom:0}}>
+        <b>NOT TRADEABLE VIA NOVA.</b> {idea.availability}
+      </div>}
+      {/* UNPRICED: a thesis, never a number. The model's own price is exactly what cannot
+          be trusted for a name we could not quote, and showing it is how Sony reached
+          this card at 2820 while Tokyo traded at 3425. */}
+      {idea.unpriced
+        ? <div className="alertbox a-amber" style={{marginTop:10,marginBottom:0}}>
+            <b>NO VERIFIED PRICE — THESIS ONLY.</b> The desk could not fetch a live price for {idea.ticker||idea.name},
+            so it is deliberately not quoting one. <b>Confirm the live price on NOVA</b> and set your own entry,
+            target and stop there before trading.
+          </div>
+        : <div className="levels">
+            <div className="lvl"><div className="lk">Current</div><div className="lv">{px(idea.current_price,ccy)}</div></div>
+            <div className="lvl"><div className="lk">Entry</div><div className={"lv "+(idea.levels_broken?'red':'ambr')}>{px(idea.entry,ccy)}</div></div>
+            <div className="lvl"><div className="lk">Target</div><div className="lv green">{px(idea.tp,ccy)}{idea.tpPct!=null&&<span className="dim" style={{fontSize:9}}> +{idea.tpPct}%</span>}</div></div>
+            <div className="lvl"><div className="lk">Stop</div><div className="lv red">{px(idea.sl,ccy)}{idea.slPct!=null&&<span className="dim" style={{fontSize:9}}> -{idea.slPct}%</span>}</div></div>
+          </div>}
+      {/* Staleness stated openly, from the feed's own timestamp rather than wall-clock. */}
+      {!idea.unpriced&&idea.price_delay_label&&
+        <div className="note" style={{marginTop:6}}><span className="steel">PRICE</span> {idea.price_delay_label}
+        {idea.price_age_mins!=null?` · last trade ${idea.price_age_mins}min ago`:''}</div>}
+      {idea.levels_recomputed && !idea.levels_broken && <div className="note" style={{marginTop:6}}><span className="steel">◆ LEVELS ADJUSTED</span> The desk's original levels were anchored to a stale price; these entry/target/stop have been recomputed around the real live price of {px(idea.current_price,ccy)}. Confirm on your chart.</div>}
       {Array.isArray(idea.signals)&&idea.signals.length>0&&
         <div className="signal-row">{idea.signals.map((s,i)=><span key={i} className="sig">{s}</span>)}</div>}
       <div className="thesis">{idea.reason}</div>
@@ -229,8 +300,10 @@ function GemCard({idea,ledgerId,onPass,onFlag,onTake}){
         ? <div className="alertbox a-green" style={{marginTop:12,marginBottom:0}}><Ic n="check"/> Taken up. The desk will watch for {idea.ticker||idea.name} when you next sync your NOVA book, and carry its thesis and levels into the holding.</div>
         : outcome==='passed'
         ? <div className="alertbox a-amber" style={{marginTop:12,marginBottom:0}}>Passed. {idea.ticker||idea.name} moves to the shadow book, where the desk tracks how it would have done to learn from it.</div>
-        : outcome==='flagged'
-        ? <div className="alertbox a-amber" style={{marginTop:12,marginBottom:0}}>Noted as not on NOVA. The desk won't propose {idea.ticker||idea.name} again.</div>
+        : isFlagged
+        ? <div className="row" style={{marginTop:12}}>
+            <button className="ghost" disabled={busy} onClick={async()=>{setBusy(true); try{ await onFlag(idea.ticker||idea.name,true); setOutcome(null);}catch(e){alert(e.message);} setBusy(false);}}>Undo — it IS on NOVA</button>
+          </div>
         : <div className="row" style={{marginTop:12}}>
             <button className="pri" disabled={busy} onClick={async()=>{setBusy(true); try{ await onTake(ledgerId,idea); setTaken(true);}catch(e){alert(e.message);} setBusy(false);}}><Ic n="check"/> Take position</button>
             <button className="ghost" disabled={busy} onClick={async()=>{setBusy(true); try{ await onPass(ledgerId,idea); setOutcome('passed');}catch(e){alert(e.message);} setBusy(false);}}><Ic n="x"/> Pass &amp; track</button>
@@ -275,7 +348,12 @@ function Desk({state,refresh}){
   };
   const onPass=async(id,idea)=>{ await eng('pass',{ideaLedgerId:id||null,idea:id?null:idea}); await refresh(); };
   const onTake=async(id,idea)=>{ await eng('takeup',{ideaLedgerId:id||null,idea:id?null:idea}); await refresh(); };
-  const onFlag=async(name)=>{ if(name){ await eng('flag',{name,available:false}); await refresh(); } };
+  const onFlag=async(name,available=false)=>{ if(name){ await eng('flag',{name,available}); await refresh(); } };
+  // BUG 2: the authoritative "not on NOVA" set comes from the server on every refresh.
+  // The front end used to ignore state.universe entirely — actGet returned it and nothing
+  // read it — so the only record of a flag was React state that died on remount.
+  const unavailable=new Set(((state&&state.universe&&state.universe.unavailable)||[]).map(x=>String(x||'').toUpperCase()));
+  const isFlagged=(idea)=>unavailable.has(String(idea.ticker||idea.name||'').toUpperCase());
   const ledgerIdFor=(idea)=> (ledger.slice().reverse().find(r=>r.idea && (r.idea.ticker===idea.ticker||r.idea.name===idea.name) && r.status==='offered')||{}).id;
 
   const all=ideas?.ideas||[];
@@ -312,13 +390,13 @@ function Desk({state,refresh}){
               <div className="note" style={{marginTop:6}}>Nothing cleared the bar today. An honest empty hunt beats a forced one; the market does not owe you a gem every day. The desk looked hard and found nothing worth a week of your capital right now.</div>
             </div>
             {weak.length>0 && <div className="row"><button className="ghost" onClick={()=>setShowAll(v=>!v)}>{showAll?'Hide':'Show'} {weak.length} lower-conviction candidate{weak.length>1?'s':''}</button></div>}
-            {showAll && weak.map((idea,i)=><GemCard key={i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag} onTake={onTake}/>)}
+            {showAll && weak.map((idea,i)=><GemCard key={i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag} onTake={onTake} flagged={isFlagged(idea)}/>)}
           </>;
         }
         return <>
-          {strong.map((idea,i)=><GemCard key={i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag} onTake={onTake}/>)}
+          {strong.map((idea,i)=><GemCard key={i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag} onTake={onTake} flagged={isFlagged(idea)}/>)}
           {weak.length>0 && <div className="row"><button className="ghost" onClick={()=>setShowAll(v=>!v)}>{showAll?'Hide':'Show'} {weak.length} lower-conviction candidate{weak.length>1?'s':''}</button></div>}
-          {showAll && weak.map((idea,i)=><GemCard key={'w'+i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag} onTake={onTake}/>)}
+          {showAll && weak.map((idea,i)=><GemCard key={'w'+i} idea={idea} ledgerId={ledgerIdFor(idea)} onPass={onPass} onFlag={onFlag} onTake={onTake} flagged={isFlagged(idea)}/>)}
         </>;
       })()}
 
@@ -803,11 +881,18 @@ function App(){
     catch(e){ setEngineErr(e.message); }
   },[]);
   useEffect(()=>{ window.__exchangeMounted=true; refresh(); },[refresh]);
-  const open=usMarketOpen();
+  // Re-tick every 30s so the strip crosses a session boundary without a reload.
+  const [,setTick]=useState(0);
+  useEffect(()=>{ const h=setInterval(()=>setTick(x=>x+1),30000); return ()=>clearInterval(h); },[]);
+  const openMarkets=SESSIONS.filter(marketOpenNow);
   return (<>
     <div className="topbar">
       <div className="brand disp"><span className="dot"></span>THE EXCHANGE<small>hammyLabs · equities desk</small></div>
-      <span className={'pill '+(open?'open':'shut')}><span className="dot"></span>{open?'US OPEN':'US SHUT'}</span>
+      <div className="row" style={{gap:5,flexWrap:'wrap',justifyContent:'flex-end'}}
+           title="Scheduled trading hours in your Phuket time. Public holidays are NOT tracked, so a market shown open may still be closed for a local holiday.">
+        {SESSIONS.map(m=>{const o=openMarkets.includes(m);
+          return <span key={m.k} className={'pill '+(o?'open':'shut')} style={{fontSize:9,padding:'3px 8px'}}><span className="dot"></span>{m.label}</span>;})}
+      </div>
     </div>
     {engineErr && <div className="wrap" style={{paddingBottom:0}}><div className="alertbox a-red">Engine offline: {engineErr}. Check the API key and Upstash variables in Vercel, then reload.</div></div>}
     {tab==='desk' && <Desk state={state} refresh={refresh}/>}

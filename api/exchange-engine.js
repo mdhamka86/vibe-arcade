@@ -9,6 +9,8 @@
 
 import { getNews } from './exchange-news.js';
 import { enrichTickers, signalsBlock } from './exchange-massive.js';
+import { getQuotes, getFxToUsd, toUsd } from './quote-provider.js';
+import { classifyTicker, marketStatus, SUPPORTED } from './market-classifier.js';
 
 const R_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const R_TOK = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
@@ -64,44 +66,48 @@ function bkk() {
 }
 const daysHeld = (openedAt) => Math.max(0, Math.floor((Date.now() - openedAt) / 86400000));
 
-// ---------- Live stock prices (Finnhub free tier, real-time US quotes) ----------
+// ---------- Live stock prices (market-routed: Finnhub for US, delayed feed for Asia) ----------
 // Gives the desk genuine eyes onto the market so ideas anchor to real prices and the
 // validator can catch a mispriced idea. Degrades gracefully: no key, an unreachable
-// feed, or an unknown ticker simply returns null and the desk carries on honestly.
-const FINNHUB_KEY = process.env.FINNHUB_API_KEY || process.env.FINNHUB_KEY || '';
-
-async function livePrice(ticker) {
-  if (!FINNHUB_KEY || !ticker) return null;
-  const sym = String(ticker).toUpperCase().replace(/[^A-Z.]/g, '');
-  if (!sym) return null;
+// feed, or an unknown ticker returns an UNPRICED record and the desk says so honestly.
+//
+// REWRITTEN 22/07/2026. The old implementation lived here and did:
+//     String(ticker).toUpperCase().replace(/[^A-Z.]/g, '')
+// which stripped DIGITS. 6758 (Sony) became "" and C6L (SIA) became "CL" — Colgate-
+// Palmolive — so Asian names were priced as unrelated US companies with no signal that
+// anything was wrong. Routing and symbol handling now live in quote-provider.js, which
+// classifies the market first and never invents a symbol.
+async function livePrices(items) {
   try {
-    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${FINNHUB_KEY}`);
-    if (!r.ok) return null;
-    const j = await r.json();
-    // Finnhub returns c = current price. 0 means the symbol was not recognised.
-    const c = typeof j.c === 'number' ? j.c : null;
-    return c && c > 0 ? +c.toFixed(2) : null;
+    return await getQuotes(items);
   } catch {
-    return null;
+    // A feed outage must not take the hunt down; every name simply becomes unpriced,
+    // which the validator already treats as "cannot verify" rather than "fine".
+    return {};
   }
 }
 
-// Fetch many tickers at once, returning a map keyed by uppercased ticker.
-async function livePrices(tickers) {
-  const list = [...new Set((tickers || []).map((t) => String(t || '').toUpperCase()).filter(Boolean))];
-  const out = {};
-  await Promise.all(list.map(async (t) => {
-    const p = await livePrice(t);
-    if (p != null) out[t] = p;
-  }));
-  return out;
+// Pull a plain number out of whatever a price map holds. Callers that supply their own
+// prices (actLearn) pass bare numbers; the live feed supplies rich records.
+function priceOf(rec) {
+  if (rec == null) return null;
+  if (typeof rec === 'number') return rec > 0 ? rec : null;
+  if (typeof rec === 'string') return num(rec);
+  return rec.unpriced ? null : (typeof rec.price === 'number' && rec.price > 0 ? rec.price : null);
 }
 
-// Guard against a US-focused feed returning a bogus price for a regional ticker (e.g. an
-// SGX symbol colliding with a different US listing). Given a feed price and a trusted
-// reference (the platform's last price, or avg cost), return the feed price only if it is
-// plausibly close; otherwise return the reference. tol is the max fractional disagreement.
-function sanePrice(feed, reference, tol = 0.6) {
+// Guard against a feed returning a bogus price for a regional ticker (e.g. an SGX symbol
+// colliding with a different US listing). Given a feed price and a trusted reference (the
+// platform's last price, or avg cost), return the feed price only if it is plausibly
+// close; otherwise return the reference. tol is the max fractional disagreement.
+//
+// TOLERANCE TIGHTENED 0.6 -> 0.12 (22/07/2026). At 60% this guard was decorative: the
+// Sony misquote was 21% out and would have sailed straight through, as would almost any
+// wrong-but-same-order-of-magnitude number. It was set that loose because the feed was
+// genuinely untrustworthy for non-US names — now that each market is priced by a source
+// that actually covers it, a >12% disagreement with the platform's own last price is a
+// real signal, not feed noise.
+function sanePrice(feed, reference, tol = 0.12) {
   const f = num(feed), r = num(reference);
   if (f == null) return { price: r, usedFeed: false, rejected: false };
   if (r == null || r <= 0) return { price: f, usedFeed: true, rejected: false };
@@ -171,32 +177,53 @@ function recomputeLevels(idea, realPrice) {
   return { entry: `${entryLo}-${entryHi}`, tp: String(round(px * 0.95)), sl: String(round(px * 1.04)), recomputed: true };
 }
 
-function checkLevels(idea, realPrice) {
+// `quote` may be a bare number, null, or a rich record from quote-provider.js.
+function checkLevels(idea, quote) {
   const dir = (idea.direction || '').toUpperCase();
   const entry = num(idea.entry);
   let cur = num(idea.current_price);
   const tp = num(idea.tp);
   const sl = num(idea.sl);
+  const realPrice = priceOf(quote);
+
+  // 0) THE UNPRICED HARD BLOCK (22/07/2026). This check used to be the LAST thing to
+  // run and it was wrapped in `if (realPrice != null)`, so a name we could not price
+  // skipped verification ENTIRELY and fell through to the internal-consistency checks
+  // below. Those only ask whether the idea agrees with ITSELF — entry near the model's
+  // own stated price, stop the right side of entry, sane R:R. A hallucinated Sony at
+  // 2820 with levels invented around 2820 satisfies every one of them, so the card
+  // rendered at full conviction with no warning while Tokyo traded at 3425.
+  //
+  // "No price" is now a HARD BLOCK, not a bypass, and it is checked FIRST so nothing
+  // can reach the self-consistency checks unverified. This is the backstop that holds
+  // even if every feed in this file is switched off or breaks — which is precisely why
+  // it must not depend on one.
+  if (realPrice == null) {
+    const why = (quote && typeof quote === 'object' && quote.reason)
+      ? quote.reason
+      : 'no live price could be fetched for this name';
+    return {
+      ok: false, unpriced: true, realPrice: null,
+      reason: `no verified market price (${why}) — the desk cannot stand behind these levels`,
+    };
+  }
   if (entry == null || tp == null || sl == null) return { ok: false, reason: 'missing a numeric entry, TP or SL' };
   if (entry <= 0) return { ok: false, reason: `entry ${entry} is not a positive price` };
   if (dir !== 'BUY' && dir !== 'SELL') return { ok: false, reason: 'direction not BUY/SELL' };
 
-  // 0) REALITY CHECK: if a genuine live price is supplied, the idea's stated current
-  // price must match it closely. This catches a gem anchored to a stale/hallucinated
-  // price (e.g. claiming 58 when the market is 94). A >6% gap fails outright.
+  // 1) REALITY CHECK: the idea's stated current price must match the verified one
+  // closely. This catches a gem anchored to a stale/hallucinated price (claiming 58 when
+  // the market is 94). A >6% gap fails outright.
   // It ALSO catches a wrong-instrument feed hit: if the model's stated price and the feed
-  // price disagree by a huge margin (e.g. a regional ticker colliding with a US listing),
-  // we cannot trust EITHER blindly, so we fail and ask for manual confirmation rather than
-  // display a figure we cannot stand behind.
-  if (realPrice != null && realPrice > 0) {
-    if (cur != null) {
-      const gap = Math.abs(cur - realPrice) / realPrice;
-      if (gap > 0.6) return { ok: false, reason: `the live feed (${realPrice}) and the stated price (${cur}) disagree wildly — likely a wrong-instrument feed hit for this ticker; confirm the real price on your platform`, realPrice, feedSuspect: true };
-      if (gap > 0.06) return { ok: false, reason: `stated price ${cur} is ${(gap * 100).toFixed(1)}% off the live price ${realPrice} — levels are anchored to a wrong price`, realPrice };
-    }
-    // trust the live price as the reference for the entry-proximity check below
-    cur = realPrice;
+  // price disagree by a huge margin, we cannot trust EITHER blindly, so we fail and ask
+  // for manual confirmation rather than display a figure we cannot stand behind.
+  if (cur != null) {
+    const gap = Math.abs(cur - realPrice) / realPrice;
+    if (gap > 0.5) return { ok: false, reason: `the live feed (${realPrice}) and the stated price (${cur}) disagree wildly — likely a wrong-instrument feed hit for this ticker; confirm the real price on your platform`, realPrice, feedSuspect: true };
+    if (gap > 0.06) return { ok: false, reason: `stated price ${cur} is ${(gap * 100).toFixed(1)}% off the live price ${realPrice} — levels are anchored to a wrong price`, realPrice };
   }
+  // trust the live price as the reference for the entry-proximity check below
+  cur = realPrice;
 
   // 1) entry should sit within ~8% of the current price. A week-long swing
   // entry further out than that is really a limit order that may never fill.
@@ -307,8 +334,12 @@ async function actIdeas(force) {
   const netLiq = num(s.book.netLiq) ?? num(acc.netLiquidityValue);
   const initialMargin = num(acc.initialMargin);
   const marginUtilPct = (initialMargin != null && netLiq) ? (initialMargin / netLiq) * 100 : null;
+  // The NOVA account summary is denominated in the account's base currency, USD. An Asian
+  // name quoted in its own currency must therefore be CONVERTED before it can be judged
+  // affordable — JPY 3425 is about USD 21, not USD 3425. Stating the unit explicitly here
+  // stops the model reasoning about a yen price as though it were dollars.
   const affordLine = buyingPower != null
-    ? `Your genuine buying power right now is about $${buyingPower.toFixed(0)}${netLiq != null ? ` on net liquidity of $${netLiq.toFixed(0)}` : ''}${marginUtilPct != null ? `, with roughly ${marginUtilPct.toFixed(0)}% of the account already committed as margin` : ''}. EVERY idea you propose must be genuinely affordable inside this buying power at a sensible position size; never recommend something that would need more firepower than he has.`
+    ? `Your genuine buying power right now is about US$${buyingPower.toFixed(0)}${netLiq != null ? ` on net liquidity of US$${netLiq.toFixed(0)}` : ''}${marginUtilPct != null ? `, with roughly ${marginUtilPct.toFixed(0)}% of the account already committed as margin` : ''}. These account figures are in US DOLLARS. EVERY idea you propose must be genuinely affordable inside this buying power at a sensible position size; never recommend something that would need more firepower than he has. When the name trades in another currency (SGD, HKD, JPY, MYR, CNY), CONVERT its price to US dollars before judging affordability — a JPY 3,425 share costs about US$21, not US$3,425.`
     : 'Account buying power is not yet synced, so size ideas conservatively and note that he should confirm affordability on his platform before taking anything.';
 
   const historyLines = recent.map((r) => `- ${r.date}: ${r.idea.name}${r.idea.ticker ? ' (' + r.idea.ticker + ')' : ''} ${r.idea.direction} (${r.status})`).join('\n') || '- none';
@@ -334,6 +365,17 @@ YOUR MANDATE (read carefully):
 7. TRADEABILITY (critical): only propose names properly LISTED and liquid on a major exchange NOVA offers — US (NASDAQ, NYSE, NYSE American), Singapore (SGX), Hong Kong (HKEX), or other main Asian boards NOVA supports — tradeable as a share or CFD. NEVER propose OTC, pink-sheet, or nano-cap names a retail broker almost certainly cannot trade. When in doubt, prefer the more liquid, clearly-listed name. Mark each idea's availability as "likely" and note it needs his confirmation on the platform.
 8. NO DUPLICATES: do NOT propose any name in this banned list (recently proposed or already held): ${bannedList.join(', ') || 'none yet'}.
 9. NEVER propose any name he has flagged unavailable on his platform: ${[...unavailable].join(', ') || 'none yet'}.
+10. TICKER AND CURRENCY DISCIPLINE (enforced in code — an idea that fails this is rejected outright, so get it right first time):
+   - Give the ticker in the EXCHANGE'S OWN native code, and always name the exchange:
+     US NASDAQ/NYSE plain letters (NVDA); Singapore SGX 3-4 character codes (C6L, D05, A17U);
+     Tokyo 4-digit codes (6758); Hong Kong 4-5 digit codes (0700); Bursa Malaysia 4-digit (1155);
+     mainland China 6-digit (600519). A bare 4-digit code is AMBIGUOUS across Tokyo, Hong Kong and
+     Bursa, so the "exchange" field is mandatory and must be exact — the desk will reject rather
+     than guess which market you meant.
+   - Only these six markets are tradeable. Anything else is rejected before it reaches him.
+   - Quote current_price, entry, tp and sl in the STOCK'S OWN currency (a Tokyo name in JPY, an
+     SGX name in SGD), never converted to dollars. State that currency in the "currency" field.
+     Judge AFFORDABILITY in US dollars, per rule 3.
 
 CURRENT HOLDINGS (context only, do NOT propose these): ${holdingsSummary(s.book)}
 
@@ -362,15 +404,31 @@ LEVEL DISCIPLINE (every number is validated after you respond, so get them right
 - CONVICTION on a four-rung scale: LOW, MED, MED-HIGH, HIGH. Reserve the top two rungs for genuine multi-signal convergence.
 
 Respond ONLY with JSON, no markdown:
-{"ideas":[{"name":"Company Name","ticker":"TICK","exchange":"NASDAQ|NYSE|NYSE American|SGX|HKEX|other","industry":"e.g. Healthcare","direction":"BUY|SELL","instrument":"SHARE|CFD","current_price":"12.40","entry":"12.00-12.30","tp":"14.20","sl":"11.10","horizon":"e.g. 3-5 day trade","conviction":"LOW|MED|MED-HIGH|HIGH","signals":["insider","value","catalyst","technical"],"diversifies":"how this name helps rebalance his book (sector/geography), short phrase","daytime_tradeable":true,"reason":"the thesis, naming which signals converge and noting it fits his buying power, max 48 words","availability":"likely — confirm on your NOVA platform"}],"stand_down":false,"desk_note":"one honest paragraph on the session's hunt, max 55 words"}`;
+{"ideas":[{"name":"Company Name","ticker":"TICK","exchange":"NASDAQ|NYSE|NYSE American|SGX|HKEX|TSE|Bursa|SSE|SZSE","currency":"USD|SGD|HKD|JPY|MYR|CNY","industry":"e.g. Healthcare","direction":"BUY|SELL","instrument":"SHARE|CFD","current_price":"12.40","entry":"12.00-12.30","tp":"14.20","sl":"11.10","horizon":"e.g. 3-5 day trade","conviction":"LOW|MED|MED-HIGH|HIGH","signals":["insider","value","catalyst","technical"],"diversifies":"how this name helps rebalance his book (sector/geography), short phrase","daytime_tradeable":true,"reason":"the thesis, naming which signals converge and noting it fits his buying power, max 48 words","availability":"likely — confirm on your NOVA platform"}],"stand_down":false,"desk_note":"one honest paragraph on the session's hunt, max 55 words"}`;
 
   let ideas = await claude(prompt, 2600);
 
   // fetch genuine live prices for whatever the model proposed, so the validator can
-  // check each idea against reality and the cards show the true market price.
-  const proposedTickers = (ideas.ideas || []).map((i) => i.ticker || i.name).filter(Boolean);
-  let priceMap = await livePrices(proposedTickers);
+  // check each idea against reality and the cards show the true market price. Each
+  // request carries the idea's stated exchange, which the classifier uses ONLY as a
+  // tie-breaker on an ambiguous ticker shape — never as the source of truth, because
+  // the response schema lets the model write "other".
+  const quoteReqs = (ideas.ideas || [])
+    .map((i) => ({ ticker: i.ticker || i.name, exchange: i.exchange }))
+    .filter((r) => r.ticker);
+  let priceMap = await livePrices(quoteReqs);
   const realFor = (i) => priceMap[(i.ticker || i.name || '').toUpperCase()] ?? null;
+
+  // TRADEABLE-UNIVERSE GATE (22/07/2026). Tradeability used to be prompt-English only:
+  // rules 7 and 9 asked the model nicely and nothing in code checked. `universe.tradeable`
+  // was written by the flag handler and read by nothing — a dead field. An unsupported or
+  // unresolvable market is now rejected in CODE, before it can ever reach a card.
+  const offUniverse = (i) => {
+    const c = classifyTicker(i.ticker || i.name, i.exchange);
+    if (!c.ok) return c.reason;
+    if (!SUPPORTED.includes(c.market)) return `${c.market} is not a market NOVA offers`;
+    return null;
+  };
 
   // validation + no-dupe + tradeability gate, with one retry, mirroring The Terminal
   const isBanned = (i) => {
@@ -378,55 +436,95 @@ Respond ONLY with JSON, no markdown:
     return bannedList.map((b) => b.toUpperCase()).includes(nm) || unavailable.has(nm) || heldNames.has(nm);
   };
   const badLevels = (i) => !checkLevels(i, realFor(i)).ok;
-  const isBad = (i) => isBanned(i) || badLevels(i);
+  const isBad = (i) => isBanned(i) || !!offUniverse(i) || badLevels(i);
 
   if ((ideas.ideas || []).some(isBad)) {
     const dupes = (ideas.ideas || []).filter(isBanned).map((i) => i.ticker || i.name);
-    const lvl = (ideas.ideas || []).filter((i) => !isBanned(i) && badLevels(i)).map((i) => `${i.ticker || i.name}: ${checkLevels(i, realFor(i)).reason}`);
-    // tell the model the true live prices so its retry is anchored to reality
-    const priceHints = Object.entries(priceMap).map(([k, v]) => `${k} is really trading at ~$${v}`).join('; ');
+    const offU = (ideas.ideas || []).filter((i) => !isBanned(i) && offUniverse(i)).map((i) => `${i.ticker || i.name}: ${offUniverse(i)}`);
+    const lvl = (ideas.ideas || []).filter((i) => !isBanned(i) && !offUniverse(i) && badLevels(i)).map((i) => `${i.ticker || i.name}: ${checkLevels(i, realFor(i)).reason}`);
+    // Tell the model the true live prices so its retry is anchored to reality. Quoted in
+    // the name's OWN currency — the old code wrote "~$3425" for a Tokyo name priced in yen.
+    const priceHints = Object.entries(priceMap)
+      .filter(([, v]) => v && !v.unpriced && v.price)
+      .map(([k, v]) => `${k} is really trading at ${v.price} ${v.currency || ''}`.trim())
+      .join('; ');
     try {
       const second = await claude(prompt +
-        `\n\nREJECTED, fix and resubmit two clean ideas:\n${dupes.length ? 'Duplicate/held/unavailable: ' + dupes.join(', ') + '\n' : ''}${lvl.length ? 'Broken levels: ' + lvl.join('; ') + '\n' : ''}${priceHints ? 'LIVE PRICES (anchor to these exactly): ' + priceHints : ''}`, 2600);
+        `\n\nREJECTED, fix and resubmit two clean ideas:\n${dupes.length ? 'Duplicate/held/unavailable: ' + dupes.join(', ') + '\n' : ''}${offU.length ? 'Not tradeable on NOVA: ' + offU.join('; ') + '\n' : ''}${lvl.length ? 'Broken levels: ' + lvl.join('; ') + '\n' : ''}${priceHints ? 'LIVE PRICES (anchor to these exactly, in the stated currency): ' + priceHints : ''}`, 2600);
       if (second.ideas) {
         // price the fresh names too before accepting
-        const secondTickers = second.ideas.map((i) => i.ticker || i.name).filter(Boolean);
-        priceMap = { ...priceMap, ...(await livePrices(secondTickers)) };
+        const secondReqs = second.ideas.map((i) => ({ ticker: i.ticker || i.name, exchange: i.exchange })).filter((r) => r.ticker);
+        priceMap = { ...priceMap, ...(await livePrices(secondReqs)) };
         if (!second.ideas.some(isBad)) ideas = second;
       }
     } catch { /* fall through to flagging */ }
-    (ideas.ideas || []).forEach((i) => {
-      if (isBanned(i)) i.reason = ((i.reason || '') + ' [DUPLICATE/HELD WARNING]').trim();
-      const real = realFor(i);
-      let lc = checkLevels(i, real);
-      // only trust the feed price for display when it is NOT flagged as a wrong-instrument hit
-      if (real != null && !lc.feedSuspect) i.current_price = String(real); // show the true market price
-      // If levels are anchored to a wrong price (but the ticker itself is fine), RECOMPUTE
-      // sensible entry/TP/SL around the real live price rather than showing numbers tens of
-      // percent off. These levels are what he acts on manually, so they must be right.
-      if (!lc.ok && !lc.feedSuspect && real != null) {
-        const rl = recomputeLevels(i, real);
-        if (rl) {
-          i.entry = rl.entry; i.tp = rl.tp; i.sl = rl.sl; i.levels_recomputed = true;
-          lc = checkLevels(i, real);
-        }
-      }
-      if (!lc.ok) { i.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; i.conviction = 'LOW'; i.levels_broken = true; }
-      else { i.rr = lc.rr; i.slPct = lc.slPct; i.tpPct = lc.tpPct; }
-    });
-  } else {
-    (ideas.ideas || []).forEach((i) => {
-      const real = realFor(i);
-      let lc = checkLevels(i, real);
-      if (real != null && !lc.feedSuspect) i.current_price = String(real);
-      if (!lc.ok && !lc.feedSuspect && real != null) {
-        const rl = recomputeLevels(i, real);
-        if (rl) { i.entry = rl.entry; i.tp = rl.tp; i.sl = rl.sl; i.levels_recomputed = true; lc = checkLevels(i, real); }
-      }
-      if (!lc.ok) { i.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; i.conviction = 'LOW'; i.levels_broken = true; }
-      else { i.rr = lc.rr; i.slPct = lc.slPct; i.tpPct = lc.tpPct; }
-    });
   }
+
+  // ONE annotation pass for every idea, whichever branch produced it. The two branches
+  // used to carry near-identical copies of this logic, which is how they drifted.
+  (ideas.ideas || []).forEach((i) => {
+    const q = realFor(i);
+    const cls = classifyTicker(i.ticker || i.name, i.exchange);
+    const offU = offUniverse(i);
+
+    // market, currency and session metadata for the card
+    if (cls.ok) {
+      i.market = cls.market;
+      i.market_label = cls.label;
+      i.currency = (q && q.currency) || cls.currency;
+      const st = marketStatus(cls.market);
+      i.market_open = st.open;
+      i.market_status = st;
+    } else {
+      i.market = null;
+      i.market_open = null;
+      i.market_status = { open: false, known: false, scheduledOnly: true, label: 'market unclear', detail: cls.reason };
+    }
+    if (q && !q.unpriced) {
+      i.price_as_of = q.asOf || null;
+      i.price_age_mins = q.ageMins ?? null;
+      i.price_delay_label = q.delayLabel || null;
+      i.price_source = q.source || null;
+    }
+    if (offU) {
+      i.off_universe = true;
+      i.availability = `NOT TRADEABLE VIA NOVA — ${offU}`;
+      i.conviction = 'LOW';
+    }
+    if (isBanned(i)) i.reason = ((i.reason || '') + ' [DUPLICATE/HELD WARNING]').trim();
+
+    let lc = checkLevels(i, q);
+
+    // UNPRICED: show a thesis, never a number. Blanking current_price is deliberate —
+    // the model's own figure is exactly what cannot be trusted here, and leaving it on
+    // the card is how Sony got quoted at 2820.
+    if (lc.unpriced) {
+      i.unpriced = true;
+      i.thesis_only = true;
+      i.current_price = null;
+      i.price_note = 'Confirm live price on NOVA';
+      i.level_warning = `NO VERIFIED PRICE: ${lc.reason}. Treat this as a thesis only — confirm the live price on NOVA and set your own levels before trading.`;
+      i.conviction = 'LOW';
+      i.levels_broken = true;
+      return;
+    }
+
+    const real = priceOf(q);
+    // only trust the feed price for display when it is NOT flagged as a wrong-instrument hit
+    if (real != null && !lc.feedSuspect) i.current_price = String(real); // show the true market price
+    // If levels are anchored to a wrong price (but the ticker itself is fine), RECOMPUTE
+    // sensible entry/TP/SL around the real live price rather than showing numbers tens of
+    // percent off. These levels are what he acts on manually, so they must be right.
+    if (!lc.ok && !lc.feedSuspect && real != null) {
+      const rl = recomputeLevels(i, real);
+      if (rl) {
+        i.entry = rl.entry; i.tp = rl.tp; i.sl = rl.sl; i.levels_recomputed = true;
+        lc = checkLevels(i, q);
+      }
+    }
+    if (!lc.ok) { i.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; i.conviction = 'LOW'; i.levels_broken = true; }
+    else { i.rr = lc.rr; i.slPct = lc.slPct; i.tpPct = lc.tpPct; }
+  });
 
   ideas.generatedAt = t.iso;
   ideas.dateKey = t.dateKey;
@@ -735,11 +833,35 @@ Respond ONLY with JSON, no markdown:
 
     // validate the proposed levels against a genuine live price, exactly like the gem hunt
     if (prop && prop.ticker) {
-      const real = (await livePrices([prop.ticker]))[prop.ticker.toUpperCase()] ?? null;
-      const lc = checkLevels(prop, real);
-      if (real != null && !lc.feedSuspect) prop.current_price = String(real);
-      if (!lc.ok) { prop.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; }
-      else { prop.rr = lc.rr; prop.slPct = lc.slPct; prop.tpPct = lc.tpPct; }
+      const q = (await livePrices([{ ticker: prop.ticker, exchange: prop.exchange }]))[prop.ticker.toUpperCase()] ?? null;
+      const cls = classifyTicker(prop.ticker, prop.exchange);
+      if (cls.ok) {
+        prop.market = cls.market;
+        prop.market_label = cls.label;
+        prop.currency = (q && q.currency) || cls.currency;
+        const st = marketStatus(cls.market);
+        prop.market_open = st.open;
+        prop.market_status = st;
+      }
+      if (!cls.ok || !SUPPORTED.includes(cls.market)) {
+        prop.off_universe = true;
+        prop.availability = `NOT TRADEABLE VIA NOVA — ${cls.ok ? cls.market + ' is not a NOVA market' : cls.reason}`;
+      }
+      const lc = checkLevels(prop, q);
+      const real = priceOf(q);
+      if (lc.unpriced) {
+        // same rule as the gem hunt: a thesis, never an unverified number
+        prop.unpriced = true;
+        prop.thesis_only = true;
+        prop.current_price = null;
+        prop.price_note = 'Confirm live price on NOVA';
+        prop.level_warning = `NO VERIFIED PRICE: ${lc.reason}. Treat this as a thesis only — confirm the live price on NOVA and set your own levels before trading.`;
+      } else {
+        if (real != null && !lc.feedSuspect) prop.current_price = String(real);
+        if (q && !q.unpriced) prop.price_delay_label = q.delayLabel || null;
+        if (!lc.ok) { prop.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; }
+        else { prop.rr = lc.rr; prop.slPct = lc.slPct; prop.tpPct = lc.tpPct; }
+      }
     }
     nextBuy = prop;
   } else {
@@ -760,15 +882,28 @@ async function actRebalance() {
   if (!holdings.length) return { clock: t, empty: true, note: 'No holdings to rebalance. Seed or sync your book first.' };
 
   // 1) pull genuine live prices for every held name, so every judgement is current
-  const tickers = holdings.map((h) => h.ticker || h.name).filter(Boolean);
-  const priceMap = await livePrices(tickers);
+  const quoteReqs = holdings.map((h) => ({ ticker: h.ticker || h.name, exchange: h.exchange })).filter((r) => r.ticker);
+  const priceMap = await livePrices(quoteReqs);
+
+  // CURRENCY (22/07/2026). Concentration maths sums every holding into one pot, and until
+  // now that pot mixed currencies: a Tokyo name at JPY 3425 was added to a US name at USD
+  // 210 as though they were the same unit. Every sector and geography weight downstream of
+  // that was wrong, and wrong in the direction that makes Asian names look enormous. Weights
+  // are now computed in USD; the native price is still what gets DISPLAYED, because that is
+  // what he sees on NOVA.
+  const currencies = holdings.map((h) => {
+    const c = classifyTicker(h.ticker || h.name, h.exchange);
+    return c.ok ? c.currency : 'USD';
+  });
+  const fx = await getFxToUsd(currencies).catch(() => ({ USD: 1 }));
+
   // fold live prices into a working copy so weights and P/L reflect the real market.
-  // SANITY GUARD: the feed (Finnhub) is US-focused and can return a bogus price for a
-  // regional ticker (e.g. an SGX symbol like C6L that collides with a different US listing).
-  // If the "live" price wildly disagrees with the platform's last synced price, DISTRUST the
-  // feed and keep the platform price — the platform is the truth for what he actually holds.
-  const live = holdings.map((h) => {
-    const feed = priceMap[(h.ticker || h.name || '').toUpperCase()];
+  // SANITY GUARD: a feed can still return a bogus price for a regional ticker. If the
+  // "live" price disagrees with the platform's last synced price by more than the (now
+  // much tighter) tolerance, DISTRUST the feed and keep the platform price — the platform
+  // is the truth for what he actually holds.
+  const live = holdings.map((h, idx) => {
+    const feed = priceOf(priceMap[(h.ticker || h.name || '').toUpperCase()]);
     const synced = num(h.lastPrice);
     const avg = num(h.avgCost);
     // reference is the platform's last price, or failing that avg cost
@@ -776,7 +911,18 @@ async function actRebalance() {
     const lastPrice = sp.price;
     const qty = num(h.qty) || 0;
     const plPct = (avg && lastPrice) ? ((lastPrice - avg) / avg) * 100 : null;
-    return { ...h, lastPrice, _sector: sectorOf(h), _value: Math.abs(qty * (lastPrice || avg || 0)), _plPct: plPct, _hasLive: sp.usedFeed, _feedRejected: sp.rejected };
+    const ccy = currencies[idx] || 'USD';
+    const nativeValue = Math.abs(qty * (lastPrice || avg || 0));
+    // An unknown FX rate must NOT silently become 1:1 — that is the JPY-as-USD bug again.
+    // Fall back to the native figure but mark it, so the prompt can say so honestly.
+    const usdValue = toUsd(nativeValue, ccy, fx);
+    return {
+      ...h, lastPrice, _sector: sectorOf(h),
+      _ccy: ccy, _nativeValue: nativeValue,
+      _value: usdValue != null ? usdValue : nativeValue,
+      _fxUnknown: usdValue == null && ccy !== 'USD',
+      _plPct: plPct, _hasLive: sp.usedFeed, _feedRejected: sp.rejected,
+    };
   });
 
   // 2) measure concentration: by sector, by chip-exposure, by geography (exchange)
@@ -883,8 +1029,10 @@ async function actReview(holdingId) {
   const news = await getNews('holdings', query);
   const priorLessons = (s.lessons || []).slice(-8).map((l) => `- ${l.text}`).join('\n') || '- none yet';
 
-  // fetch the genuine live price so proposed levels can be checked against reality
-  const live = await livePrice(h.ticker);
+  // fetch the genuine live price so proposed levels can be checked against reality.
+  // Routed by market now, and the holding's own exchange is passed as the tie-breaker.
+  const liveMap = await livePrices([{ ticker: h.ticker || h.name, exchange: h.exchange }]);
+  const live = priceOf(liveMap[(h.ticker || h.name || '').toUpperCase()]);
   // guard against a bogus feed price for a regional ticker; the platform price is the truth
   const sp = sanePrice(live, num(h.lastPrice) != null ? num(h.lastPrice) : num(h.avgCost));
   const priceNow = sp.price != null ? sp.price : num(h.lastPrice);
@@ -1148,7 +1296,10 @@ function resolveShadow(s, t, priceMap = {}) {
   for (const rec of s.ledger) {
     if (rec.status !== 'passed' || rec.shadowResolved) continue;
     const key = (rec.idea.ticker || rec.idea.name || '').toUpperCase();
-    const px = priceMap[key] != null ? num(priceMap[key]) : null;
+    // priceOf handles both shapes: bare numbers from a caller-supplied map, and the rich
+    // records the live feed now returns. num() alone would stringify a record to
+    // "[object Object]" and silently grade every tracked idea as unpriced.
+    const px = priceOf(priceMap[key]);
 
     const entry = num(rec.idea.entry);
     const tp = num(rec.idea.tp);
@@ -1409,6 +1560,28 @@ async function actGet() {
   const t = bkk();
   const s = await loadAll();
   const ideas = await rGet(`exchange:ideas:${t.dateKey}`);
+  // BELT AND BRACES (22/07/2026): even with the cache pruned on flag, never serve a name
+  // the user has told us he cannot trade. A blob written before this fix, or by an older
+  // deploy, gets filtered here rather than reappearing on his desk.
+  if (ideas && Array.isArray(ideas.ideas)) {
+    const banned = new Set((s.universe.unavailable || []).map((x) => (x || '').toUpperCase()));
+    if (banned.size) {
+      ideas.ideas = ideas.ideas.filter((i) => !banned.has((i.ticker || i.name || '').toUpperCase()));
+      ideas.qualifyingCount = ideas.ideas.filter((i) => i.qualifies).length;
+    }
+  }
+  // Recompute session state at READ time, never from the cached blob: an idea generated
+  // at 08:00 saying "SGX open" is simply wrong by 17:00, and a stale open-badge is the
+  // one thing on this card that would make him act.
+  if (ideas && Array.isArray(ideas.ideas)) {
+    for (const i of ideas.ideas) {
+      if (i.market && SUPPORTED.includes(i.market)) {
+        const st = marketStatus(i.market);
+        i.market_status = st;
+        i.market_open = st.open;
+      }
+    }
+  }
   const vitals = computeVitals(s.book);
   // coaching: compare current goals to the last saved snapshot to notice improvements
   const coaching = computeCoaching(s.book, vitals, (s.book.coachGoals || []));
@@ -1462,7 +1635,13 @@ async function actSeed(seedBook, seedWatchlist, force) {
 }
 
 // ---------- Flag a name unavailable on the NOVA platform (never propose again) ----------
+// The Redis write here was always correct. What was broken (22/07/2026) was everything
+// AROUND it: today's ideas are cached for 8h under exchange:ideas:<date> and that blob
+// was never touched, so actGet happily re-served the flagged name; and the front end
+// never read `universe` at all, so the badge was local React state that died on refresh.
+// The user's flag looked like it had been forgotten because, visibly, it had been.
 async function actFlagUnavailable(name, available) {
+  const t = bkk();
   const s = await loadAll();
   const key = (name || '').toUpperCase().trim();
   if (!key) throw new Error('No name given to flag.');
@@ -1471,7 +1650,24 @@ async function actFlagUnavailable(name, available) {
   u.unavailable = (u.unavailable || []).filter((x) => x.toUpperCase() !== key);
   if (available) u.tradeable.push(key); else u.unavailable.push(key);
   await rSet('exchange:universe', u);
-  return { ok: true, universe: u };
+
+  // Prune the flagged name out of TODAY'S cached ideas so the very next refresh reflects
+  // the decision, rather than waiting out the 8h cache window.
+  if (!available) {
+    try {
+      const cacheKey = `exchange:ideas:${t.dateKey}`;
+      const cached = await rGet(cacheKey);
+      if (cached && Array.isArray(cached.ideas)) {
+        const kept = cached.ideas.filter((i) => (i.ticker || i.name || '').toUpperCase() !== key);
+        if (kept.length !== cached.ideas.length) {
+          cached.ideas = kept;
+          cached.qualifyingCount = kept.filter((i) => i.qualifies).length;
+          await rSet(cacheKey, cached);
+        }
+      }
+    } catch { /* the flag itself is saved; a stale cache is cosmetic and actGet filters too */ }
+  }
+  return { ok: true, universe: u, flagged: key, available: !!available };
 }
 
 // ---------- Resolve passed ideas + run the daily reflection ----------
@@ -1482,7 +1678,8 @@ async function actLearn(priceMap) {
   // resolves against the real market. Caller-supplied prices take precedence.
   const trackedTickers = s.ledger
     .filter((r) => r.status === 'passed' && !r.shadowResolved)
-    .map((r) => r.idea.ticker || r.idea.name).filter(Boolean);
+    .map((r) => ({ ticker: r.idea.ticker || r.idea.name, exchange: r.idea.exchange }))
+    .filter((r) => r.ticker);
   const livePriceMap = trackedTickers.length ? await livePrices(trackedTickers) : {};
   const merged = { ...livePriceMap, ...(priceMap || {}) };
   const graded = resolveShadow(s, t, merged);
@@ -1494,6 +1691,12 @@ async function actLearn(priceMap) {
   }
   return { clock: t, graded, reflection, guidance: s.guidance, guidanceMeta: s.guidanceMeta };
 }
+
+// ---------- Test surface ----------
+// Exported so tests/test_exchange_market.js drives the REAL money-gates rather than a
+// reimplementation of them. The suite hard-fails if these stop being exported, on the
+// principle that a test quietly checking a copy is worse than no test at all.
+export { checkLevels, sanePrice, recomputeLevels, priceOf };
 
 // ---------- Request handler: the single front door ----------
 export default async function handler(req, res) {
