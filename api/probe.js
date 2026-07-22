@@ -38,7 +38,17 @@ export default async (req, res) => {
     if (!target || !/^https?:\/\//.test(target))
       return res.status(400).json({ error: "Pass ?url=https://..." });
     const ua = u.searchParams.get("ua") || "chrome";
-    const maxSnip = Math.min(parseInt(u.searchParams.get("max") || "600", 10) || 600, 8000);
+    // CEILING RAISED 22/07/2026 (8000 -> 400000) to scout the PMU France adapter.
+    // The default stays 600: this endpoint reports the SHAPE of a response, and a fat
+    // default would make every casual probe expensive. But 8000 could not answer the
+    // question actually being asked of it. PMU's day programme is ~320KB in ONE document
+    // (every reunion, every course, distances and start times), and its per-course meta
+    // runs 6-9KB — so at 8000 roughly three courses a day came back unparseable, silently
+    // dropped out of the candidate pool, and made a sound matcher look 63% accurate.
+    // A scouting tool that truncates the document you are scouting answers the wrong
+    // question. 400000 covers the programme whole with room to spare and stays far under
+    // the ~4.5MB response ceiling. Still key-guarded; still deliberately temporary.
+    const maxSnip = Math.min(parseInt(u.searchParams.get("max") || "600", 10) || 600, 400000);
     const ms = Math.min(parseInt(u.searchParams.get("ms") || "15000", 10) || 15000, 30000);
 
     const ctrl = new AbortController();
