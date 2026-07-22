@@ -14,6 +14,7 @@
 //   POST ?action=run [{date?}]           -> build a betlist from the latest/﻿given pack
 
 import charterSeed from "./charter-seed.json" with { type: "json" };
+import { regionOf } from "./trawl.js";
 
 const R_URL =
   process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL || "";
@@ -241,6 +242,109 @@ function charterDrift(h, minN) {
   };
 }
 
+
+// ---- MEET RESOLUTION: one canonical venue per leg, or a loud error ----
+//
+// THE BUG THIS EXISTS TO KILL (22/07/2026). Every meet-keyed structure in this file is built
+// from the PACK's venue — "South Africa", the SGPools coupon container. Five lookups then
+// keyed off `leg.meet`, which is free text the model writes, and the model writes the COURSE
+// it read about: "Scottsville". The labels never matched, and every one of the five missed
+// silently into a zero default:
+//
+//   cardIndex   -> null  -> "could not be matched to the runner map", on runners that were
+//                           sitting on the card at exactly the number given
+//   extCount    -> 0     -> a `no-external-source` veto on a meet with three live sources
+//   fieldSizeOf -> 0     -> `if (fs > 0 && fs <= 8)` never fires: the PLA small-field floor
+//                           was not enforcing, it was absent
+//   perMeetKept -> 0     -> per-meet caps counted against a label that could vary per leg
+//   priceIndex  -> undef -> every shadow price verdict permanently "nodata"
+//
+// On 22/07 that emptied the book: the two legs from the only region with working sources were
+// flagged UNCONFIRMED and then vetoed, and nothing in the output said "label mismatch".
+// Five silent zeros look exactly like normal operation, which is what made it survive.
+//
+// So: resolve ONCE, here, and key everything off the result. An unresolvable label is a
+// visible error and a veto, never a fall-through.
+const normMeet = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+// Resolve a model-authored meet label to one of the pack's venues.
+// Returns { venue, how } on success, { venue: null, why } on failure. NEVER guesses between
+// two candidates: an ambiguous label is a failure, because picking wrong puts real money on
+// the wrong coupon — the exact class of error the card-match law exists to prevent.
+function resolveMeet(label, meets) {
+  const venues = (meets || []).map((m) => m.venue);
+  const want = normMeet(label);
+  if (!want)
+    return { venue: null, why: "the leg carries no meet label at all, so it cannot be tied to a coupon" };
+
+  // 1. the label IS a pack venue
+  const exact = venues.filter((v) => normMeet(v) === want);
+  if (exact.length === 1) return { venue: exact[0], how: "exact" };
+
+  // 2. one contains the other ("Perth" -> "Australia (Perth)"). Must be unambiguous.
+  const contains = venues.filter((v) => {
+    const n = normMeet(v);
+    return n && (n.includes(want) || want.includes(n));
+  });
+  if (contains.length === 1) return { venue: contains[0], how: "label" };
+
+  // 3. the label is a COURSE ("Scottsville"). regionOf knows every course the book bets, and
+  // the pack already carries each meet's region, so a course resolves to the one meet in its
+  // region. This is the case that was breaking every day.
+  const reg = regionOf(label);
+  if (reg && reg !== "OTHER") {
+    const inReg = (meets || []).filter((m) => (m.region || regionOf(m.venue)) === reg);
+    if (inReg.length === 1) return { venue: inReg[0].venue, how: "region:" + reg };
+    if (inReg.length > 1)
+      return {
+        venue: null,
+        why:
+          '"' + label + '" is a ' + reg + " course but this pack holds " + inReg.length +
+          " " + reg + " meets (" + inReg.map((m) => m.venue).join(", ") +
+          ") — which coupon it belongs to is genuinely ambiguous, so it must be named exactly",
+      };
+  }
+  return {
+    venue: null,
+    why:
+      '"' + label + '" matches no meet in today\'s pack (' + venues.join(", ") +
+      ") and is not a course this book recognises",
+  };
+}
+
+// The meet-keyed indexes, all built from the PACK's venue. Returned together so there is one
+// place where that keying decision lives, and so the safety suite can exercise the real
+// structures rather than a copy of them.
+function meetIndexes(pack) {
+  const cardIndex = {};   // venue|raceNo|horseNo -> horse name
+  const extCount = {};    // venue -> count of verified external sources
+  const fieldSizeOf = {}; // venue|raceNo -> field size
+  (pack.meets || []).forEach((m) => {
+    // SGPools internal analysis docs (m.docs) deliberately do NOT count — internal docs
+    // corroborating internal docs is SGPools agreeing with itself.
+    extCount[m.venue] = (m.sources || []).filter((s) => s.ok && !s.ssotFail).length;
+    (m.raceMap || []).forEach((r) => {
+      fieldSizeOf[m.venue + "|" + r.raceNo] = r.fieldSize || (r.runners || []).length || 0;
+      (r.runners || []).forEach((h) => {
+        cardIndex[m.venue + "|" + r.raceNo + "|" + h.no] = h.name;
+      });
+    });
+  });
+  return { cardIndex, extCount, fieldSizeOf };
+}
+
+// Same keying, for the Phase 3.3 shadow price sweep.
+function priceIndexOf(pricedPack) {
+  const priceIndex = {};
+  ((pricedPack && pricedPack.meets) || []).forEach((m) =>
+    (m.raceMap || []).forEach((r) =>
+      (r.runners || []).forEach((h) => {
+        if (h.price) priceIndex[m.venue + "|" + r.raceNo + "|" + h.no] = h.price;
+      })
+    )
+  );
+  return priceIndex;
+}
 
 // Compress the pack into a token-lean but complete brief for the model.
 function packBrief(pack) {
@@ -840,14 +944,10 @@ const handler = async (req, res) => {
       const corrections = [];
       const clean = [];
       // build a runner-map index for card-match verification
-      const cardIndex = {};
-      pack.meets.forEach((m) => {
-        (m.raceMap || []).forEach((r) => {
-          (r.runners || []).forEach((h) => {
-            cardIndex[m.venue + "|" + r.raceNo + "|" + h.no] = h.name;
-          });
-        });
-      });
+      const { cardIndex, extCount, fieldSizeOf } = meetIndexes(pack);
+      // Legs whose meet label could not be tied to a coupon. Surfaced in the response and
+      // vetoed below — an unresolvable label must be loud, never five quiet zeros.
+      const meetErrors = [];
 
       for (const raw of legs) {
         const leg = {
@@ -877,9 +977,28 @@ const handler = async (req, res) => {
           corrections.push(
             leg.horseName + " " + leg.betType + " stake corrected to flat $" + leg.stake
           );
+        // RESOLVE THE MEET FIRST. `leg.meet` stays exactly as the model wrote it (it is the
+        // course name, which is what a human wants to read on the slip); `leg.venue` is the
+        // pack's coupon container, and it is what every meet-keyed lookup below uses.
+        const rv = resolveMeet(leg.meet, pack.meets);
+        leg.venue = rv.venue;
+        leg.venueHow = rv.how || null;
+        if (!rv.venue) {
+          leg.unconfirmed = true;
+          leg.meetUnresolved = rv.why;
+          meetErrors.push({
+            meet: leg.meet, raceNo: leg.raceNo, horseNo: leg.horseNo,
+            horseName: leg.horseName, betType: leg.betType, why: rv.why,
+          });
+          corrections.push(
+            "UNRESOLVED MEET — " + leg.horseName + " (R" + leg.raceNo + " #" + leg.horseNo +
+            " " + leg.meet + "): " + rv.why + ". The leg cannot be card-matched or gated " +
+            "against a coupon, so it is vetoed rather than guessed at."
+          );
+        }
         // LAW: card-match — verify the number against the runner map
-        const key = leg.meet + "|" + leg.raceNo + "|" + leg.horseNo;
-        if (leg.betType !== "TRIO") {
+        const key = leg.venue + "|" + leg.raceNo + "|" + leg.horseNo;
+        if (leg.betType !== "TRIO" && leg.venue) {
           if (cardIndex[key] == null) {
             leg.unconfirmed = true;
             corrections.push(
@@ -933,30 +1052,28 @@ const handler = async (req, res) => {
       // gates. Every rejection is logged to `vetoes` so the morning reader sees
       // exactly what the law cut and why. A short book is the honest outcome.
       const vetoes = [];
-      // verified external sources per meet: fetched OK and passed SSOT verification.
-      // SGPools internal analysis docs (m.docs) deliberately do NOT count \u2014 internal
-      // docs corroborating internal docs is SGPools agreeing with itself.
-      const extCount = {};
-      pack.meets.forEach((m) => {
-        extCount[m.venue] = (m.sources || []).filter((s) => s.ok && !s.ssotFail).length;
-      });
-      const fieldSizeOf = {};
-      pack.meets.forEach((m) =>
-        (m.raceMap || []).forEach((r) => {
-          fieldSizeOf[m.venue + "|" + r.raceNo] = r.fieldSize || (r.runners || []).length || 0;
-        })
-      );
+      // extCount / fieldSizeOf come from meetIndexes(pack) above, keyed on the pack's venue \u2014
+      // and are read below via leg.venue, the resolved coupon, never the raw label.
       // caps: 0 sources = 0 legs, 1 source = 2 legs, 2+ sources = 4 legs (OVERHAUL 2.5)
       const capFor = (n) => (n <= 0 ? 0 : n === 1 ? 2 : 4);
       const perMeetKept = {};
       const gated = [];
       for (const leg of clean) {
-        const ext = extCount[leg.meet] || 0;
         const veto = (rule, why) =>
           vetoes.push({
-            meet: leg.meet, raceNo: leg.raceNo, horseNo: leg.horseNo,
+            meet: leg.meet, venue: leg.venue || null, raceNo: leg.raceNo, horseNo: leg.horseNo,
             horseName: leg.horseName, betType: leg.betType, rule, why,
           });
+        // LOUD FAILURE FIRST. A leg whose meet label could not be tied to a coupon must not
+        // reach the gates below: every one of them would read a zero and either wave it
+        // through (the field-size floor) or condemn it for the wrong reason (no-external-
+        // source). Neither is honest, and the second is what made this bug look like normal
+        // operation for as long as it did.
+        if (!leg.venue) {
+          veto("unresolved-meet", leg.meetUnresolved || "meet label could not be resolved to a pack venue");
+          continue;
+        }
+        const ext = extCount[leg.venue] || 0;
         // 2.1 stand-down: no verified external convergence = no bet, any bet type
         if (ext === 0) {
           veto("no-external-source",
@@ -972,7 +1089,7 @@ const handler = async (req, res) => {
         }
         if (leg.betType === "PLA") {
           // 2.3 field-size floor: no places in fields of 8 or fewer
-          const fs = fieldSizeOf[leg.meet + "|" + leg.raceNo] || 0;
+          const fs = fieldSizeOf[leg.venue + "|" + leg.raceNo] || 0;
           if (fs > 0 && fs <= 8) {
             veto("pla-small-field",
               "PLA in a " + fs + "-runner field \u2014 three places in tiny fields breeds odds-on dividends (floor is 9+)");
@@ -994,13 +1111,13 @@ const handler = async (req, res) => {
           continue;
         }
         // 2.5 per-meet cap by source depth (volume follows sources, not card size)
-        const kept = perMeetKept[leg.meet] || 0;
+        const kept = perMeetKept[leg.venue] || 0;
         if (kept >= capFor(ext)) {
           veto("meet-cap",
             "meet cap reached (" + capFor(ext) + " legs for " + ext + " verified source" + (ext === 1 ? "" : "s") + ")");
           continue;
         }
-        perMeetKept[leg.meet] = kept + 1;
+        perMeetKept[leg.venue] = kept + 1;
         gated.push(leg);
       }
 
@@ -1013,17 +1130,10 @@ const handler = async (req, res) => {
       // Floors: PLA projected div >= $1.60, WIN >= $2.50. During the shadow week
       // these verdicts DO NOT gate anything — the point is a clean week of
       // shadow-book vs actual-book evidence before a single dollar obeys a price.
-      const priceIndex = {};
-      if (pricedPack)
-        (pricedPack.meets || []).forEach((m) =>
-          (m.raceMap || []).forEach((r) =>
-            (r.runners || []).forEach((h) => {
-              if (h.price) priceIndex[m.venue + "|" + r.raceNo + "|" + h.no] = h.price;
-            })
-          )
-        );
+      const priceIndex = priceIndexOf(pricedPack);
       const shadowOf = (leg) => {
-        const p = priceIndex[leg.meet + "|" + leg.raceNo + "|" + leg.horseNo];
+        // keyed on the resolved venue; veto records carry it too, so both call sites below work
+        const p = priceIndex[leg.venue + "|" + leg.raceNo + "|" + leg.horseNo];
         if (!p) return { verdict: "nodata" };
         if (leg.betType === "PLA")
           return { price: p, verdict: p.pla == null ? "nodata" : p.pla >= 1.6 ? "pass" : "fail" };
@@ -1086,6 +1196,11 @@ const handler = async (req, res) => {
         raceReads: parsed.raceReads || [],
         skipped: parsed.skipped || [],
         corrections,
+        // Legs whose meet label could not be tied to a coupon. Present and non-empty is a
+        // REAL problem to look at — either the model invented a course or the pack changed
+        // shape — and it is deliberately its own field rather than a line buried in
+        // corrections, because the whole failure mode this fixes was one of invisibility.
+        meetErrors,
         vetoes,
         shadowPrices,
         quillPayload,
@@ -1375,6 +1490,10 @@ export {
   charterText as _charterText,
   charterHealth as _charterHealth,
   charterDrift as _charterDrift,
+  // the meet-resolution layer, exported so the safety suite drives the SHIPPED code
+  resolveMeet,
+  meetIndexes,
+  priceIndexOf,
 };
 
 // ---- Vercel function configuration ----

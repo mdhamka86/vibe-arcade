@@ -184,6 +184,12 @@ function regionOf(venue) {
   return "OTHER";
 }
 
+// Exported because propose.js needs exactly this course-to-region knowledge to resolve a
+// model-authored meet label ("Scottsville") back to the pack's coupon venue ("South Africa").
+// Shared rather than copied: a second course list would drift from this one, and the whole
+// point of the resolver is that it agrees with how the trawl regionalised the meet.
+export { regionOf };
+
 // Only tier "server-html"/"endpoint" adapters live here; websearch-tier sources
 // belong to the Stage C research pass.
 // ADAPTERS. Every entry below was probed live on 16/07/2026: HTTP status, stripped-TEXT
