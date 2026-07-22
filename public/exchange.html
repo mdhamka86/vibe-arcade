@@ -647,13 +647,46 @@ function Reviews({state,refresh}){
   const startEdit=(h)=>{ setEditing(h.id); setSlIn(h.lockedSL!=null?String(h.lockedSL):''); setTpIn(h.lockedTP!=null?String(h.lockedTP):''); };
   const vCls=(v)=> v==='HOLD'?'b-ok':v==='CLOSE'?'b-red':'b-note';
   const vTextCls=(v)=> v==='HOLD'?'green':v==='CLOSE'?'red':'ambr';
-  // live-recompute whether a locked level is currently hit, from the freshest price
+  // Direction, mirroring the engine's inferDirection: trust an explicit field, else read the
+  // P&L sign (price up + losing => short). Keeps the client banner honest for older holdings
+  // that reached the book without a direction.
+  const dirOf=(h)=>{
+    const d=String(h.direction||'').toUpperCase();
+    if(d==='SHORT'||d==='SELL') return 'SHORT';
+    if(d==='LONG'||d==='BUY') return 'LONG';
+    const avg=parseFloat(h.avgCost),last=parseFloat(h.lastPrice),upl=parseFloat(h.unrealised);
+    if(!isNaN(avg)&&!isNaN(last)&&!isNaN(upl)&&Math.abs(upl)>0.01&&avg>0&&Math.abs(last-avg)/avg>0.001){
+      const priceUp=last>avg;
+      if((priceUp&&upl<0)||(!priceUp&&upl>0)) return 'SHORT';
+      if((priceUp&&upl>0)||(!priceUp&&upl<0)) return 'LONG';
+    }
+    return 'LONG';
+  };
+  const isShortH=(h)=>dirOf(h)==='SHORT';
+  // A level on the wrong side of entry for the direction cannot function, so it must not fire.
+  const badSide=(h,level,kind)=>{ // kind: 'SL'|'TP'
+    const e=parseFloat(h.avgCost); const v=parseFloat(level); if(isNaN(e)||isNaN(v)) return false;
+    const sh=isShortH(h);
+    if(kind==='SL') return sh? v<=e : v>=e;   // short stop must be ABOVE entry; long stop BELOW
+    return sh? v>=e : v<=e;                    // short target must be BELOW entry; long target ABOVE
+  };
+  // live-recompute whether a locked level is currently hit, from the freshest price.
+  // DIRECTION-AWARE (22/07/2026): a short takes profit as price FALLS to target and stops as
+  // price RISES to stop — the mirror of a long. This was hardcoded long, the client twin of
+  // the engine bug that showed a short "TAKE-PROFIT HIT" while underwater.
   const liveHit=(h)=>{
     const px=parseFloat(h.lastPrice); if(isNaN(px)) return null;
     const tp=parseFloat(h.lockedTP), sl=parseFloat(h.lockedSL);
-    if(!isNaN(tp) && px>=tp) return {type:'TP',level:h.lockedTP};
-    if(!isNaN(sl) && px<=sl) return {type:'SL',level:h.lockedSL};
+    const sh=isShortH(h);
+    if(!isNaN(tp) && !badSide(h,tp,'TP') && (sh? px<=tp : px>=tp)) return {type:'TP',level:h.lockedTP};
+    if(!isNaN(sl) && !badSide(h,sl,'SL') && (sh? px>=sl : px<=sl)) return {type:'SL',level:h.lockedSL};
     return null;
+  };
+  const levelGeoWarn=(h)=>{
+    const notes=[];
+    if(h.lockedSL!=null && badSide(h,h.lockedSL,'SL')) notes.push(`the stop ${fmt(h.lockedSL)} is on the wrong side of entry for a ${dirOf(h)} — a ${isShortH(h)?'short stops ABOVE':'long stops BELOW'} entry`);
+    if(h.lockedTP!=null && badSide(h,h.lockedTP,'TP')) notes.push(`the target ${fmt(h.lockedTP)} is on the wrong side for a ${dirOf(h)}`);
+    return notes.length?notes.join('; '):null;
   };
 
   return (
@@ -676,6 +709,7 @@ function Reviews({state,refresh}){
               {rv?<span className={'badge '+vCls(rv.verdict)}>{rv.verdict}</span>:<span className="badge b-note">Not reviewed</span>}
             </div>
             <div className="meta">
+              <span className={'badge '+(isShortH(h)?'b-sell':'b-buy')}>{dirOf(h)}</span>
               <span>{fmt(h.qty)} @ {fmt(h.avgCost)}</span>
               <span>now {fmt(h.lastPrice)}</span>
               <span className={(h.unrealised||0)>=0?'green':'red'}>{(h.unrealised||0)>=0?'+':''}{fmt(h.unrealised)}</span>
@@ -685,6 +719,13 @@ function Reviews({state,refresh}){
             {hit && <div className="alertbox a-red" style={{marginTop:10}}>
               <div style={{fontWeight:700}}><Ic n="target"/> {hit.type==='TP'?'TAKE-PROFIT HIT':'STOP-LOSS HIT'} at {fmt(hit.level)} — now {fmt(h.lastPrice)}</div>
               <div style={{marginTop:3}}>NOVA won't have closed this automatically. This is your cue to decide: act on the level, or consciously hold on.</div>
+            </div>}
+
+            {/* A level on the wrong side of entry for the direction can't function as a stop or
+                target — surface it rather than let it fire phantom hits or sit dead. */}
+            {!hit && levelGeoWarn(h) && <div className="alertbox a-amber" style={{marginTop:10}}>
+              <div style={{fontWeight:700}}><Ic n="target"/> Levels need attention</div>
+              <div style={{marginTop:3}}>For this {dirOf(h)} position, {levelGeoWarn(h)}. Reset the levels for the correct direction — nothing has genuinely been hit.</div>
             </div>}
 
             {/* the locked levels, shown persistently */}

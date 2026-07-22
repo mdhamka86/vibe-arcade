@@ -165,6 +165,71 @@ function num(v) {
   const m = String(v).match(/-?\d+(\.\d+)?/);
   return m ? parseFloat(m[0]) : null;
 }
+
+// ---------- Direction: short is a first-class case, in CODE not just prose (22/07/2026) ----------
+// Holdings speak LONG/SHORT; ideas speak BUY/SELL. One helper reads both, and everything
+// downstream (hit-detection, P&L, geometry) asks it rather than re-deriving the convention.
+// The bug this closes: actReview's level-hit test was written for a long — price >= TP fired
+// take-profit — so a SHORT TSLA (target 348 BELOW) showed "TAKE-PROFIT HIT" at 378.4, above
+// entry and underwater. A short takes profit when price FALLS, and stops when price RISES.
+function isShort(directionLike) {
+  const d = String(directionLike || '').toUpperCase();
+  return d === 'SHORT' || d === 'SELL' || d === 'S';
+}
+
+// Has a locked level actually been hit, given the position's direction? This is the single
+// source of truth used by both the review and the shadow book, so the two can never drift
+// apart again (they had — the shadow book was correct and the review was not).
+//   LONG:  take-profit at/above TP; stop at/below SL.
+//   SHORT: take-profit at/below TP; stop at/above SL.
+// Returns { tp, sl } booleans; a null level or price simply cannot be hit.
+function levelHitState(direction, price, sl, tp) {
+  const p = num(price), s = num(sl), t = num(tp);
+  const short = isShort(direction);
+  const tpHit = (t != null && p != null) && (short ? p <= t : p >= t);
+  const slHit = (s != null && p != null) && (short ? p >= s : p <= s);
+  return { tp: !!tpHit, sl: !!slHit };
+}
+
+// Correct geometry for a set of levels, direction-aware. Returns null if it holds, or a
+// human reason if the stop/target sit on the wrong side of entry for this direction. A LONG
+// wants stop below / target above; a SHORT wants stop above / target below. Used to validate
+// levels BEFORE they are locked onto a holding — the gap that let a short lock a stop below
+// its entry, on the profit side, where it could never act as a stop.
+function levelGeometryProblem(direction, entry, sl, tp) {
+  const e = num(entry), s = num(sl), t = num(tp);
+  if (e == null) return null; // no reference to judge against; leave it be
+  const short = isShort(direction);
+  if (s != null) {
+    if (short && s <= e) return `stop ${s} is at or below entry ${e}, on the profit side of a SHORT — a short's stop must sit ABOVE entry`;
+    if (!short && s >= e) return `stop ${s} is at or above entry ${e}, on the profit side of a LONG — a long's stop must sit BELOW entry`;
+  }
+  if (t != null) {
+    if (short && t >= e) return `target ${t} is at or above entry ${e} — a SHORT profits as price falls, so its target must sit BELOW entry`;
+    if (!short && t <= e) return `target ${t} is at or below entry ${e} — a LONG profits as price rises, so its target must sit ABOVE entry`;
+  }
+  return null;
+}
+
+// Infer a holding's direction when the record does not carry one. The platform's own P&L
+// sign is the most reliable tell we have: if price is ABOVE cost but the position is losing
+// money (or below cost but winning), it can only be a SHORT. Falls back to LONG, which is
+// what all but a handful of CFDs are — but only after the sign check fails to prove short.
+function inferDirection(h) {
+  const explicit = String(h && h.direction || '').toUpperCase();
+  if (explicit === 'SHORT' || explicit === 'SELL') return 'SHORT';
+  if (explicit === 'LONG' || explicit === 'BUY') return 'LONG';
+  const avg = num(h && h.avgCost);
+  const last = num(h && h.lastPrice);
+  const upl = num(h && h.unrealised);
+  if (avg != null && last != null && upl != null && Math.abs(upl) > 0.01 && Math.abs(last - avg) / avg > 0.001) {
+    const priceUp = last > avg;
+    // price up + losing, or price down + winning => the position is inverted => SHORT
+    if ((priceUp && upl < 0) || (!priceUp && upl > 0)) return 'SHORT';
+    if ((priceUp && upl > 0) || (!priceUp && upl < 0)) return 'LONG';
+  }
+  return 'LONG';
+}
 // When an idea's stated levels are anchored to a wrong price but we KNOW the real live
 // price, derive sensible entry/target/stop around the REAL price so the card never shows
 // levels that are tens of percent off. Uses conservative swing-trade geometry. Returns the
@@ -1349,6 +1414,13 @@ async function actReview(holdingId) {
   const h = (s.book.holdings || []).find((x) => x.id === holdingId);
   if (!h) throw new Error('Holding not found.');
 
+  // DIRECTION FIRST, and persist it. A holding that reached us without a direction (an older
+  // record, or a screenshot that did not show the short indicator) would otherwise default to
+  // LONG through every fallback and be judged as a long forever. Infer it once from the P&L
+  // sign and write it back so the record is self-describing from here on.
+  const dir = inferDirection(h);
+  if (h.direction !== dir) h.direction = dir;
+
   const held = daysHeld(h.openedAt);
   const query = h.ticker ? `${h.ticker}|${h.name}` : h.name;
   const news = await getNews('holdings', query);
@@ -1368,10 +1440,16 @@ async function actReview(holdingId) {
   let holdingSignals = { lines: [] };
   try { holdingSignals = await enrichTickers([h.ticker], massiveCache); } catch { /* bonus, never fatal */ }
 
-  // profit/loss posture against average cost, for honest framing
-  const pl = (priceNow != null && h.avgCost != null)
-    ? `currently ${priceNow >= h.avgCost ? 'above' : 'below'} cost: paid ${h.avgCost}, now ${priceNow} (${(((priceNow - h.avgCost) / h.avgCost) * 100).toFixed(1)}%)`
-    : 'cost basis unclear';
+  // profit/loss posture against average cost, DIRECTION-AWARE for honest framing. For a
+  // SHORT, price above cost is a LOSS, not a gain — the raw price change must be read through
+  // the direction or the model is told the opposite of the truth about the position.
+  const pl = (() => {
+    if (priceNow == null || h.avgCost == null) return 'cost basis unclear';
+    const rawPct = ((priceNow - num(h.avgCost)) / num(h.avgCost)) * 100;
+    const pnlPct = isShort(dir) ? -rawPct : rawPct; // short gains when price falls
+    const posture = pnlPct >= 0 ? 'in PROFIT' : 'at a LOSS';
+    return `${dir} position, currently ${posture}: entered ${h.avgCost}, now ${priceNow} — that is a ${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}% move in his favour${isShort(dir) ? ' (a short profits as price falls)' : ''}`;
+  })();
 
   // ---- financial mindfulness: the account's health and this holding's margin nature ----
   const acc = s.book.account || {};
@@ -1402,11 +1480,28 @@ async function actReview(holdingId) {
   if (!hasLocked) {
     levelEvent = 'This is the FIRST review: propose the stop-loss and take-profit now. They will be LOCKED permanently after this — you will never set them again, only judge hold or close against them.';
   } else if (priceNow != null) {
+    // DIRECTION-AWARE (22/07/2026). A short takes profit when price FALLS to its target and
+    // stops when price RISES to its stop — the mirror of a long. This used to be hardcoded
+    // long, which is why a short showed "TAKE-PROFIT HIT" while underwater.
+    //
+    // GUARD AGAINST A MIS-SIDED LEVEL. A level on the wrong side of entry for the direction
+    // cannot function — a short's "stop" sitting below entry is on the profit side and would
+    // otherwise fire the instant price is anywhere above it. So we do NOT treat a mis-sided
+    // level as hit; we surface that it needs correcting. This is exactly the TSLA short whose
+    // stop was locked at 365, below its 377.48 entry: the honest read is "not a valid stop,
+    // fix it", not a phantom stop-out.
+    const geoRef = num(h.avgCost) ?? priceNow;
+    const slBadSide = lockedSL != null && levelGeometryProblem(dir, geoRef, lockedSL, null);
+    const tpBadSide = lockedTP != null && levelGeometryProblem(dir, geoRef, null, lockedTP);
+    const hitState = levelHitState(dir, priceNow, slBadSide ? null : lockedSL, tpBadSide ? null : lockedTP);
     const events = [];
-    if (lockedTP != null && priceNow >= lockedTP) { events.push(`the LOCKED take-profit of ${lockedTP} has been REACHED (live ${priceNow})`); levelHit = { type: 'TP', level: lockedTP, price: priceNow }; }
-    if (lockedSL != null && priceNow <= lockedSL) { events.push(`the LOCKED stop-loss of ${lockedSL} has been BREACHED (live ${priceNow})`); levelHit = { type: 'SL', level: lockedSL, price: priceNow }; }
+    if (hitState.tp) { events.push(`the LOCKED take-profit of ${lockedTP} has been REACHED (live ${priceNow}, a ${dir} profits as price ${isShort(dir) ? 'falls' : 'rises'})`); levelHit = { type: 'TP', level: lockedTP, price: priceNow }; }
+    if (hitState.sl) { events.push(`the LOCKED stop-loss of ${lockedSL} has been BREACHED (live ${priceNow})`); levelHit = { type: 'SL', level: lockedSL, price: priceNow }; }
+    const geoNotes = [slBadSide, tpBadSide].filter(Boolean);
     if (events.length) levelEvent = 'IMPORTANT — ' + events.join('; ') + '. NOVA has no automatic stop/target, so nothing closed this for him. Advise clearly and directly: hold on regardless, or close now, with your reasoning.';
-    else levelEvent = `Locked levels (SL ${lockedSL ?? 'none'}, TP ${lockedTP ?? 'none'}); live ${priceNow}. Neither has been hit yet.`;
+    else if (geoNotes.length) levelEvent = `LEVELS NEED ATTENTION on this ${dir} position: ${geoNotes.join('; ')}. Live ${priceNow}. Treat these levels as not yet valid — advise him to reset them for the correct direction; nothing has genuinely been hit.`;
+    else levelEvent = `Locked levels (SL ${lockedSL ?? 'none'}, TP ${lockedTP ?? 'none'}); live ${priceNow}, position is ${dir}. Neither has been hit yet.`;
+    h.levelGeometryWarning = geoNotes.length ? geoNotes.join('; ') : null;
   } else {
     levelEvent = `Locked levels (SL ${lockedSL ?? 'none'}, TP ${lockedTP ?? 'none'}); no live price to check against right now.`;
   }
@@ -1485,10 +1580,24 @@ ${isFirstReview
 
   // LOCK the levels on the FIRST review only. Thereafter they are immutable here; the
   // ONLY way to change them is the deliberate manual override action. A review NEVER moves them.
+  //
+  // DIRECTION-AWARE GEOMETRY GATE (22/07/2026). These get locked permanently, so a stop on
+  // the wrong side of entry — which is how the TSLA short ended up with a stop BELOW entry,
+  // on its profit side — becomes a level that can never act as a stop. Validate against the
+  // position's direction and refuse to lock a mis-sided level, recording why on the holding
+  // so the desk can flag it rather than silently accepting nonsense.
   if (isFirstReview) {
-    if (num(verdict.proposed_sl) != null) { h.lockedSL = num(verdict.proposed_sl); h.mentalSL = h.lockedSL; }
-    if (num(verdict.proposed_tp) != null) { h.lockedTP = num(verdict.proposed_tp); h.mentalTP = h.lockedTP; }
-    h.levelsLockedAt = t.iso;
+    const pSL = num(verdict.proposed_sl), pTP = num(verdict.proposed_tp);
+    const geoRef = num(h.avgCost) ?? priceNow;
+    const geoProblem = levelGeometryProblem(dir, geoRef, pSL, pTP);
+    if (geoProblem) {
+      h.levelLockDeferred = { reason: geoProblem, proposed_sl: pSL, proposed_tp: pTP, at: t.iso };
+    } else {
+      if (pSL != null) { h.lockedSL = pSL; h.mentalSL = h.lockedSL; }
+      if (pTP != null) { h.lockedTP = pTP; h.mentalTP = h.lockedTP; }
+      h.levelsLockedAt = t.iso;
+      h.levelLockDeferred = null;
+    }
   }
 
   // persist whether a locked level has been hit, so the Book/holding view can flag it
@@ -1513,9 +1622,16 @@ async function actSetLevels(holdingId, sl, tp) {
   h.mentalSL = h.lockedSL; h.mentalTP = h.lockedTP;
   h.levelsLockedAt = t.iso;
   h.levelsManuallySet = true;
+  h.levelLockDeferred = null; // a manual set clears any deferred auto-lock
   h.levelHit = null; // recheck against the new levels on the next review
+  // A manual override is a conscious act, so we honour it — but if the geometry is wrong for
+  // the position's direction (a short's stop below entry, say) we WARN rather than silently
+  // accept it, so the mistake is visible instead of lurking as a level that can never fire.
+  const dir = inferDirection(h);
+  const geoWarn = levelGeometryProblem(dir, num(h.avgCost) ?? num(h.lastPrice), h.lockedSL, h.lockedTP);
+  h.levelGeometryWarning = geoWarn || null;
   await rSet('exchange:book', s.book);
-  return { ok: true, holding: h };
+  return { ok: true, holding: h, warning: geoWarn || null };
 }
 
 // ---------- Self-improvement: shadow scorecard + reflection loop ----------
@@ -1662,8 +1778,10 @@ function resolveShadow(s, t, priceMap = {}) {
     }
 
     const trail = rec.shadowTrail || [];
-    const hitTP = trail.some((m) => dir === 'BUY' ? m.px >= tp : m.px <= tp);
-    const hitSL = trail.some((m) => dir === 'BUY' ? m.px <= sl : m.px >= sl);
+    // Same direction-aware helper the review uses, so shadow grading and live hit-detection
+    // can never diverge again (they had: this was correct while the review was long-only).
+    const hitTP = trail.some((m) => levelHitState(dir, m.px, sl, tp).tp);
+    const hitSL = trail.some((m) => levelHitState(dir, m.px, sl, tp).sl);
     const windowClosed = Date.now() - (rec.passedAt || rec.ts) > WINDOW_MS;
 
     if (hitTP && !hitSL) { rec.shadowResolved = true; rec.shadowVerdict = { grade: 'WIN', note: 'reached target within the week', resolvedOn: t.dmy }; }
@@ -2081,6 +2199,7 @@ export const config = { maxDuration: 120 };
 // reimplementation of them. The suite hard-fails if these stop being exported, on the
 // principle that a test quietly checking a copy is worse than no test at all.
 export { checkLevels, sanePrice, recomputeLevels, priceOf, tpCeiling, catalystCheck, addDays, horizonStatus, offListCheck, shortlistBlock };
+export { isShort, levelHitState, levelGeometryProblem, inferDirection };
 
 // ---------- Request handler: the single front door ----------
 export default async function handler(req, res) {
