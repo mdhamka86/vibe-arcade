@@ -349,8 +349,29 @@ function IdeaCard({idea,rec,onTaken,onPassed}){
         <span className="steel">VERIFIED WIRE</span> {idea.evidence.map((e,i)=>`${e.outlet} (${e.strength||'match'}, ${e.age}): ${e.headline}`).join('  ·  ')}
       </div>}
       {idea.conviction_note && <div className="note" style={{marginTop:4}}><span className="ambr">⚠ CONVICTION</span> {idea.conviction_note}</div>}
+      {/* GATE OUTPUT — the code-enforced checks. These are computed facts, not the model's prose:
+          a blocking finding that survived the retry, the recomputed margin arithmetic, stacked
+          currency exposure, an imminent high-impact print, and the resolved calendar catalyst. */}
+      {idea.gate_warning && <div className="alertbox a-red" style={{marginTop:8}}>⛔ {idea.gate_warning}</div>}
+      {idea.level_warning && <div className="alertbox a-amber" style={{marginTop:8}}>⚠ {idea.level_warning}</div>}
+      {idea.redFolder && <div className="alertbox a-amber" style={{marginTop:8}}>📅 HIGH-IMPACT PRINT IMMINENT: {idea.redFolder.ccy} {idea.redFolder.title} at {idea.redFolder.when}. The direction of that print is not knowable.</div>}
+      {Array.isArray(idea.risk_flags) && idea.risk_flags.map((f,i)=>
+        <div key={i} className="note" style={{marginTop:4,color:'var(--amber)'}}>⚠ {f}</div>)}
       <div className="note" style={{marginTop:8}}><span className="red">RISKS</span> {idea.risks}</div>
       {(idea.sizing_note||idea.margin_note) && <div className="note" style={{marginTop:4}}><span className="ambr">SIZING</span> {idea.sizing_note||idea.margin_note}</div>}
+      {idea.marginCheck && <div className="note" style={{marginTop:4}}>
+        <span className="steel">MARGIN (recomputed)</span> {idea.marginCheck.estUSD!=null?`~$${idea.marginCheck.estUSD} of margin`:'cost not computable'}
+        {idea.marginCheck.projectedPct!=null
+          ? <span className={idea.marginCheck.projectedPct<idea.marginCheck.floor?'red':idea.marginCheck.projectedPct<200?'ambr':'green'}> · projects margin level {idea.marginCheck.projectedPct}% (floor {idea.marginCheck.floor}%)</span>
+          : <span className="ambr"> · projected level UNVERIFIED</span>}
+      </div>}
+      {idea.exposureStack && <div className="note" style={{marginTop:4,color:'var(--amber)'}}>
+        <span className="steel">STACKS EXISTING RISK</span> {idea.exposureStack.stacked.map(x=>`${x.side} ${x.ccy}: book ${x.existing} + ${x.adding} = ${x.combined} lots`).join('  ·  ')}
+      </div>}
+      {idea.catalystResolved && <div className="note" style={{marginTop:4}}>
+        <span className="steel">CATALYST ({idea.catalystResolved.stance})</span> {idea.catalystResolved.ccy} {idea.catalystResolved.event} · {idea.catalystResolved.when} · in {idea.catalystResolved.hoursOut}h
+        {!idea.catalystResolved.insideWindow && <span className="ambr"> · lands AFTER this trade's ceiling</span>}
+      </div>}
       {idea.correlation_note && idea.correlation_note.toLowerCase()!=='none' &&
         <div className="note" style={{marginTop:4}}><span className="steel">CORRELATION</span> {idea.correlation_note}</div>}
       <div className="row" style={{marginTop:10}}>
@@ -412,6 +433,15 @@ function Desk({state,refresh}){
       {slip!=null && <div className="alertbox a-amber">Fill logged. Slippage vs idea entry: {slip>0?'+':''}{slip}. Real levels now govern the book.</div>}
       {ideas && <>
         {ideas.stand_down && <div className="alertbox a-amber">STAND DOWN advisory: the engine rates this session poor. Only genuinely strong setups are worth taking; treat anything shown with extra scepticism.</div>}
+        {/* Book-level facts the per-idea cards cannot show: what taking BOTH would do to margin,
+            the posture they would be added to, and whether the vitals behind all of it are current. */}
+        {ideas.marginWarning && <div className="alertbox a-amber">⚠ {ideas.marginWarning}</div>}
+        {ideas.vitalsAge && !ideas.vitalsAge.fresh && <div className="alertbox a-amber">⚠ Margin figures below are computed from vitals that are {ideas.vitalsAge.label}. Sync a fresh positions screenshot before sizing on them.</div>}
+        {ideas.exposureBefore && Object.keys(ideas.exposureBefore).length>0 && <div className="card">
+          <div className="eyebrow">Net currency exposure before these ideas</div>
+          <div className="meta">{Object.entries(ideas.exposureBefore).filter(([,v])=>Math.abs(v)>1e-9).sort((a,b)=>Math.abs(b[1])-Math.abs(a[1])).map(([c,v])=>
+            <span key={c} className={v>0?'green':'red'}>{v>0?'LONG':'SHORT'} {c} {Math.abs(v).toFixed(2)}</span>)}</div>
+        </div>}
         <div className="card"><div className="eyebrow"><Ic n="brain"/>Desk note{ideas.session?' · '+ideas.session:''}</div><div className="note" style={{color:'var(--ink2)'}}>{ideas.desk_note}</div>
           <div className="meta"><span>generated {ideas.generatedAt? ago(Date.parse(ideas.generatedAt)):''}</span></div>
         </div>
@@ -511,6 +541,11 @@ function Book({state,refresh}){
     setHorBusy(null);
   };
   const flagCls={OK:'b-ok',NOTE:'b-note',AMBER:'b-amber',RED:'b-red'};
+  // HORIZON DOCTRINE — must mirror the HORIZON block in api/terminal-engine.js. He trades a
+  // 2-3 day interday hold; the UI used to be wired to the same one-day assumption as the engine
+  // and told him a position was "past its intended life" from DAY ONE, and that the red flag
+  // review unlocked at day 3. Both nagged him out of trades of perfectly normal length.
+  const HZ={targetMin:2,targetMax:3,ceilingDays:4,redAtDays:5};
 
   return (
     <div className="wrap">
@@ -666,8 +701,8 @@ function Book({state,refresh}){
               : <span className="ambr">· est. since first seen (sync a shot showing open time for exact)</span>}
           </div>}
           {p.longTerm
-            ? <div className="note" style={{marginTop:6}}><span className="dim">HORIZON</span> long-term hold, held {p.ageDays} day{p.ageDays===1?'':'s'} <span className="steel">· judged on the long-term thesis, not the one-day clock</span></div>
-            : p.proposedHorizon && <div className="note" style={{marginTop:6}}><span className="dim">HORIZON</span> proposed {p.proposedHorizon}, held {p.ageDays} day{p.ageDays===1?'':'s'}{p.ageDays>=1?<span className="ambr"> · past its intended life</span>:''}</div>}
+            ? <div className="note" style={{marginTop:6}}><span className="dim">HORIZON</span> long-term hold, held {p.ageDays} day{p.ageDays===1?'':'s'} <span className="steel">· judged on the long-term thesis, not the interday clock</span></div>
+            : p.proposedHorizon && <div className="note" style={{marginTop:6}}><span className="dim">HORIZON</span> proposed {p.proposedHorizon}, held {p.ageDays} day{p.ageDays===1?'':'s'}{p.ageDays>HZ.ceilingDays?<span className="ambr"> · past its {HZ.ceilingDays}-day ceiling</span>:p.ageDays>=HZ.targetMax?<span className="steel"> · in its target window</span>:''}</div>}
           {p.thesis && <div className="thesis">{p.thesis}</div>}
           {p.lastReview && <>
             <div className="note" style={{marginTop:6}}><span className={p.lastReview.verdict==='CLOSE'?'red':'green'}>REVIEW {p.lastReview.verdict}</span> {p.lastReview.reason} <span className="dim">· {ago(Date.parse(p.lastReview.at))}</span></div>
@@ -680,7 +715,8 @@ function Book({state,refresh}){
               <button className="pri" disabled={rfBusy===p.id} onClick={()=>runRF(p.id)}>{rfBusy===p.id? <span className="spin">◐</span>:(p.longTerm?'Review this hold':'RED FLAG — keep or close?')}</button>}
             <button className="ghost" disabled={horBusy===p.id} onClick={()=>toggleHorizon(p.id,!p.longTerm)}>{horBusy===p.id?<span className="spin">◐</span>:(p.longTerm?'Make short-term':'Mark long-term')}</button>
           </div>
-          {p.ageFlag==='AMBER' && !p.longTerm && <div className="note" style={{marginTop:8,color:'var(--amber)'}}>Day {p.ageDays}: is the original thesis alive, or are you holding hope? Red flag review unlocks at day 3.</div>}
+          {p.ageFlag==='NOTE' && !p.longTerm && <div className="note" style={{marginTop:8}}><span className="steel">Day {p.ageDays}</span> — inside the {HZ.targetMin}-{HZ.targetMax} day target window. This is the stage where the thesis should start paying; nothing to do unless it has stopped making sense.</div>}
+          {p.ageFlag==='AMBER' && !p.longTerm && <div className="note" style={{marginTop:8,color:'var(--amber)'}}>Day {p.ageDays}: at the {HZ.ceilingDays}-day ceiling. Is the original thesis alive, or are you holding hope? Red flag review unlocks at day {HZ.redAtDays}.</div>}
         </div>
       ))}
 

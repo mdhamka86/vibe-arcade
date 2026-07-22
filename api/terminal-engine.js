@@ -58,9 +58,45 @@ function bkk() {
   };
 }
 const daysHeld = (openedAt) => Math.max(0, Math.floor((Date.now() - openedAt) / 86400000));
-// Aging ladder tuned to the one-day horizon doctrine: a one-day trade still open
-// on day 3 has materially overstayed its intended life, so the red review unlocks there.
-const ageFlag = (d) => (d >= 3 ? 'RED' : d >= 2 ? 'AMBER' : d >= 1 ? 'NOTE' : 'OK');
+
+// ---------- HORIZON DOCTRINE (single source of truth) ----------
+// THE TRADER'S ACTUAL HORIZON IS 2-3 DAYS INTERDAY, not one day. The desk was previously
+// hard-wired to a 24h life in five separate places — the idea prompt, the aging ladder, the
+// level validator, the red-flag overstay test and the UI nag — with the numbers restated as
+// literals at each site. The effect was that every NORMAL-length trade he holds got flagged
+// AMBER on day 2 and RED on day 3, and the red-flag review that fired there ran with its
+// burden of proof set to CLOSE. The desk was nagging him out of trades at exactly the point
+// his own routine says hold.
+//
+// Every horizon number now derives from this one block. If the doctrine changes again, change
+// it HERE — do not reintroduce literals at the call sites, which is how the five drifted apart.
+const HORIZON = {
+  targetDaysMin: 2,        // the trade is meant to work in 2...
+  targetDaysMax: 3,        // ...to 3 days
+  ceilingDays: 4,          // absolute life; past this it has genuinely overstayed
+  ceilingHours: 96,        // ceilingDays in hours, for the hour-precise review path
+  freshHours: 48,          // a desk-proposed trade is "still fresh" for its first 2 days
+  // Level-validator tolerances, widened from the one-day settings. A 2-3 day trade legitimately
+  // sits further from spot at entry and needs materially more stop room than a 24h scalp.
+  maxEntryDriftPct: 0.025, // was 0.015 — an entry this far out can still fill across 2-3 days
+  maxLevelDriftPct: 0.08,  // was 0.06  — magnitude-nonsense catcher, not a tightness rule
+  minStopPips: 10,         // was 8     — anything tighter is noise over a multi-day hold
+  maxStopPips: 300,        // was 150   — ~2-3x daily ATR on the wider crosses
+  minTargetPips: 12,       // was 8     — below this the spread eats a multi-day hold
+};
+// The one human-readable name for the doctrine, so stored positions and prompts cannot drift
+// apart from it the way the five literal sites did.
+HORIZON.label = `${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day interday`;
+// The calendar deliberately reaches BEYOND the trade's own life — see the note in getCalendar().
+const CALENDAR_LOOKAHEAD_HOURS = HORIZON.ceilingHours + 48;
+// Aging ladder derived from the doctrine above: OK inside the intended window, NOTE at the
+// top of it, AMBER at the ceiling, RED once genuinely past it. Under the old one-day ladder
+// these same holds read AMBER/RED on days 2 and 3.
+const ageFlag = (d) =>
+  (d > HORIZON.ceilingDays ? 'RED'
+    : d >= HORIZON.ceilingDays ? 'AMBER'
+    : d >= HORIZON.targetDaysMax ? 'NOTE'
+    : 'OK');
 
 // ---------- Claude ----------
 async function claude(userContent, maxTokens = 2000) {
@@ -117,7 +153,15 @@ async function getCalendar() {
       let h = 0, mi = 0;
       if (tm) { h = (+tm[1] % 12) + (tm[3].toLowerCase() === 'pm' ? 12 : 0); mi = +tm[2]; }
       const utc = Date.UTC(yy, mm - 1, dd, h, mi); // feed times are GMT
-      if (utc < Date.now() - 3600e3 || utc > Date.now() + 56 * 3600e3) continue;
+      // The forward window must OVERSHOOT the hold window, not merely match it. Was a flat 56h,
+      // sized for the old one-day doctrine, which stopped before a 3-day trade did. Matching the
+      // 96h ceiling exactly would be better but still wrong in a specific way: an event landing
+      // just PAST the ceiling is precisely the one worth knowing about, because it is the reason
+      // to close at day 3 rather than run to day 4 — and a calendar truncated at the ceiling can
+      // never show it. Overshooting by two days also keeps the per-idea "catalyst lands after
+      // this trade's ceiling" check meaningful; truncating at the ceiling would make that branch
+      // unreachable, i.e. a validation that can never fire.
+      if (utc < Date.now() - 3600e3 || utc > Date.now() + CALENDAR_LOOKAHEAD_HOURS * 3600e3) continue;
       const bkk = new Date(utc + 7 * 3600e3);
       events.push({
         title: g('title'), ccy: g('country'), impact, forecast: g('forecast'), previous: g('previous'), utc,
@@ -131,13 +175,90 @@ async function getCalendar() {
     return cached ? cached.events : [];
   }
 }
+const calLine = (e) => `- ${e.when} · ${e.ccy} ${e.title} [${e.impact}]${e.forecast ? ` (fc ${e.forecast}, prev ${e.previous})` : ''}`;
 function calLines(events, ccys) {
   const f = ccys && ccys.length ? events.filter((e) => ccys.includes(e.ccy)) : events;
-  return f.slice(0, 14).map((e) =>
-    `- ${e.when} · ${e.ccy} ${e.title} [${e.impact}]${e.forecast ? ` (fc ${e.forecast}, prev ${e.previous})` : ''}`
-  ).join('\n') || '- nothing High/Medium in the next 48h window';
+  return f.slice(0, 14).map(calLine).join('\n') || `- nothing High/Medium inside the ${HORIZON.ceilingDays}-day window`;
 }
 const normPair = (p) => (p || '').replace(/[^A-Za-z]/g, '').toUpperCase();
+
+// ---------- Per-currency calendar for the IDEAS path (audit finding 7) ----------
+// The ideas prompt used to receive `calLines(cal)` with NO currency argument: a single global
+// top-14 list. Two things went wrong with that. First, the model is choosing among ~19 pairs,
+// so it needs the events for whatever pair it lands on — not the fourteen loudest events
+// overall. Second, the slice(0,14) truncation is not neutral: it is chronological, so a quiet
+// morning of EUR data would push every NZD event off the end and the desk would never learn
+// that RBNZ prints inside the hold window. The red-flag path already filters per pair; this
+// mirrors that for the hunt, grouped so nothing is silently dropped.
+const UNIVERSE_CCYS = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'AUD', 'NZD', 'CAD'];
+function calByCurrency(events, ccys = UNIVERSE_CCYS) {
+  const out = [];
+  for (const c of ccys) {
+    const mine = (events || []).filter((e) => e.ccy === c);
+    if (!mine.length) { out.push(`${c}: nothing High/Medium in the window`); continue; }
+    out.push(`${c}:\n${mine.map((e) => '  ' + calLine(e).slice(2)).join('\n')}`);
+  }
+  return out.join('\n') || `- no calendar data this run`;
+}
+
+// ---------- Catalyst resolution (audit finding 8) ----------
+// The idea schema now carries a structured catalyst. This resolves the model's CLAIM back to a
+// REAL event in the calendar we handed it, so an event-anchored idea can be verified rather
+// than taken on trust, and so the shadow book can eventually answer "do event-anchored ideas
+// actually outperform?" — a question the old free-text thesis made unanswerable.
+// Matching is deliberately loose (the model paraphrases titles); we require the currency to
+// match and a meaningful word overlap with the real title.
+function resolveCatalyst(claim, events, pair) {
+  if (!claim || typeof claim !== 'object') return null;
+  const title = String(claim.event || '').toLowerCase().trim();
+  if (!title) return null;
+  const p = normPair(pair);
+  const legs = [p.slice(0, 3), p.slice(3, 6)];
+  const words = new Set(title.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter((w) => w.length > 2));
+  let best = null, bestScore = 0;
+  for (const e of events || []) {
+    if (!legs.includes(e.ccy)) continue; // a catalyst must belong to one of the pair's own legs
+    const et = String(e.title || '').toLowerCase();
+    const ew = new Set(et.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter((w) => w.length > 2));
+    if (!ew.size || !words.size) continue;
+    let common = 0; for (const w of words) if (ew.has(w)) common++;
+    const score = common / Math.min(words.size, ew.size);
+    if (score > bestScore) { bestScore = score; best = e; }
+  }
+  return bestScore >= 0.5 ? best : null;
+}
+
+// ---------- RED FOLDER GUARD (ported from forex-brain.js:125) ----------
+// The sibling engine in this same directory forces FLAT when a High-impact event for either of
+// a pair's currencies lands inside a guard window. The Terminal had the identical calendar data
+// in hand and no such guard — a proposal could walk blind into an NFP print with nothing in
+// code to stop it.
+//
+// PORTED, NOT COPIED, because the doctrines differ. forex-brain is a breakout system where an
+// imminent print is simply a trap, so it hard-forces FLAT. The Terminal's prompt explicitly
+// invites event trades ("trade the setup around a specific scheduled event, or explicitly
+// position clear of it"), so a blanket ban would fight its own doctrine. The rule enforced here
+// is therefore the narrower and more honest one: you may trade into a print, but you may not do
+// it BLIND. An idea that names the event as its catalyst passes (capped); one that does not,
+// fails and is sent back.
+//
+// Window is 60 minutes rather than forex-brain's 45: the Terminal proposes an entry ZONE that
+// may take time to fill, so the exposure to an imminent print starts earlier than a market
+// order's would.
+const RED_FOLDER_GUARD_MIN = 60;
+function redFolderImminent(events, pair, guardMinutes = RED_FOLDER_GUARD_MIN, nowMs = Date.now()) {
+  const p = normPair(pair);
+  if (p.length < 6) return null;
+  const legs = [p.slice(0, 3), p.slice(3, 6)];
+  const win = guardMinutes * 60000;
+  for (const e of events || []) {
+    if (!e || !/high/i.test(String(e.impact || ''))) continue;
+    if (!legs.includes(e.ccy)) continue;
+    if (!Number.isFinite(e.utc)) continue;
+    if (e.utc >= nowMs && e.utc - nowMs <= win) return e;
+  }
+  return null;
+}
 
 // ---------- Self-improvement reflection ----------
 // Studies the resolved shadow scorecard plus taken-trade AARs and distils a standing
@@ -148,6 +269,18 @@ function shadowScorecard(ledger) {
   const taken = ledger.filter((r) => r.aar && r.aar.bucket);
   const tally = { win: 0, loss: 0, soft: 0, other: 0, total: resolved.length };
   const byPair = {};
+  // BY CURRENCY, not only by pair (audit finding 2). Tracking pairs alone can never surface
+  // "your GBP exposure is where you bleed" — a 1W-4L record spread across GBPUSD, GBPJPY and
+  // GBPAUD shows as three unremarkable 0W-1L pairs and one 1W-2L, none of which clears the
+  // 2-resolved threshold to even be mentioned. Netted by currency and by SIDE it reads as a
+  // single clear finding. A pair is two currency bets, so each result credits both legs, and
+  // the side matters: being wrong long GBP says nothing about being short it.
+  const byCcy = {};
+  const creditCcy = (ccy, side, isWin, isLoss) => {
+    const k = `${side} ${ccy}`;
+    byCcy[k] = byCcy[k] || { w: 0, l: 0 };
+    if (isWin) byCcy[k].w++; else if (isLoss) byCcy[k].l++;
+  };
   for (const r of resolved) {
     const g = r.shadowVerdict.grade;
     const isWin = g === 'WIN' || g === 'SOFT_WIN';
@@ -157,8 +290,14 @@ function shadowScorecard(ledger) {
     const p = normPair(r.idea.pair);
     byPair[p] = byPair[p] || { w: 0, l: 0 };
     if (isWin) byPair[p].w++; else if (isLoss) byPair[p].l++;
+    const dir = (r.idea.direction || '').toUpperCase();
+    if (p.length >= 6 && (dir === 'BUY' || dir === 'SELL')) {
+      const long = dir === 'BUY';
+      creditCcy(p.slice(0, 3), long ? 'LONG' : 'SHORT', isWin, isLoss);
+      creditCcy(p.slice(3, 6), long ? 'SHORT' : 'LONG', isWin, isLoss);
+    }
   }
-  return { tally, byPair, resolved, taken };
+  return { tally, byPair, byCcy, resolved, taken };
 }
 
 async function reflectAndLearn(s, t) {
@@ -169,15 +308,20 @@ async function reflectAndLearn(s, t) {
   const pairLines = Object.entries(card.byPair)
     .filter(([, v]) => v.w + v.l >= 2)
     .map(([p, v]) => `${p}: ${v.w}W-${v.l}L`).join(', ') || 'no pair has 2+ resolved yet';
+  const ccyLines = Object.entries(card.byCcy)
+    .filter(([, v]) => v.w + v.l >= 3)
+    .sort((a, b) => (b[1].l - b[1].w) - (a[1].l - a[1].w))
+    .map(([c, v]) => `${c}: ${v.w}W-${v.l}L`).join(', ') || 'no currency side has 3+ resolved yet';
   const takenLines = card.taken.slice(-10)
     .map((r) => `${r.idea?.pair || r.close?.pair} ${r.aar.bucket}`).join(', ') || 'none';
   const priorGuidance = (s.guidance || []).map((g) => `- ${g.text}`).join('\n') || '- none yet';
 
   const reflection = await claude(`You are THE TERMINAL's performance analyst. Study the desk's own track record and distil what it should DO DIFFERENTLY to generate better ideas. Judge decision quality, not just outcomes.
 
-SHADOW BOOK (ideas he passed on, tracked to resolution over 3 days):
+SHADOW BOOK (ideas he passed on, tracked to resolution over the ${HORIZON.ceilingDays}-day horizon ceiling):
 Overall: ${card.tally.win} clean wins, ${card.tally.loss} clean losses, ${card.tally.soft} soft calls, from ${card.tally.total} resolved.
 By pair: ${pairLines}
+By CURRENCY SIDE (each trade credits both legs; this is where a correlated book's real bias shows up — a bad run spread across three GBP crosses hides in the by-pair line but not here): ${ccyLines}
 
 TAKEN TRADES (his, with AAR verdicts): ${takenLines}
 
@@ -229,29 +373,41 @@ function checkLevels(idea, refPx) {
   if (entry == null || tp == null || sl == null) return { ok: false, reason: 'missing a numeric entry, TP or SL' };
   if (dir !== 'BUY' && dir !== 'SELL') return { ok: false, reason: 'direction not BUY/SELL' };
 
-  // 1) entry must live near the real market. For one-day trades an entry more than
-  // ~1.5% from live is really a limit order that may never fill in the horizon.
-  if (refPx) {
+  // 1) entry must live near the real market. Over a 2-3 day hold an entry can sit further
+  // from spot than a 24h scalp's and still fill, so the tolerance is HORIZON.maxEntryDriftPct.
+  //
+  // FAIL CLOSED WHEN THERE IS NO ANCHOR (audit finding 5). This block used to be wrapped in a
+  // bare `if (refPx)`, so a pair we could not price skipped EVERY magnitude and proximity check
+  // and fell through to a plain `{ok:true}` on geometry alone — invented levels reaching the
+  // screen at full conviction with no warning. That is the Exchange's "no price is not a
+  // blocker" bug in a narrower form. An unpriceable pair now returns ok:false with
+  // `unanchored`, so the caller can retry for a priceable pair and, failing that, cap
+  // conviction and warn rather than wave the numbers through.
+  if (!refPx) {
+    return { ok: false, unanchored: true, reason: `no live or reference price available for ${normPair(idea.pair) || 'this pair'} — its levels cannot be verified against the market, so they are not trustworthy` };
+  }
+  {
     const drift = Math.abs(entry - refPx) / refPx;
-    if (drift > 0.015) return { ok: false, reason: `entry ${entry} is ${(drift * 100).toFixed(1)}% off live ${refPx.toFixed(4)} — too far to fill in a one-day window` };
+    if (drift > HORIZON.maxEntryDriftPct) return { ok: false, reason: `entry ${entry} is ${(drift * 100).toFixed(1)}% off live ${refPx.toFixed(4)} — too far to fill inside a ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day window` };
     // every level should share the market's order of magnitude
     for (const [name, lvl] of [['TP', tp], ['SL', sl]]) {
       const d = Math.abs(lvl - refPx) / refPx;
-      if (d > 0.06) return { ok: false, reason: `${name} ${lvl} is ${(d * 100).toFixed(1)}% from live ${refPx.toFixed(4)} — implausible for a one-day trade` };
+      if (d > HORIZON.maxLevelDriftPct) return { ok: false, reason: `${name} ${lvl} is ${(d * 100).toFixed(1)}% from live ${refPx.toFixed(4)} — implausible for a ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day trade` };
     }
   }
   // 2) geometry: BUY => SL below entry, TP above; SELL => the reverse.
   if (dir === 'BUY' && !(sl < entry && tp > entry)) return { ok: false, reason: `BUY needs SL(${sl}) below and TP(${tp}) above entry(${entry})` };
   if (dir === 'SELL' && !(sl > entry && tp < entry)) return { ok: false, reason: `SELL needs SL(${sl}) above and TP(${tp}) below entry(${entry})` };
 
-  // 3) stop distance must be sane for a short-term trade: not so tight that normal
-  // noise stops it out, not so wide it ties up absurd risk for a one-day horizon.
+  // 3) stop distance must be sane for the 2-3 day horizon: not so tight that two days of
+  // ordinary noise stops it out, not so wide it ties up absurd risk. The old band (8-150 pips)
+  // was sized for a 24h scalp and would reject stops that are correct for a multi-day hold.
   const pip = pipSize(idea.pair, refPx);
   const slPips = Math.abs(entry - sl) / pip;
   const tpPips = Math.abs(tp - entry) / pip;
-  if (slPips < 8) return { ok: false, reason: `stop is only ${slPips.toFixed(0)} pips from entry — market noise will stop it out; needs room to breathe` };
-  if (slPips > 150) return { ok: false, reason: `stop is ${slPips.toFixed(0)} pips away — far too wide for a one-day trade` };
-  if (tpPips < 8) return { ok: false, reason: `target is only ${tpPips.toFixed(0)} pips from entry — not worth the spread and risk` };
+  if (slPips < HORIZON.minStopPips) return { ok: false, reason: `stop is only ${slPips.toFixed(0)} pips from entry — ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} days of ordinary noise will stop it out; needs room to breathe` };
+  if (slPips > HORIZON.maxStopPips) return { ok: false, reason: `stop is ${slPips.toFixed(0)} pips away — far too wide even for a ${HORIZON.targetDaysMax} day hold` };
+  if (tpPips < HORIZON.minTargetPips) return { ok: false, reason: `target is only ${tpPips.toFixed(0)} pips from entry — not worth the spread and risk` };
 
   // 4) risk:reward should not be upside-down; reject if reward < risk
   const risk = Math.abs(entry - sl);
@@ -284,6 +440,14 @@ const YF_SYMBOL = { // pair -> Yahoo FX symbol
   NZDUSD: 'NZDUSD=X', USDCAD: 'CAD=X', EURGBP: 'EURGBP=X', EURJPY: 'EURJPY=X', GBPJPY: 'GBPJPY=X',
   EURAUD: 'EURAUD=X', GBPAUD: 'GBPAUD=X', AUDJPY: 'AUDJPY=X', NZDJPY: 'NZDJPY=X', CADJPY: 'CADJPY=X',
   CHFJPY: 'CHFJPY=X', EURCHF: 'EURCHF=X', GBPCHF: 'GBPCHF=X', AUDCAD: 'AUDCAD=X', AUDNZD: 'AUDNZD=X',
+  // Liquid crosses that were in NEITHER this map NOR refRates, so refFor() returned null for
+  // them and checkLevels waved their invented levels straight through (audit finding 5). The
+  // validator now fails closed on a null anchor, but the better fix is to HAVE the anchor:
+  // these are all real, fetchable Yahoo FX symbols and all derivable from the same single
+  // frankfurter call refRates() already makes. Deliberately NOT added to PAIR_RANGES — see the
+  // uniqueness note on that table; a second EUR-based band near 1.6 would silently degrade the
+  // flagship EURAUD auto-correct from a correction to a flag.
+  EURCAD: 'EURCAD=X', GBPCAD: 'GBPCAD=X', NZDCAD: 'NZDCAD=X', EURNZD: 'EURNZD=X', GBPNZD: 'GBPNZD=X',
   DXY: 'DX-Y.NYB',
 };
 async function yahooQuote(pair) {
@@ -368,6 +532,11 @@ async function refRates() {
       NZDJPY: R.JPY ? +(R.JPY / R.NZD).toFixed(5) : null, AUDNZD: cross('AUD', 'NZD'),
       CADJPY: R.JPY ? +(R.JPY / R.CAD).toFixed(5) : null, CHFJPY: R.JPY ? +(R.JPY / R.CHF).toFixed(5) : null,
       EURCHF: cross('EUR', 'CHF'), GBPCHF: cross('GBP', 'CHF'), AUDCAD: cross('AUD', 'CAD'),
+      // Same five crosses added to YF_SYMBOL above: they cost nothing here (all derived from
+      // the one frankfurter response already in hand) and they give refFor() a fallback anchor
+      // so a proposal on one of them is validated rather than failed closed.
+      EURCAD: cross('EUR', 'CAD'), GBPCAD: cross('GBP', 'CAD'), NZDCAD: cross('NZD', 'CAD'),
+      EURNZD: cross('EUR', 'NZD'), GBPNZD: cross('GBP', 'NZD'),
     };
   } catch { return null; }
 }
@@ -407,6 +576,128 @@ function bookView(book) {
     }),
   };
 }
+
+// ================= CURRENCY EXPOSURE / CORRELATION (audit finding 2) =================
+// The dupe gate only ever compared WHOLE PAIRS (`openPairs.includes(normPair(i.pair))`), so a
+// proposed long GBPJPY sailed through while the book was already long GBPUSD and long GBPAUD —
+// three bets on the same currency read as three "fresh" ideas. Correlation was mentioned four
+// times in the prompt and enforced nowhere, and the model was never even shown the book's net
+// currency posture: it got a semicolon-joined list of position rows and a 15-word field to
+// summarise the risk in.
+//
+// A forex position is two currency bets, not one. BUY GBPJPY is long GBP AND short JPY. Netting
+// those legs across the book is what turns a list of rows into a risk picture.
+function currencyExposure(positions) {
+  const exp = {};
+  for (const p of positions || []) {
+    const pr = normPair(p.pair);
+    if (pr.length < 6) continue;
+    const dir = (p.direction || '').toUpperCase();
+    if (dir !== 'BUY' && dir !== 'SELL') continue;
+    const lots = Math.abs(num(p.lots) ?? 0);
+    if (!lots) continue;
+    const s = dir === 'BUY' ? 1 : -1;
+    const base = pr.slice(0, 3), quote = pr.slice(3, 6);
+    exp[base] = +((exp[base] || 0) + s * lots).toFixed(4);
+    exp[quote] = +((exp[quote] || 0) - s * lots).toFixed(4);
+  }
+  return exp;
+}
+// Human-readable posture line for the prompt. States the net side of every currency the book
+// actually touches, so "you are long GBP three ways" is visible rather than inferable.
+function exposureLine(exp) {
+  const rows = Object.entries(exp || {}).filter(([, v]) => Math.abs(v) > 1e-9)
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  if (!rows.length) return 'FLAT — no currency exposure on the book';
+  return rows.map(([c, v]) => `${v > 0 ? 'LONG' : 'SHORT'} ${c} ${Math.abs(v).toFixed(2)} lots`).join(', ');
+}
+// Does this proposed idea STACK onto risk the book already carries?
+// Returns the legs that add to an existing same-sign exposure. `heavy` means the stack is
+// material enough to be sent back for a genuinely fresh idea rather than merely annotated:
+// either BOTH legs stack (the proposal is a near-duplicate of the book's posture), or one leg
+// more than doubles an existing exposure.
+function correlationCheck(idea, exp) {
+  const p = normPair(idea && idea.pair);
+  const dir = (idea && idea.direction || '').toUpperCase();
+  const lots = Math.abs(num(idea && idea.lots) ?? 0) || 0;
+  if (p.length < 6 || (dir !== 'BUY' && dir !== 'SELL')) return { stacked: [], heavy: false };
+  const s = dir === 'BUY' ? 1 : -1;
+  const legs = [[p.slice(0, 3), s], [p.slice(3, 6), -s]];
+  const stacked = [];
+  for (const [ccy, sign] of legs) {
+    const existing = (exp || {})[ccy] || 0;
+    if (Math.abs(existing) < 1e-9) continue;
+    if (Math.sign(existing) !== sign) continue; // opposite side: this REDUCES risk, not stacks it
+    const adding = lots || 0;
+    stacked.push({
+      ccy,
+      side: sign > 0 ? 'LONG' : 'SHORT',
+      existing: +Math.abs(existing).toFixed(2),
+      adding: +adding.toFixed(2),
+      combined: +(Math.abs(existing) + adding).toFixed(2),
+    });
+  }
+  // "more than doubles" is only a meaningful test when we know the proposed size; when lots are
+  // missing we fall back to the both-legs test alone rather than inventing a magnitude.
+  const doubles = stacked.some((x) => x.adding > 0 && x.adding >= x.existing);
+  return { stacked, heavy: stacked.length >= 2 || doubles };
+}
+
+// ================= MARGIN ARITHMETIC (audit finding 3) =================
+// The SIZING DOCTRINE states a "HARD FLOOR: projected margin level must stay above 150%" and
+// asks the model to compute it. Nothing checked the answer. checkLevels validated entry/TP/SL
+// geometry down to the pip and never looked at `lots` or `vitals` at all — so the one number
+// that decides whether a trade can blow up the account was the only one taken on trust, at a
+// moment when the live book is sitting at MARGIN AMBER.
+//
+// Leverage is ~1:20, calibrated against the observed figure already documented in the prompt:
+// 0.10 lots EURUSD consumes ~$570 of margin. 100_000 * 0.10 * 1.14 / 20 = $570. Checks out.
+const LEVERAGE = 20;
+const CONTRACT = 100000;
+// USD value of one unit of a currency, from whatever price data we hold.
+function usdPerUnit(ccy, rates, live) {
+  if (ccy === 'USD') return 1;
+  const direct = refFor(ccy + 'USD', rates, live);   // e.g. EURUSD -> USD per EUR
+  if (direct) return direct;
+  const inverse = refFor('USD' + ccy, rates, live);  // e.g. USDJPY -> JPY per USD
+  if (inverse) return 1 / inverse;
+  return null;
+}
+// Margin consumed by `lots` of `pair`, in account currency (USD). Null when we cannot price the
+// base currency — and null must never be read as "free".
+function estMarginUSD(pair, lots, rates, live) {
+  const p = normPair(pair);
+  const l = Math.abs(num(lots) ?? 0);
+  if (p.length < 6 || !l) return null;
+  const u = usdPerUnit(p.slice(0, 3), rates, live);
+  if (!u || !Number.isFinite(u) || u <= 0) return null;
+  return +((CONTRACT * l * u) / LEVERAGE).toFixed(2);
+}
+// Projected margin level (%) if `addMargin` of new margin is taken on. Mirrors the broker's own
+// equity / margin-in-use * 100.
+function projectedMarginLevel(vitals, addMargin) {
+  const equity = num(vitals && vitals.equity);
+  const inUse = num(vitals && vitals.margin) ?? 0;
+  if (equity == null || addMargin == null) return null;
+  const denom = inUse + addMargin;
+  if (!(denom > 0)) return null;
+  return +((equity / denom) * 100).toFixed(1);
+}
+const MARGIN_FLOOR_PCT = 150;   // hard floor from the doctrine; below this a proposal is refused
+const MARGIN_PREFER_PCT = 200;  // preferred level if BOTH ideas were taken together
+// VITALS FRESHNESS. The engine already refuses to call a PRICE live at 6h old; margin and
+// equity were rendered into the prompt with no age at all, so a week-old sync would size
+// tonight's trades in silence. Same gate, same reasoning: we cannot verify a floor we cannot
+// currently measure, so unverifiable is reported as unverifiable rather than passed.
+const VITALS_FRESH_MS = 6 * 3600 * 1000;
+function vitalsAge(vitals) {
+  const ts = vitals && vitals.ts ? Date.parse(vitals.ts) : NaN;
+  if (!Number.isFinite(ts)) return { known: false, fresh: false, ageMs: null, label: 'never synced' };
+  const ageMs = Date.now() - ts;
+  const fresh = ageMs >= 0 && ageMs <= VITALS_FRESH_MS;
+  return { known: true, fresh, ageMs, label: fresh ? `synced ${Math.round(ageMs / 60000)}m ago` : `⚠ STALE, last synced ${Math.round(ageMs / 3600000)}h ago` };
+}
+
 // Normalise an outlet name to its publisher FAMILY, so two feeds from the same publisher
 // (e.g. "ForexLive" and "ForexLive CB") count as ONE independent source, not two. Used by
 // the convergence gate to prevent same-publisher syndication from faking convergence.
@@ -458,13 +749,128 @@ function pasteRow(cells) { return cells.map((c) => (c ?? '')).join('\t'); }
 // ---------- Prompts ----------
 function deskContext(t, book, lessons, vitals, rates) {
   const bv = bookView(book);
+  // Vitals are now stamped with their AGE. A margin level with no timestamp reads as current
+  // whatever its true age, and sizing decisions were being made against it.
+  const va = vitalsAge(vitals);
+  // Net currency posture across the whole book, so stacked same-currency risk is VISIBLE rather
+  // than something the model has to re-derive from a list of rows.
+  const exp = currencyExposure(bv.positions);
   return `CONTEXT
 Now (Bangkok): ${t.dmy} ${t.weekday} ${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')}
-Account vitals: ${vitals ? `balance ${vitals.balance}, equity ${vitals.equity}, margin in use ${vitals.margin ?? 'n/a'}, free margin ${vitals.freeMargin ?? 'n/a'}, margin level ${vitals.marginLevel}%` : 'not yet synced'}
+Account vitals (${va.label}): ${vitals ? `balance ${vitals.balance}, equity ${vitals.equity}, margin in use ${vitals.margin ?? 'n/a'}, free margin ${vitals.freeMargin ?? 'n/a'}, margin level ${vitals.marginLevel}%` : 'not yet synced'}${vitals && !va.fresh ? '\n  ⚠ These vitals are STALE. Treat every margin figure below as unverified and size conservatively; the desk will not certify a margin floor it cannot currently measure.' : ''}
 Open book: ${bv.positions.length ? bv.positions.map((p) => `${p.pair} ${p.direction} ${p.lots} lots @ ${p.entry}, SL ${p.sl || 'none'}, TP ${p.tp || 'none'}, floating ${p.floating ?? '?'}, held ${p.daysHeld}d [${p.ageFlag}]`).join('; ') : 'FLAT, no open positions'}
+NET CURRENCY EXPOSURE (both legs of every open pair, netted — this is the risk you actually carry): ${exposureLine(exp)}
 Reference rates (ECB daily, ${rates?.asOf || 'n/a'}): ${rates ? Object.entries(rates).filter(([k]) => k !== 'asOf').map(([k, v]) => `${k} ${v}`).join(', ') : 'unavailable'}
 Lessons archive (scar tissue, most recent first):
 ${lessons.slice(-12).reverse().map((l) => `- ${l.text} (${l.date})`).join('\n') || '- none yet'}`;
+}
+
+// ================= THE IDEA GATE =================
+// Every check that decides whether a proposal is safe to show runs through auditIdeaAgainst().
+// Before this, only two existed — repeat/open exposure and level geometry — while correlation
+// and the margin floor were requested in the prompt and verified nowhere. The two checks that
+// actually bound RISK were the two taken on trust, on an account already at margin amber.
+//
+// Findings split into BLOCKING (send it back and ask for a different idea) and WARNINGS (show
+// it, but say what is wrong and cap the conviction). The distinction matters: blocking a
+// thin-but-honest idea just produces an empty screen, while showing an unverifiable one at full
+// conviction is how a margin call happens. A cap can only ever LOWER what the model claimed.
+//
+// LIVES AT MODULE SCOPE, NOT INSIDE actIdeas, for the reason pairGuard() already documents in
+// this file: a gate that cannot be reached from a test gets tested by a hand-copied duplicate,
+// and the duplicate keeps passing long after the shipped code has drifted away from it. `ctx`
+// carries everything the gate needs — {banned, openPairs, exposure, vitals, vitalsUsable, vAge,
+// rates, live, cal} — so the suite can drive the real thing with constructed inputs.
+const CONVICTION_RUNG = { LOW: 0, MED: 1, 'MED-HIGH': 2, HIGH: 3 };
+
+// Which FX session is actually live at a given Bangkok hour. Module scope so the suite can
+// assert the mapping against real session times rather than trusting prose that was wrong.
+// Bangkok is UTC+7; see the derivation table at the sessionBrief call site.
+function sessionPhase(hour) {
+  if (hour >= 5 && hour < 15) return 'asian';     // 22:00-08:00 UTC — Sydney/Tokyo, London shut
+  if (hour >= 15 && hour < 20) return 'european'; // 08:00-13:00 UTC — London open, pre-US
+  if (hour >= 20) return 'overlap';               // 13:00-17:00 UTC — London/NY, deepest
+  return 'newyork';                               // 17:00-22:00 UTC — NY afternoon, London shut
+}
+
+function ideaIsDupe(i, ctx) {
+  const p = normPair(i && i.pair);
+  return ctx.banned.has(p + '|' + (i && i.direction)) || ctx.openPairs.includes(p);
+}
+
+function auditIdeaAgainst(i, ctx, nowMs = Date.now()) {
+  const a = { blocking: [], warnings: [], cap: null, margin: null, correlation: null, catalyst: null, redFolder: null };
+  const capTo = (c) => { if (a.cap == null || CONVICTION_RUNG[c] < CONVICTION_RUNG[a.cap]) a.cap = c; };
+
+  // 1) repeat / already-open exposure
+  if (ideaIsDupe(i, ctx)) a.blocking.push(`${i.pair} ${i.direction} repeats recent or open exposure`);
+
+  // 2) levels — including the unanchored case, which used to pass silently
+  const lc = checkLevels(i, refFor(i.pair, ctx.rates, ctx.live));
+  a.level = lc;
+  if (!lc.ok) {
+    a.blocking.push(`${i.pair} ${i.direction}: ${lc.reason}`);
+    if (lc.unanchored) capTo('LOW');
+  }
+
+  // 3) CORRELATION against the book's real currency posture
+  const corr = correlationCheck(i, ctx.exposure);
+  a.correlation = corr;
+  if (corr.stacked.length) {
+    const desc = corr.stacked.map((x) => `${x.side} ${x.ccy} (book ${x.existing} + ${x.adding} = ${x.combined} lots)`).join(', ');
+    if (corr.heavy) a.blocking.push(`${i.pair} ${i.direction} stacks existing risk: ${desc}`);
+    else { a.warnings.push(`Stacks onto existing ${desc}. This is a bigger bet on a currency you already hold, not fresh risk.`); capTo('MED'); }
+  }
+
+  // 4) MARGIN FLOOR, recomputed in code from the live vitals rather than trusted from prose
+  const est = estMarginUSD(i.pair, i.lots, ctx.rates, ctx.live);
+  const projected = ctx.vitalsUsable ? projectedMarginLevel(ctx.vitals, est) : null;
+  a.margin = { estUSD: est, projectedPct: projected, floor: MARGIN_FLOOR_PCT, verified: projected != null };
+  if (projected != null) {
+    if (projected < MARGIN_FLOOR_PCT) a.blocking.push(`${i.pair} at ${i.lots} lots projects margin level ${projected}%, below the ${MARGIN_FLOOR_PCT}% floor`);
+  } else {
+    // Cannot verify => do not certify. Stale or missing vitals, or a base currency we cannot
+    // price, all land here. Capping is the honest response: the desk says "unverified" rather
+    // than either blocking a possibly-fine trade or blessing a possibly-fatal one.
+    const why = !ctx.vitals ? 'no account vitals synced yet'
+      : (ctx.vAge && !ctx.vAge.fresh) ? `vitals are stale (${ctx.vAge.label})`
+      : est == null ? 'could not price this pair to estimate margin'
+      : 'equity missing from vitals';
+    a.warnings.push(`Margin floor UNVERIFIED: ${why}. Size this yourself before taking it.`);
+    capTo('MED');
+  }
+
+  // 5) RED FOLDER — an imminent high-impact print on either leg
+  const rf = redFolderImminent(ctx.cal, i.pair, RED_FOLDER_GUARD_MIN, nowMs);
+  if (rf) {
+    a.redFolder = rf;
+    const declared = !!(i.catalyst && String(i.catalyst.stance || '').toUpperCase() !== 'NONE'
+      && resolveCatalyst(i.catalyst, [rf], i.pair));
+    if (!declared) {
+      a.blocking.push(`${i.pair} walks blind into ${rf.ccy} ${rf.title} at ${rf.when} (High impact, inside ${RED_FOLDER_GUARD_MIN}min) without naming it as the catalyst`);
+    } else {
+      a.warnings.push(`Positioned across ${rf.ccy} ${rf.title} at ${rf.when} — a High-impact print inside the hour. The direction of that print is not knowable.`);
+      capTo('MED');
+    }
+  }
+
+  // 6) CATALYST resolution — verify the claim against the calendar we actually supplied
+  const stance = String((i.catalyst && i.catalyst.stance) || 'NONE').toUpperCase();
+  if (stance !== 'NONE') {
+    const real = resolveCatalyst(i.catalyst, ctx.cal, i.pair);
+    if (!real) {
+      a.warnings.push(`Catalyst "${(i.catalyst && i.catalyst.event) || '?'}" does not match any High/Medium event on this pair's currencies in the calendar. Treat the event anchor as unverified.`);
+      capTo('MED');
+    } else {
+      const hoursOut = (real.utc - nowMs) / 3600e3;
+      a.catalyst = { event: real.title, ccy: real.ccy, when: real.when, utc: real.utc, impact: real.impact, stance, hoursOut: +hoursOut.toFixed(1), insideWindow: hoursOut <= HORIZON.ceilingHours };
+      if (!a.catalyst.insideWindow) {
+        a.warnings.push(`Catalyst ${real.title} lands in ${Math.round(hoursOut)}h, past this trade's ${HORIZON.ceilingDays}-day ceiling — the position would be closed before its own catalyst fires.`);
+        capTo('MED');
+      }
+    }
+  }
+  return a;
 }
 
 // ---------- Actions ----------
@@ -518,13 +924,19 @@ async function actIdeas(force) {
     .map((r) => normPair(r.idea.pair) + '|' + r.idea.direction));
   const openPairs = s.book.positions.map((p) => normPair(p.pair));
 
-  // Shadow book tracking: resolve passed ideas across a proper 3-day window.
+  // Shadow book tracking: resolve passed ideas across the idea's own permitted life.
   // Each generation we append today's reference price to the idea's trail, then check
   // whether the TP or SL level was reached by any daily mark within the window.
   // Honest limitation: daily closes only, so a verdict is a well-founded estimate,
   // not a tick-perfect certainty. Labelled as such.
+  //
+  // HORIZON ALIGNMENT (audit finding 13): this window was a hardcoded 3 days while the generator
+  // was building 1-day ideas, so the learning loop graded every idea over three times the life
+  // the idea was actually given — and then fed that verdict back into the prompt as guidance.
+  // It now derives from the same HORIZON block the generator uses, so an idea is judged over
+  // exactly the life it was permitted: propose for 2-3 days, grade at the 4-day ceiling.
   const graded = [];
-  const WINDOW_MS = 3 * 86400e3;
+  const WINDOW_MS = HORIZON.ceilingDays * 86400e3;
   for (const rec of s.ledger) {
     if (rec.status !== 'passed' || rec.shadowResolved) continue;
     const px = refFor(rec.idea.pair, rates);
@@ -551,7 +963,7 @@ async function actIdeas(force) {
       // neither hit in 3 days: judge by final direction vs entry, marked as a soft call
       const moved = dir === 'BUY' ? px > entry : px < entry;
       rec.shadowResolved = true;
-      rec.shadowVerdict = { grade: moved ? 'SOFT_WIN' : 'SOFT_LOSS', note: 'neither level reached in 3d; graded on final drift', resolvedOn: t.dmy };
+      rec.shadowVerdict = { grade: moved ? 'SOFT_WIN' : 'SOFT_LOSS', note: `neither level reached inside the ${HORIZON.ceilingDays}d ceiling; graded on final drift`, resolvedOn: t.dmy };
     }
     // else: still open, leave unresolved for next generation
 
@@ -573,19 +985,33 @@ async function actIdeas(force) {
         ? Object.entries(rates).filter(([k]) => k !== 'asOf' && rates[k] != null).map(([k, v]) => `${k} ${v} (⚠ daily ref, not live)`).join(', ')
         : 'live prices unavailable, be conservative');
 
-  // session awareness: the desk is used both at the 21:20 night session and in the
-  // The desk is used at any hour, so read the actual clock and tailor the brief to the
-  // three genuine phases of the global forex day rather than a rigid morning/night split.
-  const phase = t.hour >= 5 && t.hour < 11 ? 'morning'
-    : t.hour >= 11 && t.hour < 17 ? 'day'
-    : 'evening';
+  // ---------- SESSION AWARENESS (corrected BKK <-> session mapping) ----------
+  // The previous three buckets were factually WRONG at both edges, and the brief confidently
+  // asserted the wrong thing to the model. "DAYTIME" began at 11:00 BKK claiming "London
+  // liquidity is deep" — London opens 08:00 UTC, which is 15:00 BKK, so for its first four
+  // hours that bucket described a market that was shut. "EVENING" was a TWELVE-hour bucket
+  // (17:00-05:00 BKK) claiming to sit "around the London/New York overlap" with "US data
+  // typically settled by now" — at its 17:00 BKK start that is 10:00 UTC, London mid-morning,
+  // and the US data it declared settled had not printed yet (NFP/CPI land 12:30-13:30 UTC,
+  // i.e. 19:30-20:30 BKK).
+  //
+  // Bangkok is UTC+7. The real sessions, converted once, here:
+  //   Sydney  22:00-07:00 UTC -> 05:00-14:00 BKK
+  //   Tokyo   00:00-09:00 UTC -> 07:00-16:00 BKK
+  //   London  08:00-17:00 UTC -> 15:00-00:00 BKK
+  //   New York 13:00-22:00 UTC -> 20:00-05:00 BKK
+  //   London/NY overlap 13:00-17:00 UTC -> 20:00-24:00 BKK  (the deepest window)
+  //   Top-tier US data (NFP, CPI) 12:30-13:30 UTC -> 19:30-20:30 BKK
+  const phase = sessionPhase(t.hour);
   const clockStr = `${String(t.hour).padStart(2, '0')}:${String(t.minute).padStart(2, '0')} BKK`;
   const sessionBrief =
-    phase === 'morning'
-      ? `MORNING (${clockStr}). The active markets now are the Asian session (Tokyo, Sydney, Singapore) rolling into the European open. Do NOT default to US-session dollar pairs whose catalysts have already passed overnight. Hunt where the liquidity and news flow actually are right now: JPY crosses, AUD and NZD (RBA/RBNZ, Chinese data, commodities), EUR and GBP as Europe wakes. Build a one-day trade around today's Asian/European catalysts, not last night's New York move.`
-      : phase === 'day'
-      ? `DAYTIME (${clockStr}). The European session is in full flow, London liquidity is deep, and the US pre-market is stirring. Hunt EUR, GBP, CHF and the European crosses where the action genuinely is, and mind any US data due in the coming hours that could reprice the dollar. Build the trade around what is live now, not a stale overnight story.`
-      : `EVENING (${clockStr}), around the London/New York overlap, the most liquid and directional window of the day. US data has typically settled by now; trade the genuine trend of the session and mind late US releases that could still move things.`;
+    phase === 'asian'
+      ? `ASIAN SESSION (${clockStr}). Sydney and Tokyo are the live markets; London is SHUT and does not open until 15:00 BKK. Liquidity is thinner, ranges are narrower, and spreads on the European crosses are wider than they will be later. Hunt where the flow genuinely is now: JPY crosses, AUD and NZD (RBA/RBNZ, Chinese data, commodities). You may absolutely build a EUR or GBP idea, but be honest that its catalyst is still hours away and price the entry accordingly rather than pretending Europe is trading.`
+      : phase === 'european'
+      ? `EUROPEAN SESSION (${clockStr}). London is open and liquidity is deepening; New York has NOT opened yet (20:00 BKK) and the top-tier US releases have NOT printed yet (NFP/CPI land 19:30-20:30 BKK). Hunt EUR, GBP, CHF and the European crosses where the action genuinely is. If US data is due in the next few hours, say explicitly whether the idea is positioned INTO it or clear of it — do not write as though it has already happened.`
+      : phase === 'overlap'
+      ? `LONDON / NEW YORK OVERLAP (${clockStr}). Both books are open — the deepest, most directional and tightest-spread window of the day, and the one that carries a ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day position best. The main US releases have typically printed by now, so the dollar's reaction is readable rather than pending. Trade the genuine trend of the session; mind any late US release still to come.`
+      : `NEW YORK AFTERNOON (${clockStr}). London has closed and New York is running down toward its own close at 05:00 BKK. Liquidity is thinning and late moves here are often position-squaring rather than genuine direction, so treat a sharp move with suspicion. Entries set now will sit through the quiet Asian handover — size the stop for that gap rather than for the range you can see on the screen right now.`;
 
   const prompt = `You are the ideas engine of THE TERMINAL, the forex desk of a retail trader in Phuket (broker: Phillip MT5). He trades at any hour he chooses, morning, day or evening, whenever opportunity calls. Typical sizing 0.02-0.10 lots. Account is small; capital preservation beats bravado.
 
@@ -593,8 +1019,9 @@ ${sessionBrief}
 
 ${deskContext(t, s.book, s.lessons, s.book.vitals, rates)}
 
-LIVE REFERENCE PRICES + VOLATILITY (anchor EVERY level to these; entries must sit within ~0.5% of the LIVE price, not at invented round numbers. Where a pair shows a daily ATR, size the stop RELATIVE to it — a one-day stop is typically ~0.6-1.2x the daily ATR: tighter than ATR gets stopped by normal noise, much wider than ATR risks too much. Do NOT use a hardcoded pip count when a real ATR is shown):
+LIVE REFERENCE PRICES + VOLATILITY (anchor EVERY level to these; entries must sit within ~1% of the LIVE price, not at invented round numbers. Where a pair shows a daily ATR, size the stop RELATIVE to it — a ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day stop is typically ~1.5-2.5x the DAILY ATR, because the position must survive two or three sessions of noise, not one. A stop sized for a single day will be taken out by ordinary chop long before the thesis resolves. Do NOT use a hardcoded pip count when a real ATR is shown):
 ${priceBlock}
+IF A PAIR IS NOT PRICED ABOVE, DO NOT PROPOSE IT. Its levels cannot be verified against the market and the desk will refuse them.
 
 Recent AAR verdicts:
 ${recentAAR || '- none yet'}
@@ -607,8 +1034,8 @@ ${(s.guidance || []).map((g) => `- ${g.text}${g.basis ? ' [' + g.basis + ']' : '
 IDEA HISTORY, last 7 days (for freshness, not repetition):
 ${historyLines}
 
-ECONOMIC CALENDAR, next 48h, High/Medium impact, Bangkok times (validated Forex Factory data):
-${calLines(cal)}
+ECONOMIC CALENDAR — High/Medium impact, grouped BY CURRENCY, covering the full ${HORIZON.ceilingDays}-day hold window and two days beyond it (an event landing just past the ceiling is a reason to plan an earlier exit, so it is shown deliberately), Bangkok times (validated Forex Factory data; these ARE the forex catalysts):
+${calByCurrency(cal)}
 
 Tonight's forex news wire (sources that actually delivered this run — ${liveSourceLine(news)}):
 ${digest(news, 30)}
@@ -616,60 +1043,104 @@ ${digest(news, 30)}
 PATTERN DESK — real trader setups from TradingView, per pair (technical/chart-pattern context to weigh ALONGSIDE the news; these are crowd ideas, not gospel, but they show where technical attention sits):
 ${patternDigest}
 
-TASK: Propose exactly 2 short-term ideas built as ONE-DAY positions: opened tonight, targeted to close within ~24h, 48h absolute ceiling.
+TASK: Propose exactly 2 INTERDAY ideas: opened now, intended to work over ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} DAYS, with a ${HORIZON.ceilingDays}-day absolute ceiling. This is his actual trading rhythm — he is not a day-trader and does not scalp. Build theses that need two or three sessions to play out and levels with the room to survive that long. Do NOT propose a trade whose whole life is a single session, and do NOT propose one that needs a fortnight.
 
 TRAWL HARD, NEVER SHRUG (critical): Your job is to find the two best genuine opportunities anywhere on the board, and you must always work hard to find them. Before concluding anything, survey the FULL universe of liquid pairs, not just the obvious dollar majors: the majors (EURUSD, GBPUSD, USDJPY, USDCHF, AUDUSD, NZDUSD, USDCAD) AND the liquid crosses (EURGBP, EURJPY, GBPJPY, EURAUD, AUDJPY, NZDJPY, AUDNZD, CADJPY, CHFJPY, EURCHF, GBPCHF, AUDCAD). Read the whole news wire below, weigh the calendar, consider each session's active markets, and hunt for where genuine opportunity actually is tonight. Rotate your hunting ground across sessions; do not keep returning to the same two pairs. Laziness is not permitted: "nothing to do" is only acceptable AFTER a real search of the whole board, never as a first resort. There is almost always a reasonable setup somewhere in a universe this large.
 
 HONESTY STILL HOLDS: trawling hard means finding the best genuine setups, NOT inflating their conviction. Always surface your two best finds, but rate each one's conviction truthfully (see the conviction rule below). Working hard and rating honestly are both required: relentless effort, honest grading. Rules:
 
 SIZING DOCTRINE (aggressive, margin-bounded):
-- These are one-day trades, so size them as AGGRESSIVELY as the margin arithmetic honestly allows. Do not default to timid clips when headroom is generous; equally, never let bravado outrun the maths.
+- Size these as AGGRESSIVELY as the margin arithmetic honestly allows. Do not default to timid clips when headroom is generous; equally, never let bravado outrun the maths. Note a ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day hold ties the margin up for the WHOLE of that window, so the headroom you consume is not returned by tonight's close.
 - Account leverage is approximately 1:20 (observed live: 0.10 lots EURUSD consumes ~$570 of margin; scale by notional for other pairs and lot sizes).
-- For EACH idea, compute the projected margin level if taken = equity / (current margin in use + estimated new margin) x 100. HARD FLOOR: projected margin level must stay above 150%. Prefer above 200% if BOTH ideas were taken together. State the projected figure explicitly in sizing_note.
+- For EACH idea, compute the projected margin level if taken = equity / (current margin in use + estimated new margin) x 100. HARD FLOOR: projected margin level must stay above ${MARGIN_FLOOR_PCT}%. Prefer above ${MARGIN_PREFER_PCT}% if BOTH ideas were taken together. State the projected figure explicitly in sizing_note. THIS IS RECOMPUTED IN CODE FROM THE LIVE VITALS AFTER YOU RESPOND: a lot size that breaches the floor is rejected outright, so do the arithmetic properly rather than asserting a comfortable number.
 - Account for ACTIVE trades: margin already committed and correlation with open pairs both shrink the honest maximum. If the book is already heavy, say so plainly and size down; aggression means maximum JUSTIFIED size, not reckless size.
 - FRESHNESS IS MANDATORY: do NOT propose any pair+direction combo from the idea history above that appeared in the last 3 days, unless a specific NEW named catalyst justifies it (name it explicitly in the thesis). Rotate the hunting ground; the market has dozens of pairs.
 - NEVER propose a pair that is already open in the book: that is adding, not a fresh idea.
-- Anchor at least one idea to the calendar above: trade the setup around a specific scheduled event, or explicitly position clear of it, and say which.
+- CORRELATION IS RISK, AND IT IS CHECKED IN CODE. Read the NET CURRENCY EXPOSURE line above. A forex position is TWO currency bets: BUY GBPJPY is long GBP and short JPY. Proposing a new trade whose legs push the SAME WAY as exposure the book already carries is not a fresh idea, it is doubling an existing bet — and it is exactly how a correlated book gets margin-called on one bad print. If the book is already long GBP, a long GBPJPY stacks it. Prefer ideas whose legs are genuinely uncorrelated with the posture above, or that actively offset it. Any stacking that remains must be stated plainly in correlation_note; a proposal that stacks BOTH legs, or that more than doubles an existing currency exposure, will be REJECTED and sent back.
+- CATALYST (required field): every idea must carry a "catalyst" object. If the thesis is anchored to a scheduled event, name it EXACTLY as it appears in the calendar above, give its Bangkok time, and set stance to TRADE_INTO (deliberately positioned for the event) or POSITION_CLEAR (deliberately sized/timed to avoid it). If the thesis genuinely rests on flow or technicals rather than a scheduled event, set stance NONE and say what the driver is instead — do not invent an event to fill the field. At least ONE of the two ideas must be genuinely event-anchored. Your catalyst claim is matched back against the real calendar in code; an event that is not on it will be flagged.
+- YOU MAY NOT WALK BLIND INTO A PRINT. If a High-impact event for either of a pair's currencies lands within the next ${RED_FOLDER_GUARD_MIN} minutes, you must either name that event as the idea's catalyst (stance TRADE_INTO or POSITION_CLEAR) or choose a different pair. This is enforced in code: an unacknowledged imminent print rejects the idea.
 - BREVITY, telegram style, zero filler: thesis max 40 words; risks max 25; sizing_note max 25; correlation_note max 15; desk_note max 50 words naming the session's single priority.
 - CONVICTION HONESTY: rate conviction on a four-rung scale, LOW, MED, MED-HIGH, HIGH. Reserve MED-HIGH and HIGH for setups with genuine convergence: a clear catalyst, multiple sources agreeing, and clean levels. Do NOT inflate conviction to seem useful. If the honest read is that nothing tonight clears MED-HIGH, say so in desk_note and mark the ideas at their true lower conviction. A quiet, honest LOW night is more valuable to him than a falsely confident one.
-- Never duplicate or heavily correlate with open book exposure; if any correlation exists, state it in correlation_note.
-- ${t.isFriday ? 'It is FRIDAY: intraday-only ideas, nothing planned to hold over the weekend gap.' : 'Respect the 48h horizon.'}
+- ${t.isFriday ? `It is FRIDAY. A ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day hold opened now WILL sit through the weekend gap. Either state explicitly that the thesis survives the weekend and size for gap risk, or propose something intended to close before the Friday bell — say which, and do not leave it ambiguous.` : `Respect the ${HORIZON.ceilingDays}-day ceiling.`}
 - Estimate margin cost at suggested lots and sanity-check against free margin.
-- Prefer R:R of at least 1.5. LEVEL DISCIPLINE (critical, every number is validated after you respond): entry_zone must sit within ~0.5% of the live reference price. SL and TP on the correct sides (BUY: SL below entry, TP above; SELL: SL above, TP below). Stop distance must be sane for a one-day trade: roughly 15-70 pips on majors, never tighter than ~8 pips (noise will stop it) nor wider than ~150 pips. Size levels to recent volatility, NOT arbitrary round numbers. Every level must share the pair's order of magnitude (e.g. NZDUSD levels are ~0.56xx, never 1.5xxx). Double-check each number against the live price before finalising.
+- Prefer R:R of at least 1.5. LEVEL DISCIPLINE (critical, every number is validated after you respond): entry_zone must sit within ~1% of the live reference price. SL and TP on the correct sides (BUY: SL below entry, TP above; SELL: SL above, TP below). Stop distance must be sane for a ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} DAY trade: typically 40-150 pips on majors, never tighter than ~${HORIZON.minStopPips} pips (two days of noise will take it out) nor wider than ~${HORIZON.maxStopPips} pips. Size levels to recent volatility, NOT arbitrary round numbers. Every level must share the pair's order of magnitude (e.g. NZDUSD levels are ~0.56xx, never 1.5xxx). Double-check each number against the live price before finalising.
 - Weigh the lessons archive; do not repeat known mistakes.
 
 Respond ONLY with JSON, no markdown:
-{"ideas":[{"pair":"EUR/USD","direction":"BUY|SELL","entry_zone":"1.1440-1.1455","tp":"1.1520","sl":"1.1400","lots":"0.05","horizon":"one-day (close within 24h)","conviction":"LOW|MED|MED-HIGH|HIGH","thesis":"...","sources":[{"outlet":"the publication name EXACTLY as tagged in the wire above, e.g. ForexLive, FXStreet, ActionForex, Reuters","point":"the specific claim from that outlet that supports this idea"}],"risks":"...","sizing_note":"why THIS lot size: the margin arithmetic, projected margin level if taken, and what capped or freed the size","correlation_note":"..."}],"stand_down":false,"desk_note":"one-paragraph read of the session"}
+{"ideas":[{"pair":"EUR/USD","direction":"BUY|SELL","entry_zone":"1.1440-1.1455","tp":"1.1520","sl":"1.1400","lots":"0.05","horizon":"${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day interday","conviction":"LOW|MED|MED-HIGH|HIGH","thesis":"...","catalyst":{"event":"the event title EXACTLY as written in the calendar above, or null if stance is NONE","when":"the Bangkok time exactly as shown in the calendar, e.g. Thu 19:30 BKK, or null","ccy":"which currency the event belongs to","stance":"TRADE_INTO|POSITION_CLEAR|NONE","note":"if stance is NONE, the non-event driver in max 12 words"},"sources":[{"outlet":"the publication name EXACTLY as tagged in the wire above, e.g. ForexLive, FXStreet, ActionForex, Reuters","point":"the specific claim from that outlet that supports this idea"}],"risks":"...","sizing_note":"why THIS lot size: the margin arithmetic, projected margin level if taken, and what capped or freed the size","correlation_note":"how this sits against the NET CURRENCY EXPOSURE above: which legs stack, which are fresh"}],"stand_down":false,"desk_note":"one-paragraph read of the session"}
 CONVERGENCE RULE (enforced in code, not just requested): MED-HIGH and HIGH conviction REQUIRE at least TWO sources in the "sources" array from DIFFERENT outlets that both appear in the wire above. An idea that cites fewer than two independent wire outlets will be AUTOMATICALLY DOWNGRADED to at most MED, no matter what conviction you write. So only claim MED-HIGH/HIGH when you can genuinely name two or more different outlets from the wire that converge. Do not invent outlets or cite ones not present above.
 Reminder: every price you output is checked against live rates after you respond. An impossible level (wrong magnitude, or SL/TP on the wrong side) will be rejected, so verify each number now.`;
 
   let ideas = await claude(prompt, 2200);
 
-  // combined gate: reject on duplicate/open exposure OR broken levels, retry once
-  const isDupe = (i) => banned.has(normPair(i.pair) + '|' + i.direction) || openPairs.includes(normPair(i.pair));
-  const levelCheck = (i) => checkLevels(i, refFor(i.pair, rates, live));
-  const isBad = (i) => isDupe(i) || !levelCheck(i).ok;
+  // ================= THE GATE =================
+  // Assembles the context the gate needs and runs it. The gate itself, and the reasoning behind
+  // the blocking/warning split, live at module scope on auditIdeaAgainst() so the safety suite
+  // can drive the shipped code directly.
+  const exposure = currencyExposure(s.book.positions || []);
+  const vAge = vitalsAge(s.book.vitals);
+  const vitalsUsable = !!(s.book.vitals && num(s.book.vitals.equity) != null && vAge.fresh);
+  const ctx = { banned, openPairs, exposure, vitals: s.book.vitals, vitalsUsable, vAge, rates, live, cal };
+
+  const isDupe = (i) => ideaIsDupe(i, ctx);
+  const auditIdea = (i) => auditIdeaAgainst(i, ctx);
+  const isBad = (i) => auditIdea(i).blocking.length > 0;
 
   if ((ideas.ideas || []).some(isBad)) {
-    const dupeList = (ideas.ideas || []).filter(isDupe).map((i) => `${i.pair} ${i.direction} (repeat/open)`);
-    const lvlList = (ideas.ideas || []).filter((i) => !isDupe(i) && !levelCheck(i).ok)
-      .map((i) => `${i.pair} ${i.direction}: ${levelCheck(i).reason}`);
+    const rejects = (ideas.ideas || []).flatMap((i) => auditIdea(i).blocking);
     try {
       const second = await claude(prompt +
-        `\n\nREJECTED, fix and resubmit two clean ideas:\n${dupeList.length ? 'Repeat/open exposure: ' + dupeList.join('; ') + '\n' : ''}${lvlList.length ? 'Broken levels (check against the LIVE REFERENCE PRICES above): ' + lvlList.join('; ') : ''}\nBanned pairs+direction tonight: ${[...banned].map((b) => b.replace('|', ' ')).join(', ') || 'none'}. Open book: ${openPairs.join(', ') || 'none'}.`, 2200);
+        `\n\nREJECTED, fix and resubmit two clean ideas. Every reason below is a CODE-ENFORCED gate, not a preference:\n${rejects.map((r) => '- ' + r).join('\n')}\n\nBanned pairs+direction tonight: ${[...banned].map((b) => b.replace('|', ' ')).join(', ') || 'none'}. Open book: ${openPairs.join(', ') || 'none'}. Net currency exposure: ${exposureLine(exposure)}.`, 2200);
       if (second.ideas && !second.ideas.some(isBad)) ideas = second;
     } catch { /* fall through to flagging */ }
-
-    // final safety net: nothing broken reaches the screen unflagged
-    (ideas.ideas || []).forEach((i) => {
-      if (isDupe(i)) i.correlation_note = ((i.correlation_note || '') + ' REPEAT WARNING: overlaps recent or open exposure.').trim();
-      const lc = levelCheck(i);
-      if (!lc.ok) { i.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Do not trade these numbers as-is; confirm on your chart first.`; i.conviction = 'LOW'; }
-      else { i.rr = lc.rr; i.slPips = lc.slPips; i.tpPips = lc.tpPips; }
-    });
-  } else {
-    (ideas.ideas || []).forEach((i) => { const lc = levelCheck(i); i.rr = lc.rr; i.slPips = lc.slPips; i.tpPips = lc.tpPips; });
   }
+
+  // Final annotation pass — runs over WHATEVER survived, first attempt or retry, so nothing
+  // reaches the screen uninspected. This used to sit inside the failure branch only, meaning a
+  // clean first attempt skipped every check but the level one.
+  (ideas.ideas || []).forEach((i) => {
+    const a = auditIdea(i);
+    const lc = a.level;
+    if (lc.ok) { i.rr = lc.rr; i.slPips = lc.slPips; i.tpPips = lc.tpPips; }
+    else {
+      i.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Do not trade these numbers as-is; confirm on your chart first.`;
+      i.conviction = 'LOW';
+    }
+    if (isDupe(i)) i.correlation_note = ((i.correlation_note || '') + ' REPEAT WARNING: overlaps recent or open exposure.').trim();
+    // surface the computed risk facts to the UI rather than leaving them in prose
+    i.marginCheck = a.margin;
+    i.exposureStack = a.correlation && a.correlation.stacked.length ? a.correlation : null;
+    i.catalystResolved = a.catalyst;
+    if (a.redFolder) i.redFolder = { title: a.redFolder.title, ccy: a.redFolder.ccy, when: a.redFolder.when, impact: a.redFolder.impact };
+    // Blocking findings that SURVIVED the retry must be visible, not silently downgraded.
+    if (a.blocking.length) {
+      i.gate_warning = `GATE: ${a.blocking.join(' | ')}. The desk asked for a replacement and did not get a clean one — treat this idea as unsafe as written.`;
+      i.conviction = 'LOW';
+    }
+    if (a.warnings.length) i.risk_flags = a.warnings;
+    // apply the conviction cap last, so it can only ever lower what the model claimed
+    if (a.cap && CONVICTION_RUNG[(i.conviction || '').toUpperCase()] > CONVICTION_RUNG[a.cap]) {
+      i.convictionClaimed = i.convictionClaimed || i.conviction;
+      i.conviction = a.cap;
+      i.conviction_note = [(i.conviction_note || ''), `Capped to ${a.cap} by the risk gate: ${a.warnings.join(' ')}`].filter(Boolean).join(' ');
+    }
+  });
+
+  // COMBINED margin: the floor is checked per-idea above, but he may take BOTH. If the pair of
+  // them together breaches the floor, that is a real breach and neither idea's own figure shows
+  // it — so it is stated once, plainly, at the top.
+  if (vitalsUsable) {
+    const totalMargin = (ideas.ideas || []).reduce((sum, i) => sum + (estMarginUSD(i.pair, i.lots, rates, live) || 0), 0);
+    const combined = projectedMarginLevel(s.book.vitals, totalMargin);
+    ideas.marginIfBothTaken = { estUSD: +totalMargin.toFixed(2), projectedPct: combined, floor: MARGIN_FLOOR_PCT, prefer: MARGIN_PREFER_PCT };
+    if (combined != null && combined < MARGIN_FLOOR_PCT) {
+      ideas.marginWarning = `Taking BOTH ideas would put the margin level at ${combined}%, below the ${MARGIN_FLOOR_PCT}% floor. Take at most one, or size down.`;
+    } else if (combined != null && combined < MARGIN_PREFER_PCT) {
+      ideas.marginWarning = `Taking both leaves the margin level at ${combined}%, under the ${MARGIN_PREFER_PCT}% comfort mark. Workable, but there is little room left for a bad candle.`;
+    }
+  }
+  ideas.exposureBefore = exposure;
+  ideas.vitalsAge = vAge;
   ideas.generatedAt = t.iso;
   ideas.dateKey = t.dateKey;
 
@@ -752,7 +1223,11 @@ Reminder: every price you output is checked against live rates after you respond
   // conviction gating: mark which ideas clear the MED-HIGH bar. Full set is kept for
   // the record and the shadow book; the frontend shows only the qualifying ones.
   const clears = (c) => ['MED-HIGH', 'HIGH'].includes((c || '').toUpperCase());
-  (ideas.ideas || []).forEach((i) => { i.qualifies = clears(i.conviction) && !i.level_warning; });
+  // gate_warning must disqualify as firmly as level_warning does: both mean a code-enforced
+  // check failed and the retry did not produce a clean replacement. Belt and braces — the gate
+  // already forces conviction to LOW in that case, so this is a second lock on the same door
+  // rather than the only one.
+  (ideas.ideas || []).forEach((i) => { i.qualifies = clears(i.conviction) && !i.level_warning && !i.gate_warning; });
   ideas.qualifyingCount = (ideas.ideas || []).filter((i) => i.qualifies).length;
   ideas.session = phase;
   await rSet(key, ideas);
@@ -1099,7 +1574,7 @@ async function actSync(positionsImgs, historyImg) {
         orphan: !takenMatch,
         ideaId: takenMatch ? takenMatch.id : null,
         thesis: takenMatch ? (takenMatch.idea.thesis || 'Taken desk idea (thesis reconnected).') : 'Off-book entry, no engine thesis on record.',
-        proposedHorizon: takenMatch ? (takenMatch.idea.horizon || 'one-day (close within 24h)') : undefined,
+        proposedHorizon: takenMatch ? (takenMatch.idea.horizon || HORIZON.label) : undefined,
         proposedConviction: takenMatch ? (takenMatch.idea.conviction || null) : undefined,
       };
       still.push(orphan);
@@ -1137,8 +1612,8 @@ async function actSync(positionsImgs, historyImg) {
       const heldStr = hoursOpen == null ? 'unknown' : hoursOpen < 24 ? `${hoursOpen.toFixed(1)}h` : `${p.ageDays}d`;
       const relNote = p.openTimeReliable ? '' : ' (held-time estimated since first seen, not from platform open time)';
       let tag = '';
-      if (isLongTerm) tag = ' [LONG-TERM HOLD: judge on the durable multi-week thesis and higher-timeframe trend, NOT one-day noise; only mark BROKEN on a real structural break].';
-      else if (fromDesk && hoursOpen != null && hoursOpen < 20) tag = ` [FRESH DESK-PROPOSED TRADE, opened ${hoursOpen < 1 ? Math.round(hoursOpen * 60) + 'min' : hoursOpen.toFixed(1) + 'h'} ago, well within its ${p.proposedHorizon || 'one-day'} horizon: the desk proposed this itself, so do NOT flip to BROKEN on ordinary intraday noise or a modest adverse move; mark BROKEN only if the specific catalyst it was built on has genuinely reversed or a written invalidation level has actually triggered].`;
+      if (isLongTerm) tag = ' [LONG-TERM HOLD: judge on the durable multi-week thesis and higher-timeframe trend, NOT day-to-day noise; only mark BROKEN on a real structural break].';
+      else if (fromDesk && hoursOpen != null && hoursOpen < HORIZON.freshHours) tag = ` [FRESH DESK-PROPOSED TRADE, opened ${hoursOpen < 1 ? Math.round(hoursOpen * 60) + 'min' : hoursOpen < 36 ? hoursOpen.toFixed(1) + 'h' : (hoursOpen / 24).toFixed(1) + 'd'} ago, early in its ${p.proposedHorizon || HORIZON.label} horizon — a trade on this horizon is SUPPOSED to sit through adverse sessions, so do NOT flip to BROKEN on ordinary noise or a modest adverse move; mark BROKEN only if the specific catalyst it was built on has genuinely reversed or a written invalidation level has actually triggered].`;
       return `${p.pair} ${p.direction} ${p.lots} @ ${p.entry}, now ~${ref ?? '?'}, floating ${p.floating ?? '?'}, held ${heldStr}${relNote}.${tag} ${p.thesis && p.thesis !== 'Off-book entry, no engine thesis on record.' ? 'Thesis on record: ' + p.thesis : 'NO thesis on record (off-book entry): infer the most likely reason a trader took this direction here, then judge it.'}`;
     }).join('\n');
 
@@ -1154,7 +1629,7 @@ TODAY'S ECONOMIC CALENDAR, High/Medium impact, Bangkok times (validated Forex Fa
 ${calLines(cal)}
 Fresh wire (each item source-tagged in [brackets] — sources live this run: ${liveSourceLine(news)}):\n${digest(news, 18)}
 
-For EACH open position, decide a thesis status: HOLDING (original reasoning intact, stay the course), WOBBLING (thesis under strain, watch closely, be ready to act), or BROKEN (the reason for the trade no longer applies, actively consider closing). Ground the verdict in the fresh news, the calendar and the price move since entry. CALIBRATE TO HORIZON: a position tagged FRESH DESK-PROPOSED must not be flipped to BROKEN on ordinary noise minutes after the desk itself proposed it, and a LONG-TERM HOLD must be judged on its durable multi-week thesis, not a one-day wobble. For off-book positions, first infer the likely thesis in one clause, then judge it the same way.
+For EACH open position, decide a thesis status: HOLDING (original reasoning intact, stay the course), WOBBLING (thesis under strain, watch closely, be ready to act), or BROKEN (the reason for the trade no longer applies, actively consider closing). Ground the verdict in the fresh news, the calendar and the price move since entry. CALIBRATE TO HORIZON: a position tagged FRESH DESK-PROPOSED must not be flipped to BROKEN on ordinary noise minutes after the desk itself proposed it, and a LONG-TERM HOLD must be judged on its durable multi-week thesis, not a single session's wobble. A position inside its ${HORIZON.label} life is EXPECTED to ride out adverse sessions — that is the horizon working, not the thesis breaking. For off-book positions, first infer the likely thesis in one clause, then judge it the same way.
 
 SOURCE VALIDATION (mandatory): each position's status must be validated against the wire above and grounded in CONVERGENCE — cite the SPECIFIC source items behind the call in "sources" as "[Source] point", drawn from MULTIPLE different outlets where the wire allows. Do not fabricate: if the wire is quiet on a pair, say so in the read and keep "sources" honest (even empty) rather than inventing agreement.
 
@@ -1184,7 +1659,7 @@ async function actFill(image, ideaLedgerId) {
     entry: f.entry, sl: f.sl, tp: f.tp, floating: 0,
     openedAt: Date.now(), ideaId: rec?.id || null,
     thesis: rec?.idea?.thesis || null,
-    proposedHorizon: rec?.idea?.horizon || 'one-day (close within 24h)',
+    proposedHorizon: rec?.idea?.horizon || HORIZON.label,
     proposedConviction: rec?.idea?.conviction || null,
   };
   s.book.positions.push(pos);
@@ -1317,20 +1792,33 @@ async function actRedFlag(positionId) {
     ? `this book uses ${s.book.vitals.margin} margin of ${s.book.vitals.equity} equity`
     : 'margin share unknown';
 
-  // ---- horizon-aware, self-aware framing (the fix) ----
-  // A one-day trade overstays after ~1 day; a long-term hold does not overstay for weeks.
-  // A trade the desk itself just proposed must NOT be reviewed as if it were stale.
+  // ---- horizon-aware, self-aware framing ----
+  // Three bands, and they must TILE THE WHOLE TIMELINE with no gap between them. They did not:
+  // the fresh-trade branch expired at 20h and the overstay test did not begin until 26h, so a
+  // trade between those two ages fell into the neutral branch while that branch's text still
+  // described the horizon as "one-day, close within 24h" — it read as overdue precisely because
+  // the numbers around it had been recalibrated and it had not (audit finding 14).
+  //
+  // Now derived from HORIZON and contiguous by construction:
+  //   0 .. freshHours (48h)            -> desk-proposed and still early; burden on CLOSE
+  //   freshHours .. ceilingHours (96h) -> working through its intended 2-3 day life; neutral
+  //   > ceilingHours                   -> genuinely overstayed; burden on KEEP
   let lifeFrame, ruleFrame;
   if (isLongTerm) {
-    lifeFrame = `This is a LONG-TERM position (horizon: ${p.proposedHorizon || 'long-term hold'}), held ${held} day(s). It is NOT exempt from scrutiny; it needs a genuine review, just conducted through a LONG-TERM lens rather than a one-day scalp's twitchiness. Do real work here: (a) PATTERN: read the higher-timeframe price action and trend (weekly/daily structure, key support/resistance, whether the broader move is still intact or turning). (b) NEWS: weigh the durable, structural developments that bear on a multi-week/multi-month thesis, not a fleeting intraday risk-off spike. (c) LEVELS: check whether the current SL (${p.sl || 'none'}) and TP (${p.tp || 'none'}) still make sense at the present price, or should be revised for a long-term hold. (d) DURATION: if keeping, say concretely HOW MUCH LONGER to hold and toward what (a level, a catalyst, a timeframe).`;
-    ruleFrame = `RULES: Judge on the durable long-term thesis and the higher-timeframe pattern, not one-day noise. Default to KEEP unless that long-term thesis has genuinely broken (a structural macro shift, a higher-timeframe trend reversal, a fundamental change) OR the levels/pattern now argue the position no longer makes sense. A temporary drawdown or a short-lived news spike is not itself a close signal. But DO give an honest, substantive verdict: if the long-term picture has soured, say CLOSE plainly. When you KEEP, you MUST provide a revised thesis, sensible revised or confirmed SL/TP levels, and a concrete answer on how much longer to hold.`;
-  } else if (fromDesk && hoursOpen != null && hoursOpen < 20) {
-    lifeFrame = `IMPORTANT: THE DESK ITSELF PROPOSED THIS TRADE and it was opened only ${hoursOpen < 1 ? Math.round(hoursOpen * 60) + ' minutes' : hoursOpen.toFixed(1) + ' hours'} ago, well inside its proposed ${p.proposedHorizon || 'one-day'} horizon. It has NOT overstayed; it has barely begun. Do NOT contradict the desk's own fresh proposal on ordinary intraday noise or a modest adverse move. Give the trade the room its horizon allows.`;
-    ruleFrame = `RULES: Because this is a fresh, desk-proposed trade still inside its horizon, the burden of proof sits firmly on CLOSE. Default to KEEP. Recommend CLOSE ONLY if a genuine, specific, checkable event has BROKEN the original thesis since entry (e.g. the exact catalyst the trade was built on has now reversed, or a hard invalidation level written into the thesis has actually triggered). A small floating loss, general risk-off tone, or "might drift" is NOT grounds to close a trade the desk proposed minutes ago. If the thesis is intact, KEEP and simply restate it.`;
+    lifeFrame = `This is a LONG-TERM position (horizon: ${p.proposedHorizon || 'long-term hold'}), held ${held} day(s). It is NOT exempt from scrutiny; it needs a genuine review, just conducted through a LONG-TERM lens rather than a short-term trade's twitchiness. Do real work here: (a) PATTERN: read the higher-timeframe price action and trend (weekly/daily structure, key support/resistance, whether the broader move is still intact or turning). (b) NEWS: weigh the durable, structural developments that bear on a multi-week/multi-month thesis, not a fleeting intraday risk-off spike. (c) LEVELS: check whether the current SL (${p.sl || 'none'}) and TP (${p.tp || 'none'}) still make sense at the present price, or should be revised for a long-term hold. (d) DURATION: if keeping, say concretely HOW MUCH LONGER to hold and toward what (a level, a catalyst, a timeframe).`;
+    ruleFrame = `RULES: Judge on the durable long-term thesis and the higher-timeframe pattern, not day-to-day noise. Default to KEEP unless that long-term thesis has genuinely broken (a structural macro shift, a higher-timeframe trend reversal, a fundamental change) OR the levels/pattern now argue the position no longer makes sense. A temporary drawdown or a short-lived news spike is not itself a close signal. But DO give an honest, substantive verdict: if the long-term picture has soured, say CLOSE plainly. When you KEEP, you MUST provide a revised thesis, sensible revised or confirmed SL/TP levels, and a concrete answer on how much longer to hold.`;
+  } else if (fromDesk && hoursOpen != null && hoursOpen < HORIZON.freshHours) {
+    lifeFrame = `IMPORTANT: THE DESK ITSELF PROPOSED THIS TRADE and it was opened only ${hoursOpen < 1 ? Math.round(hoursOpen * 60) + ' minutes' : hoursOpen < 36 ? hoursOpen.toFixed(1) + ' hours' : (hoursOpen / 24).toFixed(1) + ' days'} ago, well inside its proposed ${p.proposedHorizon || `${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day interday`} horizon. It has NOT overstayed; it is still in the early part of its intended life. A ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day trade is SUPPOSED to sit through adverse sessions — that is the horizon working, not the thesis failing. Do NOT contradict the desk's own recent proposal on ordinary noise or a modest adverse move. Give the trade the room its horizon allows.`;
+    ruleFrame = `RULES: Because this is a desk-proposed trade still early in its horizon, the burden of proof sits firmly on CLOSE. Default to KEEP. Recommend CLOSE ONLY if a genuine, specific, checkable event has BROKEN the original thesis since entry (e.g. the exact catalyst the trade was built on has now reversed, or a hard invalidation level written into the thesis has actually triggered). A floating loss, general risk-off tone, or "might drift" is NOT grounds to close a trade inside its intended ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day life. If the thesis is intact, KEEP and simply restate it.`;
+  } else if (hoursOpen != null && hoursOpen <= HORIZON.ceilingHours) {
+    // The band that used to be a gap: past the fresh window, still inside the intended life.
+    const daysIn = (hoursOpen / 24).toFixed(1);
+    lifeFrame = `Position held ${daysIn} days (proposed horizon: ${p.proposedHorizon || `${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day interday`}). This is WORKING THROUGH its intended life — not fresh, not overdue. It is at the stage where the thesis should be starting to pay, so this is a genuine checkpoint rather than either a rubber stamp or an eviction notice.`;
+    ruleFrame = `RULES: Judge this one even-handedly — neither branch's thumb on the scale. The trade has had time to start working, so ask honestly whether it IS working: has the catalyst played out, is price responding to the thesis, is the original reasoning still visible in the tape? KEEP if the thesis is alive and has room left inside the ${HORIZON.ceilingDays}-day ceiling; CLOSE if it has simply failed to do anything while the clock ran down, or the reasoning has quietly stopped applying. Do not demand a fresh trade's certainty, and do not grant an overstayed one's indulgence.`;
   } else {
-    const overstayed = hoursOpen != null && hoursOpen > 26;
-    lifeFrame = `Position held ${held} day(s) (proposed horizon was: ${p.proposedHorizon || 'one-day, close within 24h'}${overstayed ? ', so this position HAS overstayed its intended one-day life' : ', still within or near its intended life'}).`;
-    ruleFrame = `RULES: The burden of proof sits on KEEP. A KEEP requires specific, current, checkable evidence the thesis is alive, plus a brand-new present-tense thesis, revised horizon and levels. "Price might come back" is a prayer, not a thesis; for an overstayed one-day trade, default to CLOSE. Weigh margin real estate: a not-quite-wrong position can still deserve closing on opportunity-cost grounds.`;
+    const overstayed = hoursOpen != null && hoursOpen > HORIZON.ceilingHours;
+    lifeFrame = `Position held ${held} day(s) (proposed horizon was: ${p.proposedHorizon || `${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day interday`}${overstayed ? `, so this position HAS overstayed its intended ${HORIZON.targetDaysMin}-${HORIZON.targetDaysMax} day life and is past the ${HORIZON.ceilingDays}-day ceiling` : ', held-time unknown, so judge it on the evidence rather than the clock'}).`;
+    ruleFrame = `RULES: The burden of proof sits on KEEP. A KEEP requires specific, current, checkable evidence the thesis is alive, plus a brand-new present-tense thesis, revised horizon and levels. "Price might come back" is a prayer, not a thesis; for a trade past its ${HORIZON.ceilingDays}-day ceiling, default to CLOSE. Weigh margin real estate: a not-quite-wrong position can still deserve closing on opportunity-cost grounds, and on this account that margin is needed elsewhere.`;
   }
 
   const verdict = await claude(`You are THE TERMINAL's red flag reviewer, running a zero-based position review (Peter Lynch test: if flat today, would you open THIS trade right now?), BUT calibrated to this position's actual horizon and origin.
@@ -1408,4 +1896,22 @@ export default async function handler(req, res) {
   }
 }
 
-export const config = { api: { bodyParser: { sizeLimit: '8mb' } } };
+// ---- Vercel function configuration ----
+// THIS FILE HAD NO DECLARED TIMEOUT (audit finding 4). It was the only engine in the repo
+// without one — trawl.js declares 300, propose.js 120, odds2.js 45, forex-brain.js 300 via
+// vercel.json — and it is by some distance the heaviest. A single actIdeas() call makes ~34 RSS
+// fetches, 26 Yahoo chart calls, 8 TradingView feeds, the Forex Factory calendar, frankfurter,
+// and then up to FOUR sequential Claude calls (ideas, the retry, the market lesson, the
+// reflection), all synchronously inside one user-facing request. That ran on whatever the
+// platform default happened to be, with nothing in the repo bounding it.
+//
+// stewards.js:2245 documents this exact failure biting before, from both directions: a client
+// waiting on a leash for a cap that did not exist, and functions silently running on the
+// platform default after their vercel.json entries were removed. The lesson recorded there is
+// that the duration belongs next to the code it bounds, with no second place to check — so it
+// is declared here rather than in vercel.json, matching trawl/propose/odds2.
+//
+// 300s matches forex-brain, the other engine doing a comparable fan-out of network work.
+// NOTE the bodyParser limit must stay in this export regardless: it has no vercel.json
+// equivalent, which is why this file could not simply be handed over to that config block.
+export const config = { maxDuration: 300, api: { bodyParser: { sizeLimit: '8mb' } } };
