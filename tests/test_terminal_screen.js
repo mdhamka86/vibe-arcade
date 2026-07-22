@@ -33,6 +33,10 @@ for (const p of [SCREEN_PATH, CANDLES_PATH, ENGINE_PATH]) {
 }
 const SCREEN_SRC = fs.readFileSync(SCREEN_PATH, 'utf8');
 const ENGINE_SRC = fs.readFileSync(ENGINE_PATH, 'utf8');
+// The Board tab is where the run modes are actually chosen, so its markup is part of this
+// contract, not a separate concern.
+const UI_PATH = path.join(__dirname, '..', 'public', 'terminal.html');
+const UI_SRC = fs.existsSync(UI_PATH) ? fs.readFileSync(UI_PATH, 'utf8') : null;
 
 let pass = 0, fail = 0, skip = 0; const fails = [];
 function check(name, cond) { if (cond) { pass++; } else { fail++; fails.push(name); console.log('  x FAIL:', name); } }
@@ -503,6 +507,65 @@ async function withStubbedClaude(payload, fn) {
   check('provenance records how many pairs were per-pair analysed',
     /perPairAnalysed: screenRanked\.filter/.test(ENGINE_SRC));
 
+  console.log('\n=== 19b. RUN MODES: lock + cooldown on force-refresh ===');
+  // Mode 3 is the only path a human can trigger repeatedly, and each trigger is ~20 live model
+  // calls. Two separate protections, answering two different questions.
+  const T0 = Date.now();
+  // LOCK — "is a run happening right now?"
+  check('no lock => not running', S.lockState(null).running === false);
+  check('a fresh lock => running', S.lockState({ startedAt: T0 - 5000, by: 'manual' }, T0).running === true);
+  check('...and reports who holds it', S.lockState({ startedAt: T0 - 5000, by: 'cron' }, T0).by === 'cron');
+  check('a lock at 4m59s is still held', S.lockState({ startedAt: T0 - 299000, by: 'manual' }, T0).running === true);
+  // Self-healing: a lock older than maxDuration cannot have a live holder.
+  check('a lock older than maxDuration is STALE, not running', S.lockState({ startedAt: T0 - 301000, by: 'manual' }, T0).stale === true);
+  check('...so a dead invocation cannot wedge the screen shut forever',
+    S.lockState({ startedAt: T0 - 3600000, by: 'cron' }, T0).running === false);
+  // COOLDOWN — "was one just done?"
+  check('no previous run => no cooldown', S.cooldownState(null, T0).blocked === false);
+  check('a run 10s ago blocks a re-scan', S.cooldownState(new Date(T0 - 10000).toISOString(), T0).blocked === true);
+  check('...reporting the remaining wait', S.cooldownState(new Date(T0 - 10000).toISOString(), T0).remainingMs > 160000);
+  check('a run 4 minutes ago does NOT block', S.cooldownState(new Date(T0 - 240000).toISOString(), T0).blocked === false);
+  check('an unparseable timestamp does not block forever', S.cooldownState('not-a-date', T0).blocked === false);
+  check('cooldown is 3 minutes', /MANUAL_COOLDOWN_MS = 3 \* 60 \* 1000/.test(SCREEN_SRC));
+  // Wiring
+  check('the run path takes the lock before running', /rSet\(SCREEN_LOCK_KEY, \{ startedAt: now/.test(SCREEN_SRC));
+  check('...and releases it in a finally, so a throw cannot strand it',
+    /} finally \{[\s\S]{0,240}rSet\(SCREEN_LOCK_KEY, null\)/.test(SCREEN_SRC));
+  check('a concurrent run is refused with 409, not queued', /status\(409\)/.test(SCREEN_SRC));
+  check('a too-soon manual run is refused with 429', /status\(429\)/.test(SCREEN_SRC));
+  check('CRON IS EXEMPT from the cooldown (scheduled, not spammed)', /if \(!isCron\) \{[\s\S]{0,400}cooldownState/.test(SCREEN_SRC));
+  check('...but cron is NOT exempt from the lock', (() => {
+    // the lock check must sit ABOVE the isCron branch
+    const lockIdx = SCREEN_SRC.indexOf('const ls = lockState(lock, now)');
+    const cronIdx = SCREEN_SRC.indexOf('if (!isCron) {', lockIdx);
+    return lockIdx > 0 && cronIdx > lockIdx;
+  })());
+  check('status action exists for polling', /action === 'status'/.test(SCREEN_SRC));
+  check('...and reports canForce so the UI need not recompute the rules',
+    /canForce: !ls\.running && !cd\.blocked/.test(SCREEN_SRC));
+  check('the pack records which mode built it', /mode,/.test(SCREEN_SRC) && /runScreen\(Date\.now\(\), isCron \? 'cron' : 'manual-force'\)/.test(SCREEN_SRC));
+
+  console.log('\n=== 19c. RUN MODES: the UI ===');
+  if (UI_SRC) {
+    check('UI polls status rather than blocking on the 40s run',
+      /action=status/.test(UI_SRC) && /pollRef/.test(UI_SRC));
+    check('...so a dropped request does not lose the run',
+      /keeps running on the server even if you switch tabs/.test(UI_SRC));
+    check('the run fetch is fired, not awaited for the UI', /fetch\('\/api\/terminal-screen\?action=run'\)\s*\n\s*\.then/.test(UI_SRC));
+    check('FAST vs SLOW is stated explicitly', /<span className="steel">FAST<\/span>/.test(UI_SRC) && /<span className="ambr">SLOW<\/span>/.test(UI_SRC));
+    check('...naming the cost of the slow path', /~20 reasoning calls live/.test(UI_SRC));
+    check('board age leads the tab, so forcing is an informed choice', /AGE FIRST, and prominently/.test(UI_SRC));
+    check('the button is disabled during a run and during cooldown', /disabled=\{!canForce\}/.test(UI_SRC));
+    check('...showing the cooldown countdown', /Re-scan available in \$\{cdSec\}s/.test(UI_SRC));
+    check('...and explaining why it is rate-limited', /double-click can't fire 40 calls/.test(UI_SRC));
+    check('a run started elsewhere (cron) is surfaced', /run is in progress/.test(UI_SRC));
+    check('409 and 429 are treated as guardrails, not errors', /guardrails doing their job/.test(UI_SRC));
+    check('the poll gives up rather than spinning forever', /ticks>60/.test(UI_SRC));
+    check('the Desk points at the Board when the pack has aged',
+      /re-scan it from the Board tab/.test(UI_SRC));
+    check('the board says which mode built it', /you rebuilt this yourself/.test(UI_SRC) && /built by the schedule/.test(UI_SRC));
+  }
+
   // ==========================================================================
   console.log('\n=== 20. MUTATION HARNESS — is the ranking actually guarded? ===');
   const MUT = [
@@ -629,6 +692,34 @@ async function withStubbedClaude(payload, fn) {
         const iso = new Date().toISOString();
         return fbm.validateVerdict(M.toVerdict({ pair: 'EURUSD', factors: { atrD1: 0.005 }, llm: { score: 70, direction: 'BUY', read: 'A long enough rationale here.', entry: 1.14, tp: 1.155, sl: 1.132 } }, iso), iso).ok;
       },
+    },
+    {
+      // A double-click on force-refresh is ~40 live model calls. The lock is the only thing
+      // standing between an impatient click and two concurrent runs.
+      gate: 'RUN MODE: the lock reports a live run as running',
+      from: `  if (age >= LOCK_STALE_MS) return { running: false, stale: true, age, by: lock.by };`,
+      to: `  if (age >= 0) return { running: false, stale: true, age, by: lock.by };`,
+      probe: (M) => M.lockState({ startedAt: Date.now() - 5000, by: 'manual' }).running === true,
+    },
+    {
+      // ...but the lock must also let go. A stuck lock would block the CRON as well as the user,
+      // silently killing the overnight board until someone noticed.
+      gate: 'RUN MODE: a stale lock self-heals rather than wedging the screen shut',
+      from: `  if (age >= LOCK_STALE_MS) return { running: false, stale: true, age, by: lock.by };`,
+      to: `  if (false) return { running: false, stale: true, age, by: lock.by };`,
+      probe: (M) => M.lockState({ startedAt: Date.now() - 3600000, by: 'cron' }).running === false,
+    },
+    {
+      gate: 'RUN MODE: the cooldown actually blocks a too-soon re-scan',
+      from: `  if (!Number.isFinite(since) || since >= cooldownMs) return { blocked: false, remainingMs: 0, sinceMs: since };`,
+      to: `  return { blocked: false, remainingMs: 0, sinceMs: since };`,
+      probe: (M) => M.cooldownState(new Date(Date.now() - 10000).toISOString()).blocked === true,
+    },
+    {
+      gate: 'RUN MODE: the cooldown expires (does not block forever)',
+      from: `  if (!lastAt) return { blocked: false, remainingMs: 0 };`,
+      to: `  if (!lastAt) return { blocked: true, remainingMs: 1 };`,
+      probe: (M) => M.cooldownState(null).blocked === false,
     },
     {
       gate: 'freshness penalty',

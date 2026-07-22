@@ -479,7 +479,7 @@ export function toVerdict(row, nowIso, holdCeilingHours = SCREEN_CONFIG.holdCeil
 }
 
 // ---------- The run ----------
-export async function runScreen(nowMs = Date.now()) {
+export async function runScreen(nowMs = Date.now(), mode = 'cron') {
   const started = Date.now();
   const [book, ledger, cal] = await Promise.all([
     rGet('terminal:book').catch(() => null),
@@ -581,6 +581,10 @@ export async function runScreen(nowMs = Date.now()) {
 
   const pack = {
     at: new Date(nowMs).toISOString(),
+    // Which run mode produced this board. Shown to the user, because "the 5am cron built this"
+    // and "you rebuilt this ten minutes ago after London moved" are different things to be
+    // looking at, and only one of them is worth re-scanning.
+    mode,
     tookMs: Date.now() - started,
     timings: { candlesMs: candlesMs, stage1Ms, stage2Ms, budgetMs: RUN_BUDGET_MS },
     universeSize: SCREEN_PAIRS.length,
@@ -684,6 +688,46 @@ export function shadowScorecard(rows) {
   return card;
 }
 
+// ================= RUN MODES =================
+// The screen has one implementation and three ways in, and the difference between them is who
+// pays for the reasoning:
+//
+//   1. CRON            the scheduled overnight/session runs. Full two-stage scoring, nobody
+//                      waiting, writes the pack. This is the default source of truth.
+//   2. ON-DEMAND FAST  the Desk reading the cached pack. Zero model calls, instant. This is what
+//                      happens on an ordinary click and it is the common path by a wide margin.
+//   3. FORCE REFRESH   a deliberate "re-scan now" for when the cron pack has gone stale
+//                      mid-session — London has moved things and the 5am board no longer
+//                      describes the market. Runs all ~20 calls live and overwrites the pack.
+//
+// Mode 3 is the one that needs guarding, because it is the only one a human can trigger
+// repeatedly and it is ~40s of real model work each time.
+//
+// TWO SEPARATE PROTECTIONS, because they answer different questions:
+//   LOCK      "is a run happening right now?" — hard, prevents concurrent runs entirely, so a
+//             double-click cannot fire 40 calls. Self-healing: a lock older than the function's
+//             own maxDuration must be from an invocation that died, so it is ignored rather
+//             than wedging the screen shut forever.
+//   COOLDOWN  "was one just done?" — a rate limit on top of the lock. The lock alone would let
+//             someone re-run the instant each finishes; the cooldown makes force-refresh a
+//             considered act. Cron is exempt: it is scheduled, not spammed.
+const SCREEN_LOCK_KEY = 'terminal:screen:lock';
+const MANUAL_COOLDOWN_MS = 3 * 60 * 1000;
+const LOCK_STALE_MS = 300000; // == maxDuration; beyond this the holder cannot still be alive
+
+export function lockState(lock, nowMs = Date.now()) {
+  if (!lock || !lock.startedAt) return { running: false, stale: false };
+  const age = nowMs - lock.startedAt;
+  if (age >= LOCK_STALE_MS) return { running: false, stale: true, age, by: lock.by };
+  return { running: true, stale: false, age, by: lock.by, startedAt: lock.startedAt };
+}
+export function cooldownState(lastAt, nowMs = Date.now(), cooldownMs = MANUAL_COOLDOWN_MS) {
+  if (!lastAt) return { blocked: false, remainingMs: 0 };
+  const since = nowMs - Date.parse(lastAt);
+  if (!Number.isFinite(since) || since >= cooldownMs) return { blocked: false, remainingMs: 0, sinceMs: since };
+  return { blocked: true, remainingMs: cooldownMs - since, sinceMs: since };
+}
+
 // ---------- Handler ----------
 // NOTE ON DEPENDENCY DIRECTION: this module imports from terminal-engine, and terminal-engine
 // imports NOTHING from here — its only knowledge of the screen is a Redis key and a timestamp.
@@ -700,9 +744,61 @@ export default async function handler(req, res) {
     const isCron = !!req.headers['x-vercel-cron'];
     const action = q.action || (isCron ? 'run' : 'get');
 
-    if (action === 'run') {
-      const pack = await runScreen();
+    // STATUS — cheap, safe to poll. The UI drives force-refresh off this rather than holding a
+    // 40s request open: if the browser's run fetch is dropped (tab switch, flaky mobile, a
+    // proxy timeout) the server invocation still completes and writes the pack, and polling
+    // picks it up. Blocking on the run would have turned any of those into a lost run.
+    if (action === 'status') {
+      const [lock, pack] = await Promise.all([
+        rGet(SCREEN_LOCK_KEY).catch(() => null),
+        rGet('terminal:screen').catch(() => null),
+      ]);
+      const ls = lockState(lock);
+      const cd = cooldownState(pack && pack.at);
+      const age = screenAge(pack);
       return res.status(200).json({
+        ok: true,
+        running: ls.running, runningSince: ls.startedAt || null, runningBy: ls.by || null,
+        lastAt: (pack && pack.at) || null,
+        age, cooldownRemainingMs: cd.remainingMs,
+        canForce: !ls.running && !cd.blocked,
+        scored: (pack && pack.scored) || null, universeSize: (pack && pack.universeSize) || null,
+      });
+    }
+
+    if (action === 'run') {
+      const now = Date.now();
+      // A run already in flight wins. This is what stops a double-click firing 40 calls.
+      const lock = await rGet(SCREEN_LOCK_KEY).catch(() => null);
+      const ls = lockState(lock, now);
+      if (ls.running) {
+        return res.status(409).json({
+          ok: false, running: true, startedAt: ls.startedAt, by: ls.by,
+          error: `A ${ls.by === 'cron' ? 'scheduled' : 'manual'} screen run started ${Math.round(ls.age / 1000)}s ago is still going. Wait for it rather than starting a second.`,
+        });
+      }
+      // Cooldown applies to humans, not to the schedule.
+      if (!isCron) {
+        const current = await rGet('terminal:screen').catch(() => null);
+        const cd = cooldownState(current && current.at, now);
+        if (cd.blocked && q.force !== 'override') {
+          return res.status(429).json({
+            ok: false, cooldown: true, remainingMs: cd.remainingMs, lastAt: current.at,
+            error: `The board was rebuilt ${Math.round(cd.sinceMs / 1000)}s ago. Re-scanning runs ~20 live reasoning calls, so it is rate-limited — try again in ${Math.ceil(cd.remainingMs / 1000)}s.`,
+          });
+        }
+      }
+      await rSet(SCREEN_LOCK_KEY, { startedAt: now, by: isCron ? 'cron' : 'manual' }).catch(() => {});
+      let pack;
+      try {
+        pack = await runScreen(Date.now(), isCron ? 'cron' : 'manual-force');
+      } finally {
+        // Always release, even on a throw — a stuck lock would block the cron too. The staleness
+        // check above is the backstop for the case where the process dies before reaching this.
+        await rSet(SCREEN_LOCK_KEY, null).catch(() => {});
+      }
+      return res.status(200).json({
+        mode: isCron ? 'cron' : 'manual-force',
         ok: true, at: pack.at, tookMs: pack.tookMs, timings: pack.timings, model: pack.model,
         scored: pack.scored, universeSize: pack.universeSize,
         candidateCount: pack.candidateCount, held: (pack.held || []).map((h) => h.pair),

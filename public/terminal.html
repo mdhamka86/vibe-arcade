@@ -446,6 +446,9 @@ function Desk({state,refresh}){
                 : <> No consolidation pass{ideas.screen.consolidationError?` (${ideas.screen.consolidationError})`:''} — reads weighed directly.</>}
               {ideas.screen.unanalysed&&ideas.screen.unanalysed.length>0 && <span className="ambr"> {ideas.screen.unanalysed.length} pair{ideas.screen.unanalysed.length>1?'s':''} unscored this run ({ideas.screen.unanalysed.map(u=>u.pair).join(', ')}) — no read, not a rejection.</span>}
               {ideas.screen.offBoard&&ideas.screen.offBoard.length>0 && <span className="ambr"> Off-board pick{ideas.screen.offBoard.length>1?'s':''}: {ideas.screen.offBoard.join(', ')} — check the thesis explains why.</span>}
+              {/* The one place he can act on a stale board is the Board tab, so say so HERE,
+                  where he is actually looking at ideas built on it. */}
+              {ideas.screen.state==='STALE' && <span className="ambr"> The board has aged — if the session has moved since, re-scan it from the Board tab before trusting these.</span>}
             </div>
           : <div className="alertbox a-amber">⚠ HUNTED UNSCREENED — {ideas.screen.label}. No per-pair analysis was available, so these ideas came from the news wire and prices alone. Re-run the screen from the Board tab for a fuller sweep.</div>)}
         {ideas.brainConditions && <div className="note" style={{marginBottom:8}}><span className="steel">CONDITIONS</span> sibling breakout engine is FLAT on {ideas.brainConditions.flat}/{ideas.brainConditions.live} USD majors — {ideas.brainConditions.flat/ideas.brainConditions.live>0.7?'the dollar complex is chopping, expect less follow-through':'there is genuine direction about'}.</div>}
@@ -974,7 +977,10 @@ function Board(){
   const [age,setAge]=useState(null);
   const [err,setErr]=useState(null);
   const [busy,setBusy]=useState(false);
+  const [status,setStatus]=useState(null);
+  const [note,setNote]=useState(null);
   const [openPair,setOpenPair]=useState(null);
+  const pollRef=useRef(null);
   const load=useCallback(async()=>{
     try{
       const r=await fetch('/api/terminal-screen?action=get').then(x=>x.json());
@@ -982,13 +988,49 @@ function Board(){
       setPack(r.screen); setAge(r.age); setErr(null);
     }catch(e){ setErr(e.message); }
   },[]);
-  useEffect(()=>{ load(); },[load]);
+  // Cheap status poll — drives the cooldown countdown and notices a cron run starting elsewhere.
+  const pollStatus=useCallback(async()=>{
+    try{ const s=await fetch('/api/terminal-screen?action=status').then(x=>x.json()); if(s.ok) setStatus(s); return s; }
+    catch(e){ return null; }
+  },[]);
+  useEffect(()=>{ load(); pollStatus(); },[load,pollStatus]);
+  // Keep the cooldown countdown honest while the tab is open.
+  useEffect(()=>{
+    const t=setInterval(()=>{ if(!busy) pollStatus(); },15000);
+    return ()=>clearInterval(t);
+  },[busy,pollStatus]);
+  useEffect(()=>()=>{ if(pollRef.current) clearInterval(pollRef.current); },[]);
+
+  // FORCE REFRESH — the slow path, run deliberately.
+  // The run fetch is fired but NOT awaited for the UI's sake: it takes ~40s, and if the browser
+  // drops it (tab switch, flaky mobile, a proxy timeout) the server invocation still finishes
+  // and writes the board. Polling is what tells us it landed, so a dropped request costs
+  // nothing. Blocking on it would have turned every one of those into a lost run.
   const rerun=async()=>{
-    setBusy(true);
-    try{ await fetch('/api/terminal-screen?action=run').then(x=>x.json()); await load(); }
-    catch(e){ setErr(e.message); }
-    finally{ setBusy(false); }
+    if(busy) return;
+    const before=(pack&&pack.at)||null;
+    setBusy(true); setErr(null); setNote(null);
+    fetch('/api/terminal-screen?action=run')
+      .then(x=>x.json().then(j=>({status:x.status,j})))
+      .then(({status,j})=>{
+        if(j&&j.ok) return;
+        // 409 already running / 429 cooldown — both are guardrails doing their job, not errors.
+        setNote(j&&j.error?j.error:'The re-scan could not be started.');
+        if(status===409||status===429){ setBusy(false); if(pollRef.current) clearInterval(pollRef.current); pollStatus(); }
+      })
+      .catch(()=>{ /* the server keeps going; polling below decides the outcome */ });
+    if(pollRef.current) clearInterval(pollRef.current);
+    let ticks=0;
+    pollRef.current=setInterval(async()=>{
+      ticks++;
+      const s=await pollStatus();
+      const landed = s && s.lastAt && s.lastAt!==before && !s.running;
+      if(landed){ clearInterval(pollRef.current); pollRef.current=null; await load(); setBusy(false); setNote('Board rebuilt.'); }
+      else if(ticks>60){ clearInterval(pollRef.current); pollRef.current=null; setBusy(false); setErr('The re-scan is taking longer than expected. It may still complete — reopen this tab shortly.'); }
+    },2500);
   };
+  const cdSec=status&&status.cooldownRemainingMs?Math.ceil(status.cooldownRemainingMs/1000):0;
+  const canForce=!busy && (!status || status.canForce);
   const stateCls={FRESH:'a-green',STALE:'a-amber',EXPIRED:'a-red',MISSING:'a-red'};
   const ranked=(pack&&pack.ranked)||[];
   const best=ranked.length?Math.max(...ranked.map(r=>r.score)):0;
@@ -996,14 +1038,40 @@ function Board(){
     <div className="wrap">
       <div className="row" style={{justifyContent:'space-between',alignItems:'center'}}>
         <div className="eyebrow"><Ic n="brain"/>The board</div>
-        <button className="ghost" disabled={busy} onClick={rerun}>{busy?<span className="spin">◐</span>:'Re-screen now'}</button>
       </div>
       {err && <div className="alertbox a-red">Board unavailable: {err}</div>}
+      {/* AGE FIRST, and prominently — this is the number that decides whether re-scanning is
+          worth ~20 live reasoning calls, so it leads rather than hiding in a corner. */}
       {age && <div className={'alertbox '+(stateCls[age.state]||'a-amber')}>
         {age.state==='FRESH'?'✓ ':'⚠ '}{age.label}
+        {pack&&pack.mode==='manual-force'&&<span className="dim"> · you rebuilt this yourself</span>}
+        {pack&&pack.mode==='cron'&&<span className="dim"> · built by the schedule</span>}
         {age.state==='EXPIRED'&&' — the desk is hunting UNSCREENED until this refreshes.'}
         {age.state==='MISSING'&&' — the desk is hunting UNSCREENED.'}
       </div>}
+
+      {/* THE TWO PATHS, stated plainly. The Desk reads this board for free; re-scanning is the
+          slow, expensive one and should feel like a decision. */}
+      <div className="card">
+        <div className="note">
+          <span className="steel">FAST</span> The Desk reads this board instantly — opening it costs nothing and re-runs no analysis.
+        </div>
+        <div className="note" style={{marginTop:4}}>
+          <span className="ambr">SLOW</span> Re-scanning runs all ~20 reasoning calls live ({pack&&pack.candidateCount?pack.candidateCount:'~19'} pairs individually, then the field consolidation) and overwrites the board. Takes about {pack&&pack.tookMs?Math.round(pack.tookMs/1000):40} seconds. Worth doing when the market has moved since the board was built — not otherwise.
+        </div>
+        <div className="row" style={{marginTop:10,gap:8,alignItems:'center'}}>
+          <button className={age&&(age.state==='STALE'||age.state==='EXPIRED'||age.state==='MISSING')?'pri':'ghost'}
+                  disabled={!canForce} onClick={rerun}>
+            {busy?<><span className="spin">◐</span> Re-scanning the whole board…</>
+                 :cdSec>0?`Re-scan available in ${cdSec}s`
+                 :status&&status.running?`A ${status.runningBy==='cron'?'scheduled':'manual'} run is in progress…`
+                 :'Re-scan the whole board now'}
+          </button>
+          {cdSec>0 && <span className="dim" style={{fontSize:11}}>rate-limited so a double-click can't fire 40 calls</span>}
+        </div>
+        {busy && <div className="note" style={{marginTop:8}}>Each pair is getting its own reasoning pass. This keeps running on the server even if you switch tabs or lose signal — the board will be here when it lands.</div>}
+        {note && <div className="note" style={{marginTop:8}}><span className="steel">·</span> {note}</div>}
+      </div>
       {pack && <div className="card">
         <div className="meta">
           <span>{pack.scored}/{pack.universeSize} pairs analysed</span>
