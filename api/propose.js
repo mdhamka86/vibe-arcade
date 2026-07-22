@@ -315,14 +315,32 @@ function resolveMeet(label, meets) {
 // The meet-keyed indexes, all built from the PACK's venue. Returned together so there is one
 // place where that keying decision lives, and so the safety suite can exercise the real
 // structures rather than a copy of them.
+// A source only counts toward CONVERGENCE if it expresses a view. Sources tagged
+// kind:"card" — currently the PMU racecard adapter — are authoritative on what is
+// running and carry no opinion at all.
+//
+// WHY THIS DISTINCTION IS THE WHOLE POINT OF THE GATE. OVERHAUL 2.1 exists because
+// SGPools' own analysis docs corroborating SGPools' own card is not evidence: it is one
+// party agreeing with itself. A tote operator's official programme agreeing with the tote
+// operator's coupon is the same shape of non-evidence, however external the hostname
+// looks. The PMU adapter is enormously useful — it ended France's SSOT blindness and it
+// card-matches every runner by name — but "we now know exactly what is running" is not
+// "an analyst has made a case for this horse", and a leg needs the second one.
+//
+// So card sources verify, and opinion sources authorise.
+const isOpinionSource = (s) => s.ok && !s.ssotFail && s.kind !== "card";
+const isCardSource = (s) => s.ok && !s.ssotFail && s.kind === "card";
+
 function meetIndexes(pack) {
   const cardIndex = {};   // venue|raceNo|horseNo -> horse name
-  const extCount = {};    // venue -> count of verified external sources
+  const extCount = {};    // venue -> verified external OPINION sources (gates betting)
+  const cardCount = {};   // venue -> verified external CARD sources (never gates betting)
   const fieldSizeOf = {}; // venue|raceNo -> field size
   (pack.meets || []).forEach((m) => {
     // SGPools internal analysis docs (m.docs) deliberately do NOT count — internal docs
     // corroborating internal docs is SGPools agreeing with itself.
-    extCount[m.venue] = (m.sources || []).filter((s) => s.ok && !s.ssotFail).length;
+    extCount[m.venue] = (m.sources || []).filter(isOpinionSource).length;
+    cardCount[m.venue] = (m.sources || []).filter(isCardSource).length;
     (m.raceMap || []).forEach((r) => {
       fieldSizeOf[m.venue + "|" + r.raceNo] = r.fieldSize || (r.runners || []).length || 0;
       (r.runners || []).forEach((h) => {
@@ -330,7 +348,7 @@ function meetIndexes(pack) {
       });
     });
   });
-  return { cardIndex, extCount, fieldSizeOf };
+  return { cardIndex, extCount, cardCount, fieldSizeOf };
 }
 
 // Same keying, for the Phase 3.3 shadow price sweep.
@@ -944,7 +962,7 @@ const handler = async (req, res) => {
       const corrections = [];
       const clean = [];
       // build a runner-map index for card-match verification
-      const { cardIndex, extCount, fieldSizeOf } = meetIndexes(pack);
+      const { cardIndex, extCount, cardCount, fieldSizeOf } = meetIndexes(pack);
       // Legs whose meet label could not be tied to a coupon. Surfaced in the response and
       // vetoed below — an unresolvable label must be loud, never five quiet zeros.
       const meetErrors = [];
@@ -1074,10 +1092,20 @@ const handler = async (req, res) => {
           continue;
         }
         const ext = extCount[leg.venue] || 0;
+        const cards = cardCount[leg.venue] || 0;
         // 2.1 stand-down: no verified external convergence = no bet, any bet type
         if (ext === 0) {
+          // Say WHICH kind is missing. With the PMU card adapter live, "zero verified
+          // external sources" would be flatly untrue for France \u2014 the card is verified and
+          // every runner is name-matched. What is missing is anybody's opinion, and a
+          // reader who is told the wrong thing goes looking for the wrong problem.
           veto("no-external-source",
-            "meet has zero verified external sources \u2014 internal-only convergence is SGPools agreeing with itself");
+            cards
+              ? "meet has " + cards + " verified card source" + (cards === 1 ? "" : "s") +
+                " but ZERO opinion sources \u2014 the card is confirmed and every runner name-matched, " +
+                "yet no analyst has made a case for anything here. A racecard tells you what is " +
+                "running, not what to back; convergence needs a view to converge on."
+              : "meet has zero verified external sources \u2014 internal-only convergence is SGPools agreeing with itself");
           continue;
         }
         // 2.4 confidence bands: Medium and Low-Med are cut entirely

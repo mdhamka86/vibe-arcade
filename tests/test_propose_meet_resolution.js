@@ -178,6 +178,65 @@ function check(name, cond) {
   check('priceIndexOf skips runners with no price',
     Object.keys(priceIndexOf({ meets: [{ venue: 'X', raceMap: [{ raceNo: 1, runners: [{ no: 1, name: 'A' }] }] }] })).length === 0);
 
+  console.log('\n=== 4b. CARD SOURCES VERIFY, OPINION SOURCES AUTHORISE ===');
+  // The PMU racecard adapter ended France's SSOT blindness, but a tote operator's official
+  // programme agreeing with the tote operator's coupon is not convergence — it is one party
+  // agreeing with itself, the same shape of non-evidence OVERHAUL 2.1 was written against.
+  // A racecard tells you what is running, not what to back. So kind:"card" sources must be
+  // fully visible and card-matched, and must NOT on their own make a meet bettable.
+  {
+    const packFR = { meets: [{
+      venue: 'France', region: 'FR',
+      sources: [
+        { id: 'prono-turf-gratuit', ok: true, ssotFail: 'names 0 of the 86 runners' },
+        { id: 'frequence-turf', ok: true, ssotFail: 'names 0 of the 86 runners' },
+        { id: 'canalturf', ok: true, ssotFail: 'names 0 of the 86 runners' },
+        { id: 'pmu-racecard', kind: 'card', ok: true },
+      ],
+      raceMap: [{ raceNo: 1, dist: '1800m', fieldSize: 12, runners: [{ no: 1, name: 'BANSKY' }] }],
+    }] };
+    const ix = meetIndexes(packFR);
+    check('a card source does NOT count toward convergence', ix.extCount['France'] === 0);
+    check('but it IS counted, separately, as a card source', ix.cardCount['France'] === 1);
+    check('and the card is still indexed for card-match', ix.cardIndex['France|1|1'] === 'BANSKY');
+    check('and the field size is still available to the PLA floor', ix.fieldSizeOf['France|1'] === 12);
+  }
+  {
+    // one real opinion source alongside the card => bettable, and the card is not double-counted
+    const packMixed = { meets: [{
+      venue: 'France', region: 'FR',
+      sources: [
+        { id: 'prono-turf-gratuit', ok: true },
+        { id: 'pmu-racecard', kind: 'card', ok: true },
+      ],
+      raceMap: [],
+    }] };
+    const ix = meetIndexes(packMixed);
+    check('one opinion source makes the meet bettable', ix.extCount['France'] === 1);
+    check('the card source is not added to the opinion count', ix.extCount['France'] !== 2);
+    check('cards are tallied on their own', ix.cardCount['France'] === 1);
+  }
+  {
+    // a card source that FAILED the SSOT gate counts as neither
+    const packBad = { meets: [{
+      venue: 'France', region: 'FR',
+      sources: [{ id: 'pmu-racecard', kind: 'card', ok: true, ssotFail: 'names 0 of the card' }],
+      raceMap: [],
+    }] };
+    const ix = meetIndexes(packBad);
+    check('an ssotFail card counts as neither kind',
+      ix.extCount['France'] === 0 && ix.cardCount['France'] === 0);
+    const packDown = { meets: [{ venue: 'France', sources: [{ id: 'pmu-racecard', kind: 'card', ok: false }], raceMap: [] }] };
+    check('an unfetched card counts as neither kind',
+      meetIndexes(packDown).extCount['France'] === 0 && meetIndexes(packDown).cardCount['France'] === 0);
+  }
+  {
+    // untagged sources keep their old meaning — this must not silently demote every source
+    const packLegacy = { meets: [{ venue: 'SA', sources: [{ id: 'racecoast-api', ok: true }, { id: 'gold-circle', ok: true }], raceMap: [] }] };
+    check('untagged sources still count as opinion (no silent demotion)', meetIndexes(packLegacy).extCount['SA'] === 2);
+    check('and are not miscounted as cards', meetIndexes(packLegacy).cardCount['SA'] === 0);
+  }
+
   console.log('\n=== 5. THE HANDLER ACTUALLY USES THE RESOLVED VENUE ===');
   // Everything above proves the resolver and the indexes are right. It does NOT prove the
   // handler reads them with leg.venue — and a revert to leg.meet would restore the whole bug
@@ -207,6 +266,13 @@ function check(name, cond) {
         code.indexOf('veto("unresolved-meet"') < code.indexOf('veto("no-external-source"'));
       check('meetErrors surfaced in the response', /meetErrors,/.test(code));
       check('resolveMeet is called on the model label', has('resolveMeet(leg.meet, pack.meets)'));
+      // the convergence gate must read the OPINION count, and the veto must say which
+      // kind is missing — "zero verified external sources" is flatly untrue for a meet
+      // whose card is verified and name-matched, and sends the reader after the wrong bug
+      check('convergence gate reads the opinion count', has('const ext = extCount[leg.venue]'));
+      check('card count is destructured for the veto message', has('cardCount, fieldSizeOf } = meetIndexes(pack)'));
+      check('veto distinguishes a card-only meet', has('const cards = cardCount[leg.venue]') && /ZERO opinion sources/.test(code));
+      check('card sources are excluded from the opinion count', has('s.kind !== "card"'));
     }
   }
 
