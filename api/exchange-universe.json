@@ -1,0 +1,2015 @@
+{
+ "version": 1,
+ "generatedOn": "2026-07-22",
+ "totalNames": 399,
+ "note": "Liquid index-backbone universe for THE EXCHANGE scout. Every symbol was resolved against the live quote feed on 2026-07-22 before being committed; names that no longer price (delisted, taken private, merged) were dropped rather than carried. Refresh with POST /api/exchange-scout {action:\"refresh\"} which re-validates and reports drifted names. Rows are [code, name, sector]; codes are in each exchange native form and are converted to feed symbols by api/market-classifier.js.",
+ "markets": {
+  "US": [
+   [
+    "AAPL",
+    "Apple",
+    "Technology"
+   ],
+   [
+    "MSFT",
+    "Microsoft",
+    "Technology"
+   ],
+   [
+    "NVDA",
+    "Nvidia",
+    "Semiconductors"
+   ],
+   [
+    "GOOGL",
+    "Alphabet",
+    "Technology"
+   ],
+   [
+    "AMZN",
+    "Amazon",
+    "Consumer Discretionary"
+   ],
+   [
+    "META",
+    "Meta Platforms",
+    "Technology"
+   ],
+   [
+    "TSLA",
+    "Tesla",
+    "Consumer Discretionary"
+   ],
+   [
+    "AVGO",
+    "Broadcom",
+    "Semiconductors"
+   ],
+   [
+    "AMD",
+    "AMD",
+    "Semiconductors"
+   ],
+   [
+    "INTC",
+    "Intel",
+    "Semiconductors"
+   ],
+   [
+    "QCOM",
+    "Qualcomm",
+    "Semiconductors"
+   ],
+   [
+    "TXN",
+    "Texas Instruments",
+    "Semiconductors"
+   ],
+   [
+    "MU",
+    "Micron",
+    "Semiconductors"
+   ],
+   [
+    "ADI",
+    "Analog Devices",
+    "Semiconductors"
+   ],
+   [
+    "LRCX",
+    "Lam Research",
+    "Semiconductors"
+   ],
+   [
+    "AMAT",
+    "Applied Materials",
+    "Semiconductors"
+   ],
+   [
+    "KLAC",
+    "KLA",
+    "Semiconductors"
+   ],
+   [
+    "MRVL",
+    "Marvell",
+    "Semiconductors"
+   ],
+   [
+    "ORCL",
+    "Oracle",
+    "Technology"
+   ],
+   [
+    "CRM",
+    "Salesforce",
+    "Technology"
+   ],
+   [
+    "ADBE",
+    "Adobe",
+    "Technology"
+   ],
+   [
+    "CSCO",
+    "Cisco",
+    "Technology"
+   ],
+   [
+    "IBM",
+    "IBM",
+    "Technology"
+   ],
+   [
+    "NOW",
+    "ServiceNow",
+    "Technology"
+   ],
+   [
+    "INTU",
+    "Intuit",
+    "Technology"
+   ],
+   [
+    "PANW",
+    "Palo Alto Networks",
+    "Technology"
+   ],
+   [
+    "SNOW",
+    "Snowflake",
+    "Technology"
+   ],
+   [
+    "UBER",
+    "Uber",
+    "Technology"
+   ],
+   [
+    "ABNB",
+    "Airbnb",
+    "Consumer Discretionary"
+   ],
+   [
+    "NFLX",
+    "Netflix",
+    "Communication"
+   ],
+   [
+    "DIS",
+    "Walt Disney",
+    "Communication"
+   ],
+   [
+    "CMCSA",
+    "Comcast",
+    "Communication"
+   ],
+   [
+    "T",
+    "AT&T",
+    "Communication"
+   ],
+   [
+    "VZ",
+    "Verizon",
+    "Communication"
+   ],
+   [
+    "TMUS",
+    "T-Mobile",
+    "Communication"
+   ],
+   [
+    "JPM",
+    "JPMorgan Chase",
+    "Financials"
+   ],
+   [
+    "BAC",
+    "Bank of America",
+    "Financials"
+   ],
+   [
+    "WFC",
+    "Wells Fargo",
+    "Financials"
+   ],
+   [
+    "GS",
+    "Goldman Sachs",
+    "Financials"
+   ],
+   [
+    "MS",
+    "Morgan Stanley",
+    "Financials"
+   ],
+   [
+    "C",
+    "Citigroup",
+    "Financials"
+   ],
+   [
+    "BLK",
+    "BlackRock",
+    "Financials"
+   ],
+   [
+    "SCHW",
+    "Charles Schwab",
+    "Financials"
+   ],
+   [
+    "AXP",
+    "American Express",
+    "Financials"
+   ],
+   [
+    "V",
+    "Visa",
+    "Financials"
+   ],
+   [
+    "MA",
+    "Mastercard",
+    "Financials"
+   ],
+   [
+    "PYPL",
+    "PayPal",
+    "Financials"
+   ],
+   [
+    "BRK-B",
+    "Berkshire Hathaway",
+    "Financials"
+   ],
+   [
+    "SPGI",
+    "S&P Global",
+    "Financials"
+   ],
+   [
+    "CB",
+    "Chubb",
+    "Financials"
+   ],
+   [
+    "JNJ",
+    "Johnson & Johnson",
+    "Healthcare"
+   ],
+   [
+    "UNH",
+    "UnitedHealth",
+    "Healthcare"
+   ],
+   [
+    "LLY",
+    "Eli Lilly",
+    "Healthcare"
+   ],
+   [
+    "PFE",
+    "Pfizer",
+    "Healthcare"
+   ],
+   [
+    "MRK",
+    "Merck",
+    "Healthcare"
+   ],
+   [
+    "ABBV",
+    "AbbVie",
+    "Healthcare"
+   ],
+   [
+    "TMO",
+    "Thermo Fisher",
+    "Healthcare"
+   ],
+   [
+    "ABT",
+    "Abbott",
+    "Healthcare"
+   ],
+   [
+    "DHR",
+    "Danaher",
+    "Healthcare"
+   ],
+   [
+    "BMY",
+    "Bristol-Myers Squibb",
+    "Healthcare"
+   ],
+   [
+    "AMGN",
+    "Amgen",
+    "Healthcare"
+   ],
+   [
+    "GILD",
+    "Gilead",
+    "Healthcare"
+   ],
+   [
+    "CVS",
+    "CVS Health",
+    "Healthcare"
+   ],
+   [
+    "MDT",
+    "Medtronic",
+    "Healthcare"
+   ],
+   [
+    "ISRG",
+    "Intuitive Surgical",
+    "Healthcare"
+   ],
+   [
+    "VRTX",
+    "Vertex",
+    "Healthcare"
+   ],
+   [
+    "REGN",
+    "Regeneron",
+    "Healthcare"
+   ],
+   [
+    "BIIB",
+    "Biogen",
+    "Healthcare"
+   ],
+   [
+    "XOM",
+    "Exxon Mobil",
+    "Energy"
+   ],
+   [
+    "CVX",
+    "Chevron",
+    "Energy"
+   ],
+   [
+    "COP",
+    "ConocoPhillips",
+    "Energy"
+   ],
+   [
+    "SLB",
+    "SLB",
+    "Energy"
+   ],
+   [
+    "EOG",
+    "EOG Resources",
+    "Energy"
+   ],
+   [
+    "PSX",
+    "Phillips 66",
+    "Energy"
+   ],
+   [
+    "MPC",
+    "Marathon Petroleum",
+    "Energy"
+   ],
+   [
+    "OXY",
+    "Occidental",
+    "Energy"
+   ],
+   [
+    "VLO",
+    "Valero",
+    "Energy"
+   ],
+   [
+    "WMT",
+    "Walmart",
+    "Consumer Staples"
+   ],
+   [
+    "PG",
+    "Procter & Gamble",
+    "Consumer Staples"
+   ],
+   [
+    "KO",
+    "Coca-Cola",
+    "Consumer Staples"
+   ],
+   [
+    "PEP",
+    "PepsiCo",
+    "Consumer Staples"
+   ],
+   [
+    "COST",
+    "Costco",
+    "Consumer Staples"
+   ],
+   [
+    "MDLZ",
+    "Mondelez",
+    "Consumer Staples"
+   ],
+   [
+    "CL",
+    "Colgate-Palmolive",
+    "Consumer Staples"
+   ],
+   [
+    "KMB",
+    "Kimberly-Clark",
+    "Consumer Staples"
+   ],
+   [
+    "GIS",
+    "General Mills",
+    "Consumer Staples"
+   ],
+   [
+    "MO",
+    "Altria",
+    "Consumer Staples"
+   ],
+   [
+    "STZ",
+    "Constellation Brands",
+    "Consumer Staples"
+   ],
+   [
+    "KHC",
+    "Kraft Heinz",
+    "Consumer Staples"
+   ],
+   [
+    "HD",
+    "Home Depot",
+    "Consumer Discretionary"
+   ],
+   [
+    "LOW",
+    "Lowe's",
+    "Consumer Discretionary"
+   ],
+   [
+    "MCD",
+    "McDonald's",
+    "Consumer Discretionary"
+   ],
+   [
+    "SBUX",
+    "Starbucks",
+    "Consumer Discretionary"
+   ],
+   [
+    "NKE",
+    "Nike",
+    "Consumer Discretionary"
+   ],
+   [
+    "TGT",
+    "Target",
+    "Consumer Discretionary"
+   ],
+   [
+    "BKNG",
+    "Booking Holdings",
+    "Consumer Discretionary"
+   ],
+   [
+    "MAR",
+    "Marriott",
+    "Consumer Discretionary"
+   ],
+   [
+    "GM",
+    "General Motors",
+    "Consumer Discretionary"
+   ],
+   [
+    "F",
+    "Ford",
+    "Consumer Discretionary"
+   ],
+   [
+    "CMG",
+    "Chipotle",
+    "Consumer Discretionary"
+   ],
+   [
+    "ORLY",
+    "O'Reilly",
+    "Consumer Discretionary"
+   ],
+   [
+    "CAT",
+    "Caterpillar",
+    "Industrials"
+   ],
+   [
+    "DE",
+    "Deere",
+    "Industrials"
+   ],
+   [
+    "BA",
+    "Boeing",
+    "Industrials"
+   ],
+   [
+    "HON",
+    "Honeywell",
+    "Industrials"
+   ],
+   [
+    "GE",
+    "GE Aerospace",
+    "Industrials"
+   ],
+   [
+    "MMM",
+    "3M",
+    "Industrials"
+   ],
+   [
+    "UPS",
+    "UPS",
+    "Industrials"
+   ],
+   [
+    "FDX",
+    "FedEx",
+    "Industrials"
+   ],
+   [
+    "LMT",
+    "Lockheed Martin",
+    "Industrials"
+   ],
+   [
+    "RTX",
+    "RTX",
+    "Industrials"
+   ],
+   [
+    "NOC",
+    "Northrop Grumman",
+    "Industrials"
+   ],
+   [
+    "UNP",
+    "Union Pacific",
+    "Industrials"
+   ],
+   [
+    "CSX",
+    "CSX",
+    "Industrials"
+   ],
+   [
+    "ETN",
+    "Eaton",
+    "Industrials"
+   ],
+   [
+    "EMR",
+    "Emerson Electric",
+    "Industrials"
+   ],
+   [
+    "LIN",
+    "Linde",
+    "Materials"
+   ],
+   [
+    "SHW",
+    "Sherwin-Williams",
+    "Materials"
+   ],
+   [
+    "APD",
+    "Air Products",
+    "Materials"
+   ],
+   [
+    "FCX",
+    "Freeport-McMoRan",
+    "Materials"
+   ],
+   [
+    "NEM",
+    "Newmont",
+    "Materials"
+   ],
+   [
+    "DOW",
+    "Dow",
+    "Materials"
+   ],
+   [
+    "NUE",
+    "Nucor",
+    "Materials"
+   ],
+   [
+    "DD",
+    "DuPont",
+    "Materials"
+   ],
+   [
+    "NEE",
+    "NextEra Energy",
+    "Utilities"
+   ],
+   [
+    "DUK",
+    "Duke Energy",
+    "Utilities"
+   ],
+   [
+    "SO",
+    "Southern Company",
+    "Utilities"
+   ],
+   [
+    "D",
+    "Dominion Energy",
+    "Utilities"
+   ],
+   [
+    "AEP",
+    "American Electric Power",
+    "Utilities"
+   ],
+   [
+    "EXC",
+    "Exelon",
+    "Utilities"
+   ],
+   [
+    "AMT",
+    "American Tower",
+    "Real Estate"
+   ],
+   [
+    "PLD",
+    "Prologis",
+    "Real Estate"
+   ],
+   [
+    "EQIX",
+    "Equinix",
+    "Real Estate"
+   ],
+   [
+    "SPG",
+    "Simon Property",
+    "Real Estate"
+   ],
+   [
+    "O",
+    "Realty Income",
+    "Real Estate"
+   ],
+   [
+    "PSA",
+    "Public Storage",
+    "Real Estate"
+   ]
+  ],
+  "TSE": [
+   [
+    "7203",
+    "Toyota Motor",
+    "Consumer Discretionary"
+   ],
+   [
+    "6758",
+    "Sony Group",
+    "Technology"
+   ],
+   [
+    "9984",
+    "SoftBank Group",
+    "Technology"
+   ],
+   [
+    "8035",
+    "Tokyo Electron",
+    "Semiconductors"
+   ],
+   [
+    "6861",
+    "Keyence",
+    "Industrials"
+   ],
+   [
+    "6098",
+    "Recruit Holdings",
+    "Industrials"
+   ],
+   [
+    "4063",
+    "Shin-Etsu Chemical",
+    "Materials"
+   ],
+   [
+    "9433",
+    "KDDI",
+    "Communication"
+   ],
+   [
+    "9432",
+    "NTT",
+    "Communication"
+   ],
+   [
+    "8306",
+    "Mitsubishi UFJ",
+    "Financials"
+   ],
+   [
+    "8316",
+    "Sumitomo Mitsui",
+    "Financials"
+   ],
+   [
+    "8411",
+    "Mizuho",
+    "Financials"
+   ],
+   [
+    "6902",
+    "Denso",
+    "Consumer Discretionary"
+   ],
+   [
+    "7267",
+    "Honda Motor",
+    "Consumer Discretionary"
+   ],
+   [
+    "7201",
+    "Nissan Motor",
+    "Consumer Discretionary"
+   ],
+   [
+    "6501",
+    "Hitachi",
+    "Industrials"
+   ],
+   [
+    "6503",
+    "Mitsubishi Electric",
+    "Industrials"
+   ],
+   [
+    "6702",
+    "Fujitsu",
+    "Technology"
+   ],
+   [
+    "6752",
+    "Panasonic",
+    "Consumer Discretionary"
+   ],
+   [
+    "4502",
+    "Takeda Pharmaceutical",
+    "Healthcare"
+   ],
+   [
+    "4568",
+    "Daiichi Sankyo",
+    "Healthcare"
+   ],
+   [
+    "4519",
+    "Chugai Pharmaceutical",
+    "Healthcare"
+   ],
+   [
+    "2914",
+    "Japan Tobacco",
+    "Consumer Staples"
+   ],
+   [
+    "3382",
+    "Seven & i",
+    "Consumer Staples"
+   ],
+   [
+    "9983",
+    "Fast Retailing",
+    "Consumer Discretionary"
+   ],
+   [
+    "8058",
+    "Mitsubishi Corp",
+    "Industrials"
+   ],
+   [
+    "8031",
+    "Mitsui & Co",
+    "Industrials"
+   ],
+   [
+    "8053",
+    "Sumitomo Corp",
+    "Industrials"
+   ],
+   [
+    "8001",
+    "Itochu",
+    "Industrials"
+   ],
+   [
+    "5401",
+    "Nippon Steel",
+    "Materials"
+   ],
+   [
+    "4901",
+    "Fujifilm",
+    "Healthcare"
+   ],
+   [
+    "7741",
+    "Hoya",
+    "Healthcare"
+   ],
+   [
+    "6954",
+    "Fanuc",
+    "Industrials"
+   ],
+   [
+    "6367",
+    "Daikin Industries",
+    "Industrials"
+   ],
+   [
+    "6301",
+    "Komatsu",
+    "Industrials"
+   ],
+   [
+    "7011",
+    "Mitsubishi Heavy",
+    "Industrials"
+   ],
+   [
+    "9101",
+    "Nippon Yusen",
+    "Industrials"
+   ],
+   [
+    "9104",
+    "Mitsui OSK Lines",
+    "Industrials"
+   ],
+   [
+    "9107",
+    "Kawasaki Kisen",
+    "Industrials"
+   ],
+   [
+    "8766",
+    "Tokio Marine",
+    "Financials"
+   ],
+   [
+    "8750",
+    "Dai-ichi Life",
+    "Financials"
+   ],
+   [
+    "8801",
+    "Mitsui Fudosan",
+    "Real Estate"
+   ],
+   [
+    "8802",
+    "Mitsubishi Estate",
+    "Real Estate"
+   ],
+   [
+    "9201",
+    "Japan Airlines",
+    "Industrials"
+   ],
+   [
+    "9202",
+    "ANA Holdings",
+    "Industrials"
+   ],
+   [
+    "9020",
+    "JR East",
+    "Industrials"
+   ],
+   [
+    "9022",
+    "JR Central",
+    "Industrials"
+   ],
+   [
+    "4661",
+    "Oriental Land",
+    "Consumer Discretionary"
+   ],
+   [
+    "7974",
+    "Nintendo",
+    "Communication"
+   ],
+   [
+    "6981",
+    "Murata Manufacturing",
+    "Technology"
+   ],
+   [
+    "6971",
+    "Kyocera",
+    "Technology"
+   ],
+   [
+    "6273",
+    "SMC Corp",
+    "Industrials"
+   ],
+   [
+    "4543",
+    "Terumo",
+    "Healthcare"
+   ],
+   [
+    "4523",
+    "Eisai",
+    "Healthcare"
+   ],
+   [
+    "2802",
+    "Ajinomoto",
+    "Consumer Staples"
+   ],
+   [
+    "2503",
+    "Kirin Holdings",
+    "Consumer Staples"
+   ],
+   [
+    "2502",
+    "Asahi Group",
+    "Consumer Staples"
+   ],
+   [
+    "3407",
+    "Asahi Kasei",
+    "Materials"
+   ],
+   [
+    "5108",
+    "Bridgestone",
+    "Consumer Discretionary"
+   ],
+   [
+    "7269",
+    "Suzuki Motor",
+    "Consumer Discretionary"
+   ],
+   [
+    "7270",
+    "Subaru",
+    "Consumer Discretionary"
+   ],
+   [
+    "6326",
+    "Kubota",
+    "Industrials"
+   ],
+   [
+    "5411",
+    "JFE Holdings",
+    "Materials"
+   ],
+   [
+    "4452",
+    "Kao",
+    "Consumer Staples"
+   ],
+   [
+    "4911",
+    "Shiseido",
+    "Consumer Staples"
+   ],
+   [
+    "8591",
+    "ORIX",
+    "Financials"
+   ],
+   [
+    "8697",
+    "Japan Exchange Group",
+    "Financials"
+   ],
+   [
+    "9531",
+    "Tokyo Gas",
+    "Utilities"
+   ],
+   [
+    "9501",
+    "Tokyo Electric Power",
+    "Utilities"
+   ],
+   [
+    "9503",
+    "Kansai Electric",
+    "Utilities"
+   ],
+   [
+    "1605",
+    "Inpex",
+    "Energy"
+   ],
+   [
+    "5020",
+    "Eneos Holdings",
+    "Energy"
+   ],
+   [
+    "4704",
+    "Trend Micro",
+    "Technology"
+   ],
+   [
+    "4307",
+    "Nomura Research",
+    "Technology"
+   ],
+   [
+    "6857",
+    "Advantest",
+    "Semiconductors"
+   ],
+   [
+    "6146",
+    "Disco Corp",
+    "Semiconductors"
+   ],
+   [
+    "7735",
+    "Screen Holdings",
+    "Semiconductors"
+   ],
+   [
+    "6963",
+    "Rohm",
+    "Semiconductors"
+   ],
+   [
+    "6723",
+    "Renesas Electronics",
+    "Semiconductors"
+   ],
+   [
+    "8267",
+    "Aeon",
+    "Consumer Staples"
+   ],
+   [
+    "9843",
+    "Nitori",
+    "Consumer Discretionary"
+   ],
+   [
+    "2801",
+    "Kikkoman",
+    "Consumer Staples"
+   ],
+   [
+    "8604",
+    "Nomura Holdings",
+    "Financials"
+   ]
+  ],
+  "HKEX": [
+   [
+    "0700",
+    "Tencent",
+    "Technology"
+   ],
+   [
+    "9988",
+    "Alibaba",
+    "Consumer Discretionary"
+   ],
+   [
+    "0005",
+    "HSBC",
+    "Financials"
+   ],
+   [
+    "1299",
+    "AIA Group",
+    "Financials"
+   ],
+   [
+    "3690",
+    "Meituan",
+    "Consumer Discretionary"
+   ],
+   [
+    "0388",
+    "HKEX",
+    "Financials"
+   ],
+   [
+    "0941",
+    "China Mobile",
+    "Communication"
+   ],
+   [
+    "0883",
+    "CNOOC",
+    "Energy"
+   ],
+   [
+    "0857",
+    "PetroChina",
+    "Energy"
+   ],
+   [
+    "0386",
+    "Sinopec",
+    "Energy"
+   ],
+   [
+    "1398",
+    "ICBC",
+    "Financials"
+   ],
+   [
+    "3988",
+    "Bank of China",
+    "Financials"
+   ],
+   [
+    "0939",
+    "China Construction Bank",
+    "Financials"
+   ],
+   [
+    "1288",
+    "Agricultural Bank of China",
+    "Financials"
+   ],
+   [
+    "2318",
+    "Ping An Insurance",
+    "Financials"
+   ],
+   [
+    "2628",
+    "China Life",
+    "Financials"
+   ],
+   [
+    "0027",
+    "Galaxy Entertainment",
+    "Consumer Discretionary"
+   ],
+   [
+    "1928",
+    "Sands China",
+    "Consumer Discretionary"
+   ],
+   [
+    "0016",
+    "Sun Hung Kai Properties",
+    "Real Estate"
+   ],
+   [
+    "0001",
+    "CK Hutchison",
+    "Industrials"
+   ],
+   [
+    "0002",
+    "CLP Holdings",
+    "Utilities"
+   ],
+   [
+    "0003",
+    "Hong Kong & China Gas",
+    "Utilities"
+   ],
+   [
+    "0006",
+    "Power Assets",
+    "Utilities"
+   ],
+   [
+    "0012",
+    "Henderson Land",
+    "Real Estate"
+   ],
+   [
+    "0017",
+    "New World Development",
+    "Real Estate"
+   ],
+   [
+    "0019",
+    "Swire Pacific",
+    "Industrials"
+   ],
+   [
+    "0066",
+    "MTR Corp",
+    "Industrials"
+   ],
+   [
+    "0101",
+    "Hang Lung Properties",
+    "Real Estate"
+   ],
+   [
+    "0175",
+    "Geely Automobile",
+    "Consumer Discretionary"
+   ],
+   [
+    "0267",
+    "CITIC",
+    "Industrials"
+   ],
+   [
+    "0288",
+    "WH Group",
+    "Consumer Staples"
+   ],
+   [
+    "0291",
+    "China Resources Beer",
+    "Consumer Staples"
+   ],
+   [
+    "0669",
+    "Techtronic Industries",
+    "Industrials"
+   ],
+   [
+    "0688",
+    "China Overseas Land",
+    "Real Estate"
+   ],
+   [
+    "0762",
+    "China Unicom",
+    "Communication"
+   ],
+   [
+    "0823",
+    "Link REIT",
+    "Real Estate"
+   ],
+   [
+    "0836",
+    "China Resources Power",
+    "Utilities"
+   ],
+   [
+    "0868",
+    "Xinyi Glass",
+    "Materials"
+   ],
+   [
+    "0960",
+    "Longfor Group",
+    "Real Estate"
+   ],
+   [
+    "0968",
+    "Xinyi Solar",
+    "Technology"
+   ],
+   [
+    "1044",
+    "Hengan International",
+    "Consumer Staples"
+   ],
+   [
+    "1093",
+    "CSPC Pharmaceutical",
+    "Healthcare"
+   ],
+   [
+    "1109",
+    "China Resources Land",
+    "Real Estate"
+   ],
+   [
+    "1113",
+    "CK Asset",
+    "Real Estate"
+   ],
+   [
+    "1177",
+    "Sino Biopharmaceutical",
+    "Healthcare"
+   ],
+   [
+    "1211",
+    "BYD",
+    "Consumer Discretionary"
+   ],
+   [
+    "1810",
+    "Xiaomi",
+    "Technology"
+   ],
+   [
+    "1876",
+    "Budweiser APAC",
+    "Consumer Staples"
+   ],
+   [
+    "1997",
+    "Wharf REIC",
+    "Real Estate"
+   ],
+   [
+    "2020",
+    "Anta Sports",
+    "Consumer Discretionary"
+   ],
+   [
+    "2313",
+    "Shenzhou International",
+    "Consumer Discretionary"
+   ],
+   [
+    "2319",
+    "China Mengniu",
+    "Consumer Staples"
+   ],
+   [
+    "2331",
+    "Li Ning",
+    "Consumer Discretionary"
+   ],
+   [
+    "2382",
+    "Sunny Optical",
+    "Technology"
+   ],
+   [
+    "2388",
+    "BOC Hong Kong",
+    "Financials"
+   ],
+   [
+    "2688",
+    "ENN Energy",
+    "Utilities"
+   ],
+   [
+    "3328",
+    "Bank of Communications",
+    "Financials"
+   ],
+   [
+    "6862",
+    "Haidilao",
+    "Consumer Discretionary"
+   ],
+   [
+    "9618",
+    "JD.com",
+    "Consumer Discretionary"
+   ],
+   [
+    "9633",
+    "Nongfu Spring",
+    "Consumer Staples"
+   ],
+   [
+    "9999",
+    "NetEase",
+    "Communication"
+   ],
+   [
+    "9868",
+    "XPeng",
+    "Consumer Discretionary"
+   ],
+   [
+    "2015",
+    "Li Auto",
+    "Consumer Discretionary"
+   ],
+   [
+    "9866",
+    "NIO",
+    "Consumer Discretionary"
+   ],
+   [
+    "1024",
+    "Kuaishou",
+    "Communication"
+   ],
+   [
+    "2269",
+    "WuXi Biologics",
+    "Healthcare"
+   ],
+   [
+    "1801",
+    "Innovent Biologics",
+    "Healthcare"
+   ],
+   [
+    "0992",
+    "Lenovo Group",
+    "Technology"
+   ],
+   [
+    "0270",
+    "Guangdong Investment",
+    "Utilities"
+   ],
+   [
+    "1088",
+    "China Shenhua",
+    "Energy"
+   ],
+   [
+    "2333",
+    "Great Wall Motor",
+    "Consumer Discretionary"
+   ]
+  ],
+  "SGX": [
+   [
+    "D05",
+    "DBS Group",
+    "Financials"
+   ],
+   [
+    "O39",
+    "OCBC Bank",
+    "Financials"
+   ],
+   [
+    "U11",
+    "United Overseas Bank",
+    "Financials"
+   ],
+   [
+    "Z74",
+    "Singtel",
+    "Communication"
+   ],
+   [
+    "C6L",
+    "Singapore Airlines",
+    "Industrials"
+   ],
+   [
+    "C38U",
+    "CapitaLand Integrated Commercial Trust",
+    "Real Estate"
+   ],
+   [
+    "A17U",
+    "CapitaLand Ascendas REIT",
+    "Real Estate"
+   ],
+   [
+    "M44U",
+    "Mapletree Logistics Trust",
+    "Real Estate"
+   ],
+   [
+    "J69U",
+    "Frasers Centrepoint Trust",
+    "Real Estate"
+   ],
+   [
+    "N2IU",
+    "Mapletree Pan Asia Commercial Trust",
+    "Real Estate"
+   ],
+   [
+    "BN4",
+    "Keppel",
+    "Industrials"
+   ],
+   [
+    "S63",
+    "ST Engineering",
+    "Industrials"
+   ],
+   [
+    "C07",
+    "Jardine Cycle & Carriage",
+    "Consumer Discretionary"
+   ],
+   [
+    "F34",
+    "Wilmar International",
+    "Consumer Staples"
+   ],
+   [
+    "U96",
+    "Sembcorp Industries",
+    "Utilities"
+   ],
+   [
+    "Y92",
+    "Thai Beverage",
+    "Consumer Staples"
+   ],
+   [
+    "G13",
+    "Genting Singapore",
+    "Consumer Discretionary"
+   ],
+   [
+    "H78",
+    "Hongkong Land",
+    "Real Estate"
+   ],
+   [
+    "J36",
+    "Jardine Matheson",
+    "Industrials"
+   ],
+   [
+    "C09",
+    "City Developments",
+    "Real Estate"
+   ],
+   [
+    "U14",
+    "UOL Group",
+    "Real Estate"
+   ],
+   [
+    "S58",
+    "SATS",
+    "Industrials"
+   ],
+   [
+    "BS6",
+    "Yangzijiang Shipbuilding",
+    "Industrials"
+   ],
+   [
+    "9CI",
+    "CapitaLand Investment",
+    "Real Estate"
+   ],
+   [
+    "V03",
+    "Venture Corp",
+    "Technology"
+   ],
+   [
+    "AJBU",
+    "Keppel DC REIT",
+    "Real Estate"
+   ],
+   [
+    "ME8U",
+    "Mapletree Industrial Trust",
+    "Real Estate"
+   ],
+   [
+    "S68",
+    "Singapore Exchange",
+    "Financials"
+   ],
+   [
+    "D01",
+    "DFI Retail Group",
+    "Consumer Staples"
+   ],
+   [
+    "EB5",
+    "First Resources",
+    "Consumer Staples"
+   ],
+   [
+    "5E2",
+    "Seatrium",
+    "Industrials"
+   ],
+   [
+    "BUOU",
+    "Frasers Logistics & Commercial Trust",
+    "Real Estate"
+   ],
+   [
+    "K71U",
+    "Keppel REIT",
+    "Real Estate"
+   ],
+   [
+    "T82U",
+    "Suntec REIT",
+    "Real Estate"
+   ],
+   [
+    "C2PU",
+    "Parkway Life REIT",
+    "Real Estate"
+   ],
+   [
+    "S59",
+    "SIA Engineering",
+    "Industrials"
+   ],
+   [
+    "558",
+    "UMS Integration",
+    "Semiconductors"
+   ],
+   [
+    "NS8U",
+    "Hutchison Port Holdings",
+    "Industrials"
+   ],
+   [
+    "A7RU",
+    "Keppel Infrastructure Trust",
+    "Utilities"
+   ],
+   [
+    "OV8",
+    "Sheng Siong",
+    "Consumer Staples"
+   ]
+  ],
+  "BURSA": [
+   [
+    "1155",
+    "Malayan Banking",
+    "Financials"
+   ],
+   [
+    "1023",
+    "CIMB Group",
+    "Financials"
+   ],
+   [
+    "5347",
+    "Tenaga Nasional",
+    "Utilities"
+   ],
+   [
+    "6888",
+    "Axiata Group",
+    "Communication"
+   ],
+   [
+    "1295",
+    "Public Bank",
+    "Financials"
+   ],
+   [
+    "5225",
+    "IHH Healthcare",
+    "Healthcare"
+   ],
+   [
+    "4707",
+    "Nestle Malaysia",
+    "Consumer Staples"
+   ],
+   [
+    "3182",
+    "Genting",
+    "Consumer Discretionary"
+   ],
+   [
+    "4715",
+    "Genting Malaysia",
+    "Consumer Discretionary"
+   ],
+   [
+    "1961",
+    "IOI Corp",
+    "Consumer Staples"
+   ],
+   [
+    "2445",
+    "Kuala Lumpur Kepong",
+    "Consumer Staples"
+   ],
+   [
+    "4197",
+    "Sime Darby",
+    "Industrials"
+   ],
+   [
+    "5183",
+    "Petronas Chemicals",
+    "Materials"
+   ],
+   [
+    "5681",
+    "Petronas Dagangan",
+    "Energy"
+   ],
+   [
+    "6033",
+    "Petronas Gas",
+    "Utilities"
+   ],
+   [
+    "1082",
+    "Hong Leong Financial",
+    "Financials"
+   ],
+   [
+    "5819",
+    "Hong Leong Bank",
+    "Financials"
+   ],
+   [
+    "1015",
+    "AMMB Holdings",
+    "Financials"
+   ],
+   [
+    "5398",
+    "Gamuda",
+    "Industrials"
+   ],
+   [
+    "8869",
+    "Press Metal",
+    "Materials"
+   ],
+   [
+    "4863",
+    "Telekom Malaysia",
+    "Communication"
+   ],
+   [
+    "6012",
+    "Maxis",
+    "Communication"
+   ],
+   [
+    "3816",
+    "MISC",
+    "Industrials"
+   ],
+   [
+    "6742",
+    "YTL Power",
+    "Utilities"
+   ],
+   [
+    "4677",
+    "YTL Corp",
+    "Industrials"
+   ],
+   [
+    "5296",
+    "MR DIY",
+    "Consumer Discretionary"
+   ],
+   [
+    "7113",
+    "Top Glove",
+    "Healthcare"
+   ],
+   [
+    "5168",
+    "Hartalega",
+    "Healthcare"
+   ],
+   [
+    "6947",
+    "CelcomDigi",
+    "Communication"
+   ],
+   [
+    "5285",
+    "SD Guthrie",
+    "Consumer Staples"
+   ]
+  ],
+  "CHINA": [
+   [
+    "600519.SS",
+    "Kweichow Moutai",
+    "Consumer Staples"
+   ],
+   [
+    "601318.SS",
+    "Ping An Insurance",
+    "Financials"
+   ],
+   [
+    "600036.SS",
+    "China Merchants Bank",
+    "Financials"
+   ],
+   [
+    "601398.SS",
+    "ICBC",
+    "Financials"
+   ],
+   [
+    "601288.SS",
+    "Agricultural Bank of China",
+    "Financials"
+   ],
+   [
+    "601988.SS",
+    "Bank of China",
+    "Financials"
+   ],
+   [
+    "600000.SS",
+    "SPD Bank",
+    "Financials"
+   ],
+   [
+    "600030.SS",
+    "CITIC Securities",
+    "Financials"
+   ],
+   [
+    "601166.SS",
+    "Industrial Bank",
+    "Financials"
+   ],
+   [
+    "600016.SS",
+    "China Minsheng Bank",
+    "Financials"
+   ],
+   [
+    "000001.SZ",
+    "Ping An Bank",
+    "Financials"
+   ],
+   [
+    "000002.SZ",
+    "China Vanke",
+    "Real Estate"
+   ],
+   [
+    "000333.SZ",
+    "Midea Group",
+    "Consumer Discretionary"
+   ],
+   [
+    "000651.SZ",
+    "Gree Electric",
+    "Consumer Discretionary"
+   ],
+   [
+    "000858.SZ",
+    "Wuliangye Yibin",
+    "Consumer Staples"
+   ],
+   [
+    "002594.SZ",
+    "BYD",
+    "Consumer Discretionary"
+   ],
+   [
+    "300750.SZ",
+    "CATL",
+    "Industrials"
+   ],
+   [
+    "002415.SZ",
+    "Hikvision",
+    "Technology"
+   ],
+   [
+    "600276.SS",
+    "Jiangsu Hengrui",
+    "Healthcare"
+   ],
+   [
+    "600887.SS",
+    "Inner Mongolia Yili",
+    "Consumer Staples"
+   ],
+   [
+    "601888.SS",
+    "China Tourism Duty Free",
+    "Consumer Discretionary"
+   ],
+   [
+    "600585.SS",
+    "Anhui Conch Cement",
+    "Materials"
+   ],
+   [
+    "601668.SS",
+    "China State Construction",
+    "Industrials"
+   ],
+   [
+    "601857.SS",
+    "PetroChina",
+    "Energy"
+   ],
+   [
+    "600028.SS",
+    "Sinopec",
+    "Energy"
+   ],
+   [
+    "601088.SS",
+    "China Shenhua",
+    "Energy"
+   ],
+   [
+    "600900.SS",
+    "China Yangtze Power",
+    "Utilities"
+   ],
+   [
+    "601628.SS",
+    "China Life",
+    "Financials"
+   ],
+   [
+    "601601.SS",
+    "China Pacific Insurance",
+    "Financials"
+   ],
+   [
+    "600104.SS",
+    "SAIC Motor",
+    "Consumer Discretionary"
+   ],
+   [
+    "601633.SS",
+    "Great Wall Motor",
+    "Consumer Discretionary"
+   ],
+   [
+    "000725.SZ",
+    "BOE Technology",
+    "Technology"
+   ],
+   [
+    "002230.SZ",
+    "iFlytek",
+    "Technology"
+   ],
+   [
+    "300059.SZ",
+    "East Money",
+    "Financials"
+   ],
+   [
+    "300015.SZ",
+    "Aier Eye Hospital",
+    "Healthcare"
+   ],
+   [
+    "603288.SS",
+    "Foshan Haitian",
+    "Consumer Staples"
+   ],
+   [
+    "600009.SS",
+    "Shanghai Airport",
+    "Industrials"
+   ],
+   [
+    "601012.SS",
+    "LONGi Green Energy",
+    "Technology"
+   ],
+   [
+    "002475.SZ",
+    "Luxshare Precision",
+    "Technology"
+   ]
+  ]
+ }
+}

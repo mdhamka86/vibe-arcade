@@ -440,6 +440,26 @@ async function loadAll() {
 function digest(items, n = 20) {
   return (items || []).slice(0, n).map((i) => `- [${i.source}]${i.ticker ? ' (' + i.ticker + ')' : ''} ${i.title}`).join('\n');
 }
+// Render the scout's ranked shortlist for the prompt: real measured numbers per candidate,
+// so the model REASONS over evidence instead of recalling names.
+function shortlistBlock(list) {
+  if (!list || !list.length) return null;
+  return list.map((c, idx) => {
+    const bits = [];
+    if (c.ret1w != null) bits.push(`1wk ${c.ret1w > 0 ? '+' : ''}${c.ret1w}%`);
+    if (c.ret1m != null) bits.push(`1mo ${c.ret1m > 0 ? '+' : ''}${c.ret1m}%`);
+    if (c.vsSma20 != null) bits.push(`vs20d ${c.vsSma20 > 0 ? '+' : ''}${c.vsSma20}%`);
+    if (c.vsSma50 != null) bits.push(`vs50d ${c.vsSma50 > 0 ? '+' : ''}${c.vsSma50}%`);
+    if (c.stretch != null) bits.push(`${c.stretch}% up its 60d range`);
+    if (c.weeklyVolPct != null) bits.push(`moves ~${c.weeklyVolPct}%/wk`);
+    const cat = c.catalyst
+      ? ` | CATALYST (${c.catalyst.type}${c.catalyst.verified ? ', calendar-verified' : ', from the news wire'}) ${c.catalyst.date}: ${c.catalyst.text}`
+      : ' | NO CATALYST FOUND — you would have to supply and date one yourself';
+    return `${String(idx + 1).padStart(2)}. ${c.code} ${c.name} [${c.market}, ${c.sector}, ${c.currency}] last ${c.last}`
+      + `\n    ${bits.join(', ')}${c.stale ? ' (signals carried from the last full sweep)' : ''}${cat}`;
+  }).join('\n');
+}
+
 function holdingsSummary(book) {
   const h = book.holdings || [];
   if (!h.length) return 'no holdings synced yet';
@@ -497,6 +517,31 @@ async function actIdeas(force) {
   // declared earlier in this function (do NOT redeclare — same scope). ----
   let watchSignals = { lines: [] };
   try { watchSignals = await enrichTickers(watchTickers, massiveCache); } catch { /* enrichment is a bonus, never fatal */ }
+
+  // ---- THE CANDIDATE PACK (22/07/2026) ----
+  // Built overnight by exchange-scout.js: the committed index universe, screened on real
+  // price signals, catalysts attached, ranked. Before this the hunt free-associated two
+  // tickers out of 28 headline titles that were mostly about names he already holds — there
+  // was no candidate universe at all. Reading a pre-ranked pack costs one Redis GET, which
+  // is why the screening can be 400 names wide without touching this request's budget.
+  //
+  // Yesterday's pack is accepted as a fallback (the scout runs 05:00 ICT, and a cron can
+  // slip); anything older is treated as STALE and the hunt says so rather than presenting
+  // four-day-old momentum as today's.
+  let pack = null;
+  let packState = 'missing';
+  try {
+    pack = await rGet(`exchange:candidates:${t.dateKey}`);
+    if (!pack) pack = await rGet(`exchange:candidates:${addDays(t.dateKey, -1)}`);
+  } catch { pack = null; }
+  if (pack && Array.isArray(pack.shortlist) && pack.shortlist.length) {
+    const ageH = (Date.now() - (Date.parse(pack.builtAt) || 0)) / 3600e3;
+    packState = ageH > 36 ? 'stale' : 'fresh';
+  } else {
+    pack = null;
+  }
+  const shortlist = pack ? pack.shortlist : [];
+  const onList = new Set(shortlist.map((c) => String(c.code || '').toUpperCase()));
 
   // ---- financial headroom: what the account can honestly afford to take up ----
   // Drawn from the synced NOVA account summary so ideas are sized to reality, not fantasy.
@@ -569,6 +614,16 @@ ${digest(news, 28)}
 QUANTITATIVE SIGNALS on his watchlist (real technicals + insider filings from Massive; use these to MEASURE convergence rather than infer it from headlines — an oversold RSI, a price reclaiming its 50-day, a MACD turning up, or a cluster of insider purchases is exactly the kind of hard evidence that EARNS an aggressive framing per rule 2):
 ${signalsBlock(watchSignals.lines)}
 
+${pack ? `SCREENED CANDIDATE SHORTLIST (${shortlist.length} names, ranked, built ${pack.sweep === 'full' ? 'from a full sweep' : 'from an incremental refresh'} of ${pack.universeSize} liquid listings across his six markets${packState === 'stale' ? ' — NOTE: this pack is over 36h old, so treat its numbers as indicative and lean on names whose catalyst is still live' : ''}):
+${shortlistBlock(shortlist)}
+
+HOW TO USE THE SHORTLIST — this is the material you hunt from:
+- Every line is a real measured reading taken from the market, not a recollection. Reason over these numbers.
+- PROPOSE FROM THIS LIST. It has already had his holdings, his recent proposals and his flagged-unavailable names removed, and it is ranked for one-week tradeability.
+- A name here with "NO CATALYST FOUND" is still proposable, but only if YOU can name and date a real catalyst for it that lands inside the window. The date rules below apply to it exactly as they do to anything else.
+- OFF-LIST NAMES: you may go outside this shortlist ONLY when a name clears a much higher bar — it must have a catalyst that is genuinely LIVE (calendar-verified, or dated today or yesterday), it must be listed on one of his six markets, and you must set "off_list_justification" explaining what it has that nothing on the shortlist does. A merely interesting off-list name will be rejected. Do not go off-list to reach for a name you simply like.
+` : `NO SCREENED SHORTLIST IS AVAILABLE THIS SESSION (the overnight scout has not produced a usable pack). Say so plainly in desk_note, hold conviction low, and propose only where a catalyst is genuinely verifiable from the news wire below.
+`}
 TASK: Propose exactly 2 fresh ideas that can MOVE within one week and that help rebalance his book across sectors and markets. Try to include at least one daytime-tradeable regional name (SGX/HKEX/Asian) where a genuine steal exists. For each, indicate whether it is best taken as a plain SHARE or a more aggressive CFD, letting that follow the conviction. Present each in his journal's language: stock name, ticker, exchange, entry point, current market price, buy or sell, take profit, stop loss, and the reason (naming the converging signals, how it diversifies him, and that it fits his buying power). Only propose where news and recommendation genuinely converge. Be honest: if nothing is a real steal today, say so in desk_note and mark ideas at their true lower conviction rather than inflating them.
 
 CATALYST DISCIPLINE (HARD REQUIREMENT — checked in code against a real calendar, and an idea that fails is rejected outright):
@@ -588,7 +643,7 @@ LEVEL DISCIPLINE (every number is validated after you respond, so get them right
 - CONVICTION on a four-rung scale: LOW, MED, MED-HIGH, HIGH. Reserve the top two rungs for genuine convergence of TIMING signals (rule 6).
 
 Respond ONLY with JSON, no markdown:
-{"ideas":[{"name":"Company Name","ticker":"TICK","exchange":"NASDAQ|NYSE|NYSE American|SGX|HKEX|TSE|Bursa|SSE|SZSE","currency":"USD|SGD|HKD|JPY|MYR|CNY","industry":"e.g. Healthcare","direction":"BUY|SELL","instrument":"SHARE|CFD","current_price":"12.40","entry":"12.00-12.30","tp":"14.20","sl":"11.10","horizon":"e.g. 3-5 day trade","catalyst":"the specific dated event or live setup that moves this INSIDE a week, max 20 words","catalyst_date":"YYYY-MM-DD","catalyst_type":"EARNINGS|GUIDANCE|PRODUCT|REGULATORY|ECONOMIC|INDEX|TECHNICAL|MOMENTUM|DRIFT|INSIDER","conviction":"LOW|MED|MED-HIGH|HIGH","signals":["insider","catalyst","technical","momentum"],"diversifies":"how this name helps rebalance his book (sector/geography), short phrase","daytime_tradeable":true,"reason":"the thesis, naming which signals converge and noting it fits his buying power, max 48 words","availability":"likely — confirm on your NOVA platform"}],"stand_down":false,"desk_note":"one honest paragraph on the session's hunt, max 55 words"}`;
+{"ideas":[{"name":"Company Name","ticker":"TICK","exchange":"NASDAQ|NYSE|NYSE American|SGX|HKEX|TSE|Bursa|SSE|SZSE","currency":"USD|SGD|HKD|JPY|MYR|CNY","industry":"e.g. Healthcare","direction":"BUY|SELL","instrument":"SHARE|CFD","current_price":"12.40","entry":"12.00-12.30","tp":"14.20","sl":"11.10","horizon":"e.g. 3-5 day trade","catalyst":"the specific dated event or live setup that moves this INSIDE a week, max 20 words","catalyst_date":"YYYY-MM-DD","catalyst_type":"EARNINGS|GUIDANCE|PRODUCT|REGULATORY|ECONOMIC|INDEX|TECHNICAL|MOMENTUM|DRIFT|INSIDER","conviction":"LOW|MED|MED-HIGH|HIGH","signals":["insider","catalyst","technical","momentum"],"off_list_justification":"ONLY if this name is not on the screened shortlist: what it has that no shortlisted candidate does. Leave empty for shortlisted names.","diversifies":"how this name helps rebalance his book (sector/geography), short phrase","daytime_tradeable":true,"reason":"the thesis, naming which signals converge and noting it fits his buying power, max 48 words","availability":"likely — confirm on your NOVA platform"}],"stand_down":false,"desk_note":"one honest paragraph on the session's hunt, max 55 words"}`;
 
   let ideas = await claude(prompt, 2600);
 
@@ -637,13 +692,29 @@ Respond ONLY with JSON, no markdown:
   // HORIZON GATE: an idea with no dated in-window catalyst is not a one-week trade,
   // whatever its "horizon" field claims.
   const badCatalyst = (i) => !catalystCheck(i, verifiedFor(i), t.dateKey).ok;
-  const isBad = (i) => isBanned(i) || !!offUniverse(i) || badCatalyst(i) || badLevels(i);
+
+  // ON-LIST GATE with a high-bar carve-out. Strictly on-list is the default: free
+  // association is exactly what the scout was built to replace. But a genuinely live story
+  // can break outside a shortlist that was ranked hours earlier, so an off-list name is
+  // allowed IF it clears a materially higher bar than an on-list one:
+  //   (a) its catalyst is LIVE, not merely in-window — calendar-verified, or dated today or
+  //       yesterday. "Something happens on Friday" is enough for a ranked name; it is not
+  //       enough to justify ignoring the ranking.
+  //   (b) it carries an explicit justification for beating everything on the shortlist.
+  // Everything else — tradeable market, real price, sane levels — is already required of
+  // every idea, so those are not restated here.
+  // Delegates to offListCheck (defined at the foot of this file and exported) so the rule
+  // the tests drive is the rule that actually runs — no second copy to drift.
+  const offListProblem = (i) => offListCheck(i, onList, catalystCheck(i, verifiedFor(i), t.dateKey), !!pack);
+
+  const isBad = (i) => isBanned(i) || !!offUniverse(i) || badCatalyst(i) || !!offListProblem(i) || badLevels(i);
 
   if ((ideas.ideas || []).some(isBad)) {
     const dupes = (ideas.ideas || []).filter(isBanned).map((i) => i.ticker || i.name);
     const offU = (ideas.ideas || []).filter((i) => !isBanned(i) && offUniverse(i)).map((i) => `${i.ticker || i.name}: ${offUniverse(i)}`);
     const cat = (ideas.ideas || []).filter((i) => !isBanned(i) && !offUniverse(i) && badCatalyst(i)).map((i) => `${i.ticker || i.name}: ${catalystCheck(i, verifiedFor(i), t.dateKey).reason}`);
-    const lvl = (ideas.ideas || []).filter((i) => !isBanned(i) && !offUniverse(i) && !badCatalyst(i) && badLevels(i)).map((i) => `${i.ticker || i.name}: ${checkLevels(i, realFor(i), { weeklyVolPct: volFor(i) }).reason}`);
+    const offL = (ideas.ideas || []).filter((i) => !isBanned(i) && !offUniverse(i) && !badCatalyst(i) && offListProblem(i)).map((i) => `${i.ticker || i.name}: ${offListProblem(i)}`);
+    const lvl = (ideas.ideas || []).filter((i) => !isBanned(i) && !offUniverse(i) && !badCatalyst(i) && !offListProblem(i) && badLevels(i)).map((i) => `${i.ticker || i.name}: ${checkLevels(i, realFor(i), { weeklyVolPct: volFor(i) }).reason}`);
     // Tell the model the true live prices so its retry is anchored to reality. Quoted in
     // the name's OWN currency — the old code wrote "~$3425" for a Tokyo name priced in yen.
     const priceHints = Object.entries(priceMap)
@@ -652,7 +723,7 @@ Respond ONLY with JSON, no markdown:
       .join('; ');
     try {
       const second = await claude(prompt +
-        `\n\nREJECTED, fix and resubmit two clean ideas:\n${dupes.length ? 'Duplicate/held/unavailable: ' + dupes.join(', ') + '\n' : ''}${offU.length ? 'Not tradeable on NOVA: ' + offU.join('; ') + '\n' : ''}${cat.length ? 'NO IN-WINDOW CATALYST (this is a hard requirement): ' + cat.join('; ') + '\n' : ''}${lvl.length ? 'Broken levels: ' + lvl.join('; ') + '\n' : ''}${priceHints ? 'LIVE PRICES (anchor to these exactly, in the stated currency): ' + priceHints : ''}`, 2600);
+        `\n\nREJECTED, fix and resubmit two clean ideas:\n${dupes.length ? 'Duplicate/held/unavailable: ' + dupes.join(', ') + '\n' : ''}${offU.length ? 'Not tradeable on NOVA: ' + offU.join('; ') + '\n' : ''}${cat.length ? 'NO IN-WINDOW CATALYST (this is a hard requirement): ' + cat.join('; ') + '\n' : ''}${offL.length ? 'OFF-SHORTLIST AND BELOW THE BAR (propose from the screened shortlist instead): ' + offL.join('; ') + '\n' : ''}${lvl.length ? 'Broken levels: ' + lvl.join('; ') + '\n' : ''}${priceHints ? 'LIVE PRICES (anchor to these exactly, in the stated currency): ' + priceHints : ''}`, 2600);
       if (second.ideas) {
         // price the fresh names too before accepting
         const secondReqs = second.ideas.map((i) => ({ ticker: i.ticker || i.name, exchange: i.exchange })).filter((r) => r.ticker);
@@ -697,6 +768,17 @@ Respond ONLY with JSON, no markdown:
       i.conviction = 'LOW';
     }
     if (isBanned(i)) i.reason = ((i.reason || '') + ' [DUPLICATE/HELD WARNING]').trim();
+
+    // provenance: did this come off the screened shortlist, or was it reached for?
+    if (pack) {
+      const nm = (i.ticker || i.name || '').toUpperCase();
+      i.from_shortlist = onList.has(nm);
+      const olp = offListProblem(i);
+      if (olp) { i.off_list_blocked = true; i.off_list_reason = olp; i.conviction = 'LOW'; }
+      if (!i.from_shortlist && !olp) i.off_list_cleared = true;
+      const row = shortlist.find((c) => String(c.code || '').toUpperCase() === nm);
+      if (row) i.screen_note = row.why || null;
+    }
 
     // HORIZON: record the catalyst verdict on the card either way, so a surviving idea
     // shows WHEN it is expected to move and a failing one says why it is not a week trade.
@@ -747,6 +829,12 @@ Respond ONLY with JSON, no markdown:
 
   ideas.generatedAt = t.iso;
   ideas.dateKey = t.dateKey;
+  // provenance of the hunt itself, so the desk can say where its candidates came from
+  ideas.packState = packState;
+  ideas.packSweep = pack ? pack.sweep : null;
+  ideas.packBuiltAt = pack ? pack.builtAt : null;
+  ideas.packUniverseSize = pack ? pack.universeSize : null;
+  ideas.packShortlistSize = shortlist.length;
 
   // CANDIDATE VALIDATION (audit finding 4): the model proposed fresh names — now fetch news
   // for THOSE specific tickers and check the thesis is actually supported, rather than trusting
@@ -1982,7 +2070,7 @@ export const config = { maxDuration: 120 };
 // Exported so tests/test_exchange_market.js drives the REAL money-gates rather than a
 // reimplementation of them. The suite hard-fails if these stop being exported, on the
 // principle that a test quietly checking a copy is worse than no test at all.
-export { checkLevels, sanePrice, recomputeLevels, priceOf, tpCeiling, catalystCheck, addDays, horizonStatus };
+export { checkLevels, sanePrice, recomputeLevels, priceOf, tpCeiling, catalystCheck, addDays, horizonStatus, offListCheck, shortlistBlock };
 
 // ---------- Request handler: the single front door ----------
 export default async function handler(req, res) {
@@ -2014,3 +2102,19 @@ export default async function handler(req, res) {
 
 
 
+
+// ---------- Off-list carve-out, exported for tests ----------
+// The same bar actIdeas enforces, lifted out so the suite drives the REAL rule rather than
+// a copy of it. `onListSet` is the shortlist codes; `cc` is the catalyst verdict.
+function offListCheck(idea, onListSet, cc, hasPack = true) {
+  if (!hasPack) return null;
+  const nm = String(idea.ticker || idea.name || '').toUpperCase();
+  if (onListSet && onListSet.has(nm)) return null;
+  if (!cc || !cc.ok) return 'off-shortlist and its catalyst does not stand up';
+  const live = cc.verified || (cc.delta != null && Math.abs(cc.delta) <= 1);
+  if (!live) return `off-shortlist, and its catalyst (${cc.dateIso}) is not live enough to justify ignoring the ranked screen — off-list names need a calendar-verified or same-day catalyst`;
+  if (String(idea.off_list_justification || '').trim().length < 15) {
+    return 'off-shortlist with no stated reason for beating every screened candidate';
+  }
+  return null;
+}

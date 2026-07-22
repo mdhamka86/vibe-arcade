@@ -100,7 +100,15 @@ export function marketFromHint(exchangeHint) {
 //
 //   ambiguous:true  -> shape fits more than one market and the hint didn't resolve it
 //   supported:false -> resolved to something NOVA does not offer
-export function classifyTicker(rawTicker, exchangeHint) {
+// `opts.trustHint` says the caller KNOWS the market as a fact, not as a guess. Reserve it
+// for curated reference data — the committed universe seed uses it — and NEVER pass it for
+// a market the model wrote, which is the whole reason the default is to distrust the hint.
+//
+// It exists because shape alone genuinely cannot separate every SGX counter: the board has
+// all-letter codes (AJBU Keppel DC REIT, BUOU Frasers Logistics) that look exactly like US
+// tickers, and all-digit ones (558 UMS) that look exactly like Hong Kong. Refusing those is
+// right when a model supplied the label and wrong when the seed did.
+export function classifyTicker(rawTicker, exchangeHint, opts = {}) {
   const raw = String(rawTicker == null ? '' : rawTicker).toUpperCase().trim();
   // Keep letters, digits and dot. THE ORIGINAL BUG lived here: the old pattern was
   // /[^A-Z.]/g, which deleted every digit and turned Asian codes into US tickers.
@@ -112,6 +120,14 @@ export function classifyTicker(rawTicker, exchangeHint) {
   });
 
   if (!sym) return fail('no usable ticker');
+
+  // 0) A TRUSTED market assertion settles it before any shape reasoning. Only curated
+  // reference data may claim this (see opts.trustHint above).
+  if (opts.trustHint && hint && SUPPORTED.includes(hint)) {
+    const dotAt = sym.lastIndexOf('.');
+    const body = dotAt > 0 && BY_SUFFIX[sym.slice(dotAt)] ? sym.slice(0, dotAt) : sym;
+    return build(hint, body, sym, hint);
+  }
 
   // 1) An explicit Yahoo-style suffix is unambiguous — trust it over everything.
   const dot = sym.lastIndexOf('.');
