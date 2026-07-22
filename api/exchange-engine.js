@@ -9,7 +9,7 @@
 
 import { getNews } from './exchange-news.js';
 import { enrichTickers, signalsBlock } from './exchange-massive.js';
-import { getQuotes, getFxToUsd, toUsd } from './quote-provider.js';
+import { getQuotes, getFxToUsd, toUsd, getWeeklyVol, getEarningsDates } from './quote-provider.js';
 import { classifyTicker, marketStatus, SUPPORTED } from './market-classifier.js';
 
 const R_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
@@ -169,22 +169,93 @@ function num(v) {
 // price, derive sensible entry/target/stop around the REAL price so the card never shows
 // levels that are tens of percent off. Uses conservative swing-trade geometry. Returns the
 // recomputed level strings, or null if we cannot (no real price / bad direction).
-function recomputeLevels(idea, realPrice) {
+function recomputeLevels(idea, realPrice, weeklyVolPct) {
   const dir = (idea.direction || '').toUpperCase();
   const px = num(realPrice);
   if (px == null || px <= 0 || (dir !== 'BUY' && dir !== 'SELL')) return null;
-  // sensible one-week swing defaults: entry a touch off current, ~5% target, ~4% stop (R:R ~1.25)
-  const round = (v) => px >= 20 ? +v.toFixed(2) : +v.toFixed(4);
-  if (dir === 'BUY') {
-    const entryLo = round(px * 0.995), entryHi = round(px * 1.005);
-    return { entry: `${entryLo}-${entryHi}`, tp: String(round(px * 1.05)), sl: String(round(px * 0.96)), recomputed: true };
-  }
+  // Sensible one-week swing geometry, SCALED to what the name actually moves (22/07/2026).
+  // These used to be flat 5% target / 4% stop. That is a fine default for a middling name
+  // but wrong at both ends: too ambitious for a quiet counter (and now capable of breaching
+  // the volatility ceiling these same levels have to pass) and too timid for a lively one.
+  // A ~1.2 sigma weekly target with a 1.3 reward:risk keeps the recompute inside the gate
+  // it is feeding, whatever the name.
+  const cap = tpCeiling(weeklyVolPct);
+  const v = num(weeklyVolPct);
+  const tpPct = Math.min(cap.pct, Math.max(3, v != null && v > 0 ? +(v * 1.2).toFixed(2) : 5));
+  const slPct = Math.min(15, Math.max(2, +(tpPct / 1.3).toFixed(2)));
+  const round = (val) => px >= 20 ? +val.toFixed(2) : +val.toFixed(4);
   const entryLo = round(px * 0.995), entryHi = round(px * 1.005);
-  return { entry: `${entryLo}-${entryHi}`, tp: String(round(px * 0.95)), sl: String(round(px * 1.04)), recomputed: true };
+  // ANCHOR ON entryLo, NOT on spot. checkLevels measures stop and target distance from
+  // num(idea.entry), and num() reads the FIRST number in an "lo-hi" range — so deriving the
+  // levels from spot put them a further half-percent away than intended and could push the
+  // stop under the 2% minimum, making the recompute emit levels its own validator rejected.
+  // The round-trip test in tests/test_exchange_horizon.js exists to keep these two in step.
+  const anchor = entryLo;
+  if (dir === 'BUY') {
+    return {
+      entry: `${entryLo}-${entryHi}`,
+      tp: String(round(anchor * (1 + tpPct / 100))),
+      sl: String(round(anchor * (1 - slPct / 100))),
+      recomputed: true,
+    };
+  }
+  return {
+    entry: `${entryLo}-${entryHi}`,
+    tp: String(round(anchor * (1 - tpPct / 100))),
+    sl: String(round(anchor * (1 + slPct / 100))),
+    recomputed: true,
+  };
+}
+
+// Read a planned hold length out of an idea. "horizon" is free text the model writes
+// ("3-5 day trade", "about a week"), so take the LARGEST day figure it mentions and cap it
+// at the desk's one-week ceiling. Defaults to 5 trading days when it says nothing useful.
+const MAX_SWING_DAYS = 7;
+function horizonDaysOf(idea) {
+  const txt = String((idea && idea.horizon) || '');
+  const nums = (txt.match(/\d+/g) || []).map((n) => parseInt(n, 10)).filter((n) => n > 0 && n <= 30);
+  if (/week/i.test(txt) && !nums.length) return MAX_SWING_DAYS;
+  if (!nums.length) return 5;
+  return Math.min(MAX_SWING_DAYS, Math.max(...nums));
+}
+
+// THE TIME-STOP (22/07/2026). The hunt proposes one-week swings; actReview used to open by
+// calling every holding a "long-term conviction" to be judged "with patience, like a
+// seasoned analyst rather than a jumpy trader". So the moment a five-day swing filled, the
+// desk started coaching him to sit on it indefinitely. daysHeld was even printed in the
+// prompt and nothing was ever said about acting on it.
+//
+// Only positions that CAME FROM a swing idea get a clock. His seeded long-term book — the
+// semiconductor convictions — must keep the patient framing, so this deliberately keys off
+// the horizon carried through take-up rather than applying a five-day stop to everything.
+function horizonStatus(h, now = Date.now()) {
+  const planned = num(h && h.horizonDays);
+  const isSwing = !!(h && (h.isSwing || h.fromGem)) && planned != null && planned > 0;
+  if (!isSwing) return { isSwing: false, planned: null, held: null, overdue: false, due: false };
+  const held = Math.max(0, Math.floor((now - (num(h.openedAt) || now)) / 86400000));
+  const remaining = planned - held;
+  return {
+    isSwing: true,
+    planned,
+    held,
+    remaining,
+    due: remaining === 0,
+    overdue: remaining < 0,
+    catalyst: h.catalyst || null,
+    catalystDate: h.catalystDate || null,
+  };
+}
+
+// Add N days to a YYYY-MM-DD key, returning the same shape. Used for the earnings window.
+function addDays(dateKey, n) {
+  const ms = Date.parse(`${dateKey}T00:00:00Z`);
+  if (!isFinite(ms)) return dateKey;
+  return new Date(ms + n * 86400000).toISOString().slice(0, 10);
 }
 
 // `quote` may be a bare number, null, or a rich record from quote-provider.js.
-function checkLevels(idea, quote) {
+// `opts.weeklyVolPct` scales the target ceiling to the name's own realised movement.
+function checkLevels(idea, quote, opts = {}) {
   const dir = (idea.direction || '').toUpperCase();
   const entry = num(idea.entry);
   let cur = num(idea.current_price);
@@ -249,10 +320,104 @@ function checkLevels(idea, quote) {
   if (slPct > 15) return { ok: false, reason: `stop ${slPct.toFixed(1)}% away — too wide for a one-week swing` };
   if (tpPct < 2) return { ok: false, reason: `target only ${tpPct.toFixed(1)}% away — not worth the risk` };
 
-  // 4) reward should beat risk
+  // 4) TARGET CEILING, scaled to the name's own volatility (22/07/2026).
+  // The stop was bounded on both sides but the target had NO upper bound at all, so a 40%
+  // take-profit passed cleanly whenever the stop was wide enough to keep R:R above 1. Forty
+  // percent in five trading days is not a swing, it is a wish — and it is how a months-long
+  // thesis gets dressed as a week trade. A flat cap would be wrong in the other direction,
+  // since 10% in a week is ordinary for a volatile name and near-impossible for a mega-cap,
+  // so the ceiling is measured against the name's own realised weekly sigma.
+  const cap = tpCeiling(opts.weeklyVolPct);
+  if (tpPct > cap.pct) {
+    return {
+      ok: false,
+      reason: `target ${tpPct.toFixed(1)}% away is beyond what this name plausibly moves in a week (${cap.basis}) — that is a multi-month target on a one-week trade`,
+      realPrice, tpCap: cap.pct, weeklyVolPct: cap.vol,
+    };
+  }
+
+  // 5) reward should beat risk
   const rr = slPct ? +(tpPct / slPct).toFixed(2) : null;
   if (rr != null && rr < 1) return { ok: false, reason: `reward:risk ${rr} below 1 — target closer than stop` };
-  return { ok: true, rr, slPct: +slPct.toFixed(1), tpPct: +tpPct.toFixed(1), realPrice: realPrice ?? null };
+  return {
+    ok: true, rr, slPct: +slPct.toFixed(1), tpPct: +tpPct.toFixed(1),
+    realPrice: realPrice ?? null, tpCap: cap.pct, weeklyVolPct: cap.vol,
+  };
+}
+
+// How far a name can credibly travel in one week. 2.5 sigma is deliberately generous — this
+// is a backstop against fantasy, not a forecast — but it is bounded hard at 20% because
+// nothing liquid enough to trade reliably moves further than that in five sessions, and
+// floored at 4% so a very quiet counter is still tradeable at all.
+// A name we could not measure falls back to a flat, conservative 12%: unmeasured must not
+// mean unlimited, which is the mistake the unpriced path already taught us.
+function tpCeiling(weeklyVolPct) {
+  const v = num(weeklyVolPct);
+  if (v == null || !(v > 0)) {
+    return { pct: 12, vol: null, basis: 'no volatility reading available, so a conservative 12% ceiling applies' };
+  }
+  const pct = Math.max(4, Math.min(20, +(v * 2.5).toFixed(1)));
+  return { pct, vol: v, basis: `it moves about ${v.toFixed(1)}% in a typical week, so the ceiling is ${pct}%` };
+}
+
+// ---------- Catalyst timing gate ----------
+// WHY (22/07/2026). The prompt asked for a one-week horizon and the schema had a free-text
+// "horizon" field that nothing ever checked, so an idea could be labelled "4-6 day trade"
+// while its actual thesis was a months-long sum-of-parts re-rating. That is exactly what the
+// Sony card was: right label, wrong catalyst timeframe.
+//
+// Every idea must now name a catalyst AND date it, and the date must sit inside the window:
+//   - up to 7 calendar days AHEAD  -> the event lands while he still holds it
+//   - up to 5 calendar days BEHIND -> the move is already underway (a breakout that has
+//     triggered, a post-earnings drift, an insider-buying pop)
+// Anything else — no date, or a date three weeks out — is rejected. A slow value re-rating
+// cannot produce a date in that window, which is precisely the point.
+const CATALYST_AHEAD_DAYS = 7;
+const CATALYST_BEHIND_DAYS = 5;
+
+function dayDiff(fromIso, toIso) {
+  const a = Date.parse(`${fromIso}T00:00:00Z`);
+  const b = Date.parse(`${toIso}T00:00:00Z`);
+  if (!isFinite(a) || !isFinite(b)) return null;
+  return Math.round((b - a) / 86400000);
+}
+
+// `verified` is an optional { date, source } from the earnings calendar. When present it
+// OVERRIDES the model's claim — same principle as the live price beating the stated one.
+function catalystCheck(idea, verified, todayIso) {
+  const text = String(idea.catalyst || '').trim();
+  const claimed = String(idea.catalyst_date || '').trim();
+  const type = String(idea.catalyst_type || '').toUpperCase().trim();
+  if (text.length < 8) return { ok: false, reason: 'no catalyst named — a one-week trade needs a specific reason the price moves NOW' };
+
+  let dateIso = /^\d{4}-\d{2}-\d{2}$/.test(claimed) ? claimed : null;
+  let usedVerified = false;
+  if (verified && verified.date && /^\d{4}-\d{2}-\d{2}$/.test(verified.date)) {
+    dateIso = verified.date;
+    usedVerified = true;
+  }
+  if (!dateIso) {
+    return { ok: false, reason: `catalyst "${text.slice(0, 40)}" has no usable date (got "${claimed || 'nothing'}") — an undated catalyst cannot be shown to land inside a one-week hold` };
+  }
+
+  const delta = dayDiff(todayIso, dateIso);
+  if (delta == null) return { ok: false, reason: `catalyst date "${dateIso}" is unreadable` };
+  if (delta > CATALYST_AHEAD_DAYS) {
+    return {
+      ok: false, dateIso, delta, verified: usedVerified,
+      reason: `catalyst lands ${delta} days out (${dateIso})${usedVerified ? ', per the earnings calendar' : ''} — outside a one-week hold, so he would be closed before it happens`,
+    };
+  }
+  if (delta < -CATALYST_BEHIND_DAYS) {
+    return {
+      ok: false, dateIso, delta, verified: usedVerified,
+      reason: `catalyst was ${Math.abs(delta)} days ago (${dateIso}) — too stale to still be driving the move`,
+    };
+  }
+  return {
+    ok: true, dateIso, delta, verified: usedVerified, type,
+    when: delta > 0 ? `in ${delta} day(s)` : delta === 0 ? 'today' : `${Math.abs(delta)} day(s) ago, already underway`,
+  };
 }
 
 // ---------- State ----------
@@ -360,14 +525,18 @@ YOUR MANDATE (read carefully):
 1. HORIZON: every idea is a short to shorter-term trade, a few days out to roughly a week at the ceiling. Not a long-term investment. The thesis must be able to play out quickly (a catalyst, a technical bounce, a post-earnings drift, an insider-buying pop, a momentum move).
 2. LEVERAGE & AGGRESSION WELCOME, BUT EARNED: he actively WANTS to be more aggressive on these shorter trades, and CFDs are welcome and often preferred precisely because they are more volatile and leveraged, which suits a punchy short-term style. HOWEVER this aggression must be EARNED, never assumed. Only lean aggressive (a CFD framing, a tighter-to-price entry, a fuller size) when there is genuine NEWS CONVERGENCE (two or more independent signals or sources pointing the same way) or otherwise strong, well-evidenced confidence. Where conviction is merely moderate, stay proportionate and say so honestly. Reckless aggression on a thin thesis is exactly what to avoid; aggression is the reward for conviction, not a default.
 3. WITHIN HIS MEANS (critical): ${affordLine} State briefly in each idea's reason that it fits comfortably within his firepower.
-4. HUNT STEALS THAT REBALANCE: find genuine STEALS — mispriced, overlooked, cheap-versus-worth names, not crowded obvious ones. Roam ALL industries (healthcare, energy, industrials, financials, consumer, materials, utilities, biotech, and yes occasionally tech). DELIBERATELY AVOID semiconductors and chip names: he is already saturated. Actively prize names that diversify his sector AND geographic mix.
+4. HUNT MOVES THAT HAPPEN THIS WEEK, NOT BARGAINS THAT PAY OFF EVENTUALLY: find names about to MOVE inside his holding window — a catalyst landing in days, a technical break already triggering, live momentum, a post-earnings drift under way. Roam ALL industries (healthcare, energy, industrials, financials, consumer, materials, utilities, biotech, and yes occasionally tech). DELIBERATELY AVOID semiconductors and chip names: he is already saturated. Where two candidates are equally likely to move this week, prefer the one that diversifies his sector and geographic mix — but NEVER propose a name for diversification alone if nothing is going to move it in the next five sessions.
+   A "cheap versus fair value" argument is NOT a reason to buy this week. Being undervalued is not an event; a stock can stay cheap for a year. Undervaluation may only appear as SUPPORTING colour behind a dated catalyst that will actually be the thing that moves it.
 5. MARKET SPREAD: of your ideas, actively try to include at least one daytime-tradeable regional name (SGX Singapore, HKEX Hong Kong, or another Asian NOVA-listed market) when a genuine steal exists there, so he has something to trade in daylight. US names are welcome too, but note the US ones are night-only for him.
-6. WEIGH ALL FOUR SIGNAL FAMILIES and prize CONVERGENCE where several align on one name:
-   - Insider & congressional buying (an insider or member of Congress recently buying with real money is a strong tell)
-   - Value & fundamentals (cheap versus peers, quality at a temporary discount — the essence of a steal)
-   - News & catalysts (earnings beats, upgrades, contract wins, product news, FDA decisions)
-   - Technical setups (pullback into support, a clean base, a breakout with volume)
-   The best idea is one where 2+ of these point the same way. Name which signals fire in the reason. Genuine convergence is what makes a steal a steal, and is precisely what licenses a more aggressive, leveraged framing per rule 2. Do NOT propose a name unless the news and the recommendation genuinely converge.
+6. SIGNAL FAMILIES — and note that they are NOT equal for a one-week trade:
+   TIMING SIGNALS (these can move a price inside five sessions, and at least ONE must be present and firing):
+   - News & catalysts (earnings, guidance, upgrades, contract wins, product news, FDA decisions, index inclusion) — must be DATED
+   - Technical setups actually triggering (a breakout with volume, a bounce off support that has already turned, a reclaim of the 50-day)
+   - Live momentum or a post-earnings drift already under way
+   - Insider & congressional buying filed RECENTLY (a cluster of purchases in the last few weeks is a live tell; a filing from six months ago is not)
+   CONTEXT SIGNALS (these make a move more attractive but CANNOT start one, and never count toward conviction on their own):
+   - Value & fundamentals (cheap versus peers, quality at a temporary discount)
+   Conviction comes from TIMING signals converging. Two context signals and no timing signal is a LOW-conviction idea at best, and honestly is not an idea for this desk at all — it is a long-term investment thesis, which is not what he is doing here. Name which signals fire in the reason, and say plainly which one is the thing that moves it THIS WEEK. Do NOT propose a name unless the news and the recommendation genuinely converge.
 7. TRADEABILITY (critical): only propose names properly LISTED and liquid on a major exchange NOVA offers — US (NASDAQ, NYSE, NYSE American), Singapore (SGX), Hong Kong (HKEX), or other main Asian boards NOVA supports — tradeable as a share or CFD. NEVER propose OTC, pink-sheet, or nano-cap names a retail broker almost certainly cannot trade. When in doubt, prefer the more liquid, clearly-listed name. Mark each idea's availability as "likely" and note it needs his confirmation on the platform.
 8. NO DUPLICATES: do NOT propose any name in this banned list (recently proposed or already held): ${bannedList.join(', ') || 'none yet'}.
 9. NEVER propose any name he has flagged unavailable on his platform: ${[...unavailable].join(', ') || 'none yet'}.
@@ -400,17 +569,26 @@ ${digest(news, 28)}
 QUANTITATIVE SIGNALS on his watchlist (real technicals + insider filings from Massive; use these to MEASURE convergence rather than infer it from headlines — an oversold RSI, a price reclaiming its 50-day, a MACD turning up, or a cluster of insider purchases is exactly the kind of hard evidence that EARNS an aggressive framing per rule 2):
 ${signalsBlock(watchSignals.lines)}
 
-TASK: Propose exactly 2 fresh short-term STEAL ideas that help rebalance his book across sectors and markets. Try to include at least one daytime-tradeable regional name (SGX/HKEX/Asian) where a genuine steal exists. For each, indicate whether it is best taken as a plain SHARE or a more aggressive CFD, letting that follow the conviction. Present each in his journal's language: stock name, ticker, exchange, entry point, current market price, buy or sell, take profit, stop loss, and the reason (naming the converging signals, how it diversifies him, and that it fits his buying power). Only propose where news and recommendation genuinely converge. Be honest: if nothing is a real steal today, say so in desk_note and mark ideas at their true lower conviction rather than inflating them.
+TASK: Propose exactly 2 fresh ideas that can MOVE within one week and that help rebalance his book across sectors and markets. Try to include at least one daytime-tradeable regional name (SGX/HKEX/Asian) where a genuine steal exists. For each, indicate whether it is best taken as a plain SHARE or a more aggressive CFD, letting that follow the conviction. Present each in his journal's language: stock name, ticker, exchange, entry point, current market price, buy or sell, take profit, stop loss, and the reason (naming the converging signals, how it diversifies him, and that it fits his buying power). Only propose where news and recommendation genuinely converge. Be honest: if nothing is a real steal today, say so in desk_note and mark ideas at their true lower conviction rather than inflating them.
+
+CATALYST DISCIPLINE (HARD REQUIREMENT — checked in code against a real calendar, and an idea that fails is rejected outright):
+- Every idea MUST name a specific catalyst and give its DATE as YYYY-MM-DD in "catalyst_date". Today is ${t.dateKey}.
+- That date must fall between ${addDays(t.dateKey, -CATALYST_BEHIND_DAYS)} and ${addDays(t.dateKey, CATALYST_AHEAD_DAYS)}. Either the event lands while he still holds the position, or it has ALREADY happened in the last few days and the move is under way right now.
+- An earnings date three weeks out is USELESS to him: he will have closed the trade before it happens. Do not propose it.
+- "The stock is undervalued", "the market will re-rate this", "sum-of-the-parts is worth more" are NOT catalysts. They have no date. If the only argument is that a name is cheap, do not propose it.
+- For US names the earnings date is verified against a real calendar and YOUR claimed date will be overridden if it is wrong, so do not guess it.
+- Set "catalyst_type" to one of EARNINGS, GUIDANCE, PRODUCT, REGULATORY, ECONOMIC, INDEX, TECHNICAL, MOMENTUM, DRIFT, INSIDER.
 
 LEVEL DISCIPLINE (every number is validated after you respond, so get them right):
 - entry must sit within ~8% of the current price (a fillable swing entry, not a far-off limit).
 - BUY: stop below entry, target above. SELL: stop above entry, target below.
 - stop distance sane for a one-week hold: roughly 3-10% from entry, never tighter than ~2% (daily noise) nor wider than ~15%.
+- THE TARGET MUST BE REACHABLE IN ONE WEEK. It is capped in code at about 2.5x what the name actually moves in a typical week, so a 20-40% target will be rejected however good the story is. For most large caps a realistic one-week target is roughly 3-8%; for a genuinely volatile name it may be more. Size the target to the move, not to the thesis.
 - aim for reward:risk of at least 1.5. State real price levels, not round guesses.
-- CONVICTION on a four-rung scale: LOW, MED, MED-HIGH, HIGH. Reserve the top two rungs for genuine multi-signal convergence.
+- CONVICTION on a four-rung scale: LOW, MED, MED-HIGH, HIGH. Reserve the top two rungs for genuine convergence of TIMING signals (rule 6).
 
 Respond ONLY with JSON, no markdown:
-{"ideas":[{"name":"Company Name","ticker":"TICK","exchange":"NASDAQ|NYSE|NYSE American|SGX|HKEX|TSE|Bursa|SSE|SZSE","currency":"USD|SGD|HKD|JPY|MYR|CNY","industry":"e.g. Healthcare","direction":"BUY|SELL","instrument":"SHARE|CFD","current_price":"12.40","entry":"12.00-12.30","tp":"14.20","sl":"11.10","horizon":"e.g. 3-5 day trade","conviction":"LOW|MED|MED-HIGH|HIGH","signals":["insider","value","catalyst","technical"],"diversifies":"how this name helps rebalance his book (sector/geography), short phrase","daytime_tradeable":true,"reason":"the thesis, naming which signals converge and noting it fits his buying power, max 48 words","availability":"likely — confirm on your NOVA platform"}],"stand_down":false,"desk_note":"one honest paragraph on the session's hunt, max 55 words"}`;
+{"ideas":[{"name":"Company Name","ticker":"TICK","exchange":"NASDAQ|NYSE|NYSE American|SGX|HKEX|TSE|Bursa|SSE|SZSE","currency":"USD|SGD|HKD|JPY|MYR|CNY","industry":"e.g. Healthcare","direction":"BUY|SELL","instrument":"SHARE|CFD","current_price":"12.40","entry":"12.00-12.30","tp":"14.20","sl":"11.10","horizon":"e.g. 3-5 day trade","catalyst":"the specific dated event or live setup that moves this INSIDE a week, max 20 words","catalyst_date":"YYYY-MM-DD","catalyst_type":"EARNINGS|GUIDANCE|PRODUCT|REGULATORY|ECONOMIC|INDEX|TECHNICAL|MOMENTUM|DRIFT|INSIDER","conviction":"LOW|MED|MED-HIGH|HIGH","signals":["insider","catalyst","technical","momentum"],"diversifies":"how this name helps rebalance his book (sector/geography), short phrase","daytime_tradeable":true,"reason":"the thesis, naming which signals converge and noting it fits his buying power, max 48 words","availability":"likely — confirm on your NOVA platform"}],"stand_down":false,"desk_note":"one honest paragraph on the session's hunt, max 55 words"}`;
 
   let ideas = await claude(prompt, 2600);
 
@@ -424,6 +602,20 @@ Respond ONLY with JSON, no markdown:
     .filter((r) => r.ticker);
   let priceMap = await livePrices(quoteReqs);
   const realFor = (i) => priceMap[(i.ticker || i.name || '').toUpperCase()] ?? null;
+
+  // Realised weekly volatility per name, so the target ceiling is measured rather than
+  // assumed, and the earnings calendar so a claimed catalyst date can be checked against
+  // the real one. Both degrade to empty without taking the hunt down.
+  let volMap = await getWeeklyVol(quoteReqs).catch(() => ({}));
+  let earnMap = await getEarningsDates(quoteReqs, t.dateKey, addDays(t.dateKey, 45)).catch(() => ({}));
+  const volFor = (i) => volMap[(i.ticker || i.name || '').toUpperCase()] ?? null;
+  const earnFor = (i) => earnMap[(i.ticker || i.name || '').toUpperCase()] ?? null;
+  // The earnings calendar only speaks for dated EARNINGS-type catalysts. A technical
+  // breakout must not be silently rewritten to the next results date.
+  const verifiedFor = (i) => {
+    const ty = String(i.catalyst_type || '').toUpperCase();
+    return (ty === 'EARNINGS' || ty === 'GUIDANCE') ? earnFor(i) : null;
+  };
 
   // TRADEABLE-UNIVERSE GATE (22/07/2026). Tradeability used to be prompt-English only:
   // rules 7 and 9 asked the model nicely and nothing in code checked. `universe.tradeable`
@@ -441,13 +633,17 @@ Respond ONLY with JSON, no markdown:
     const nm = (i.ticker || i.name || '').toUpperCase();
     return bannedList.map((b) => b.toUpperCase()).includes(nm) || unavailable.has(nm) || heldNames.has(nm);
   };
-  const badLevels = (i) => !checkLevels(i, realFor(i)).ok;
-  const isBad = (i) => isBanned(i) || !!offUniverse(i) || badLevels(i);
+  const badLevels = (i) => !checkLevels(i, realFor(i), { weeklyVolPct: volFor(i) }).ok;
+  // HORIZON GATE: an idea with no dated in-window catalyst is not a one-week trade,
+  // whatever its "horizon" field claims.
+  const badCatalyst = (i) => !catalystCheck(i, verifiedFor(i), t.dateKey).ok;
+  const isBad = (i) => isBanned(i) || !!offUniverse(i) || badCatalyst(i) || badLevels(i);
 
   if ((ideas.ideas || []).some(isBad)) {
     const dupes = (ideas.ideas || []).filter(isBanned).map((i) => i.ticker || i.name);
     const offU = (ideas.ideas || []).filter((i) => !isBanned(i) && offUniverse(i)).map((i) => `${i.ticker || i.name}: ${offUniverse(i)}`);
-    const lvl = (ideas.ideas || []).filter((i) => !isBanned(i) && !offUniverse(i) && badLevels(i)).map((i) => `${i.ticker || i.name}: ${checkLevels(i, realFor(i)).reason}`);
+    const cat = (ideas.ideas || []).filter((i) => !isBanned(i) && !offUniverse(i) && badCatalyst(i)).map((i) => `${i.ticker || i.name}: ${catalystCheck(i, verifiedFor(i), t.dateKey).reason}`);
+    const lvl = (ideas.ideas || []).filter((i) => !isBanned(i) && !offUniverse(i) && !badCatalyst(i) && badLevels(i)).map((i) => `${i.ticker || i.name}: ${checkLevels(i, realFor(i), { weeklyVolPct: volFor(i) }).reason}`);
     // Tell the model the true live prices so its retry is anchored to reality. Quoted in
     // the name's OWN currency — the old code wrote "~$3425" for a Tokyo name priced in yen.
     const priceHints = Object.entries(priceMap)
@@ -456,11 +652,13 @@ Respond ONLY with JSON, no markdown:
       .join('; ');
     try {
       const second = await claude(prompt +
-        `\n\nREJECTED, fix and resubmit two clean ideas:\n${dupes.length ? 'Duplicate/held/unavailable: ' + dupes.join(', ') + '\n' : ''}${offU.length ? 'Not tradeable on NOVA: ' + offU.join('; ') + '\n' : ''}${lvl.length ? 'Broken levels: ' + lvl.join('; ') + '\n' : ''}${priceHints ? 'LIVE PRICES (anchor to these exactly, in the stated currency): ' + priceHints : ''}`, 2600);
+        `\n\nREJECTED, fix and resubmit two clean ideas:\n${dupes.length ? 'Duplicate/held/unavailable: ' + dupes.join(', ') + '\n' : ''}${offU.length ? 'Not tradeable on NOVA: ' + offU.join('; ') + '\n' : ''}${cat.length ? 'NO IN-WINDOW CATALYST (this is a hard requirement): ' + cat.join('; ') + '\n' : ''}${lvl.length ? 'Broken levels: ' + lvl.join('; ') + '\n' : ''}${priceHints ? 'LIVE PRICES (anchor to these exactly, in the stated currency): ' + priceHints : ''}`, 2600);
       if (second.ideas) {
         // price the fresh names too before accepting
         const secondReqs = second.ideas.map((i) => ({ ticker: i.ticker || i.name, exchange: i.exchange })).filter((r) => r.ticker);
         priceMap = { ...priceMap, ...(await livePrices(secondReqs)) };
+        volMap = { ...volMap, ...(await getWeeklyVol(secondReqs).catch(() => ({}))) };
+        earnMap = { ...earnMap, ...(await getEarningsDates(secondReqs, t.dateKey, addDays(t.dateKey, 45)).catch(() => ({}))) };
         if (!second.ideas.some(isBad)) ideas = second;
       }
     } catch { /* fall through to flagging */ }
@@ -500,7 +698,21 @@ Respond ONLY with JSON, no markdown:
     }
     if (isBanned(i)) i.reason = ((i.reason || '') + ' [DUPLICATE/HELD WARNING]').trim();
 
-    let lc = checkLevels(i, q);
+    // HORIZON: record the catalyst verdict on the card either way, so a surviving idea
+    // shows WHEN it is expected to move and a failing one says why it is not a week trade.
+    const cc = catalystCheck(i, verifiedFor(i), t.dateKey);
+    i.catalyst_ok = cc.ok;
+    i.catalyst_date_used = cc.dateIso || null;
+    i.catalyst_verified = !!cc.verified;
+    i.catalyst_when = cc.ok ? cc.when : null;
+    i.weekly_vol_pct = volFor(i);
+    if (!cc.ok) {
+      i.horizon_broken = true;
+      i.horizon_warning = `NOT A ONE-WEEK TRADE: ${cc.reason}.`;
+      i.conviction = 'LOW';
+    }
+
+    let lc = checkLevels(i, q, { weeklyVolPct: volFor(i) });
 
     // UNPRICED: show a thesis, never a number. Blanking current_price is deliberate —
     // the model's own figure is exactly what cannot be trusted here, and leaving it on
@@ -523,10 +735,10 @@ Respond ONLY with JSON, no markdown:
     // sensible entry/TP/SL around the real live price rather than showing numbers tens of
     // percent off. These levels are what he acts on manually, so they must be right.
     if (!lc.ok && !lc.feedSuspect && real != null) {
-      const rl = recomputeLevels(i, real);
+      const rl = recomputeLevels(i, real, volFor(i));
       if (rl) {
         i.entry = rl.entry; i.tp = rl.tp; i.sl = rl.sl; i.levels_recomputed = true;
-        lc = checkLevels(i, q);
+        lc = checkLevels(i, q, { weeklyVolPct: volFor(i) });
       }
     }
     if (!lc.ok) { i.level_warning = `LEVELS UNVERIFIED: ${lc.reason}. Confirm on your chart before trading.`; i.conviction = 'LOW'; i.levels_broken = true; }
@@ -751,6 +963,14 @@ async function actSync(positionsImgs, historyImg) {
         adopted.gemThesis = match.reason || null;
         adopted.mentalTP = match.tp || null;
         adopted.mentalSL = match.sl || null;
+        // HORIZON travels with the position (22/07/2026). It used to stop at the idea card:
+        // entry/TP/SL crossed into the book and the one-week intent did not, so a five-day
+        // swing silently became an open-ended hold the moment it filled.
+        adopted.horizonDays = match.horizonDays || null;
+        adopted.horizonLabel = match.horizon || null;
+        adopted.catalyst = match.catalyst || null;
+        adopted.catalystDate = match.catalystDate || null;
+        adopted.isSwing = true;
         report.filledFromGems.push(adopted.name);
       }
       still.push(adopted);
@@ -1093,11 +1313,29 @@ async function actReview(holdingId) {
     levelEvent = `Locked levels (SL ${lockedSL ?? 'none'}, TP ${lockedTP ?? 'none'}); no live price to check against right now.`;
   }
 
-  const verdict = await claude(`You are THE EXCHANGE's position analyst, reviewing ONE long-term equity holding in a Phuket investor's Phillip Nova (NOVA) portfolio. These are his considered long-term convictions, NOT week-long swings, so judge with patience, like a seasoned analyst rather than a jumpy trader. Run a zero-based review (Peter Lynch's test: if he held none of this today, would buying it right now at this price be justified?).
+  // ---- THE TIME-STOP. NOVA has no automatic exit and neither did this desk: a swing could
+  // run past its intended life indefinitely because nothing ever counted the days. ----
+  const hz = horizonStatus(h);
+  let timeStopBlock = '';
+  if (hz.isSwing) {
+    const catLine = hz.catalyst ? ` The catalyst he entered on was: ${hz.catalyst}${hz.catalystDate ? ` (dated ${hz.catalystDate})` : ''}.` : '';
+    if (hz.overdue) {
+      timeStopBlock = `\nTIME-STOP — IMPORTANT: this was taken as a ${hz.planned}-day swing and he has now held it ${hz.held} day(s). IT IS ${Math.abs(hz.remaining)} DAY(S) PAST ITS INTENDED LIFE.${catLine} He does not hold anything beyond a week. Open your verdict by addressing this directly: either the reason for the trade has played out or failed and he should CLOSE it now, or there is a specific, concrete reason to give it a few more days — and if so, say exactly how many and what he is waiting for. Do NOT let it drift on unexamined; drifting is how a one-week trade quietly becomes a bad long-term holding.`;
+    } else if (hz.due) {
+      timeStopBlock = `\nTIME-STOP: this was taken as a ${hz.planned}-day swing and today is day ${hz.held} — its intended last day.${catLine} Give a clear call now: close it, or state precisely what he is still waiting for and by when.`;
+    } else {
+      timeStopBlock = `\nSWING CLOCK: taken as a ${hz.planned}-day trade, currently day ${hz.held}, so about ${hz.remaining} day(s) of its intended life remain.${catLine} Judge whether the entry reason is still working — if it has already failed, there is no merit in waiting out the clock.`;
+    }
+  }
+
+  const verdict = await claude(`${hz.isSwing
+    ? `You are THE EXCHANGE's position analyst, reviewing ONE SHORT-TERM SWING position in a Phuket investor's Phillip Nova (NOVA) portfolio. This is NOT a long-term conviction: he took it as a trade meant to last about ${hz.planned} day(s), on a specific catalyst, and he does not hold anything longer than a week. Judge it as a TRADER judges an open trade — has the reason he entered actually played out, is it still playing out, or is it dead? Patience is not a virtue here; a swing that has stopped working is capital sitting idle.`
+    : `You are THE EXCHANGE's position analyst, reviewing ONE long-term equity holding in a Phuket investor's Phillip Nova (NOVA) portfolio. This is one of his considered long-term convictions, NOT a week-long swing, so judge with patience, like a seasoned analyst rather than a jumpy trader. Run a zero-based review (Peter Lynch's test: if he held none of this today, would buying it right now at this price be justified?).`}
 
 HOLDING UNDER REVIEW:
 ${h.name}${h.ticker ? ' (' + h.ticker + ')' : ''}, ${h.qty} shares @ avg cost ${h.avgCost}, live price ${priceNow ?? '?'}, unrealised P/L ${h.unrealised ?? '?'}.
 Posture: ${pl}. Held roughly ${held} day(s) since first tracked${hasLocked ? `. LOCKED levels (immutable): SL ${lockedSL ?? 'none'}, TP ${lockedTP ?? 'none'}` : '. No stop or target locked yet — this first review sets them.'}
+${timeStopBlock}
 
 YOUR OWN PRIOR REVIEWS OF THIS HOLDING (build on these; note what has changed, whether your prior call played out, and evolve the view rather than starting fresh):
 ${priorReviewsBlock}
@@ -1285,6 +1523,11 @@ async function actTakeUp(ideaLedgerId, idea) {
       ideaLedgerId: rec.id,
       entry: rec.idea.entry, tp: rec.idea.tp, sl: rec.idea.sl,
       direction: rec.idea.direction, reason: rec.idea.reason,
+      // carry the one-week intent into the position, not just the price levels
+      horizon: rec.idea.horizon || null,
+      horizonDays: horizonDaysOf(rec.idea),
+      catalyst: rec.idea.catalyst || null,
+      catalystDate: rec.idea.catalyst_date_used || rec.idea.catalyst_date || null,
       takenAt: Date.now(),
     });
   }
@@ -1728,7 +1971,7 @@ async function actLearn(priceMap) {
 // Exported so tests/test_exchange_market.js drives the REAL money-gates rather than a
 // reimplementation of them. The suite hard-fails if these stop being exported, on the
 // principle that a test quietly checking a copy is worse than no test at all.
-export { checkLevels, sanePrice, recomputeLevels, priceOf };
+export { checkLevels, sanePrice, recomputeLevels, priceOf, tpCeiling, catalystCheck, addDays, horizonStatus };
 
 // ---------- Request handler: the single front door ----------
 export default async function handler(req, res) {

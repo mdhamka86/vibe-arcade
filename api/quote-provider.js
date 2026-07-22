@@ -168,6 +168,139 @@ function shape(r, q) {
   };
 }
 
+// ---------- Public: realised volatility ----------
+// WHY (22/07/2026). checkLevels bounded the STOP (2-15%) but put no ceiling at all on the
+// TARGET, so a 40% take-profit passed cleanly as long as the stop was wide enough to keep
+// R:R above 1. Forty percent in five trading days is not a swing trade, it is a lottery
+// ticket. Worse, a flat percentage cap would be wrong in the other direction: 10% in a week
+// is routine for a volatile small cap and near-impossible for a mega-cap, so the ceiling has
+// to be measured per name rather than assumed.
+//
+// One month of daily closes gives a usable realised sigma. Deliberately routed through the
+// SAME Yahoo series for every market: Massive would have been US-only (and its free tier
+// serves a single previous bar, not a series), which would have left every Asian name
+// unbounded — precisely the gap that produced the Sony card.
+const VOL_TTL_MS = 6 * 3600 * 1000;
+const volCache = new Map(); // yahooSymbol -> { at, weeklyVolPct }
+
+async function sparkSeries(yahooSymbols, range) {
+  if (!yahooSymbols.length) return {};
+  const qs = `symbols=${encodeURIComponent(yahooSymbols.join(','))}&range=${range}&interval=1d`;
+  for (const host of ['query1', 'query2']) {
+    try {
+      const r = await withTimeout(
+        `https://${host}.finance.yahoo.com/v7/finance/spark?${qs}`,
+        10000, { Accept: 'application/json', 'User-Agent': UA },
+      );
+      if (!r.ok) continue;
+      const j = await r.json();
+      const results = j?.spark?.result;
+      if (!Array.isArray(results)) continue;
+      const out = {};
+      for (const row of results) {
+        const resp = row?.response?.[0];
+        const closes = resp?.indicators?.quote?.[0]?.close;
+        if (!Array.isArray(closes)) continue;
+        const clean = closes.filter((c) => typeof c === 'number' && c > 0);
+        if (clean.length) out[String(resp.meta.symbol).toUpperCase()] = clean;
+      }
+      if (Object.keys(out).length) return out;
+    } catch { /* try the next host */ }
+  }
+  return {};
+}
+
+// Sample standard deviation of daily log returns, scaled to a 5-trading-day week.
+function weeklyVolFrom(closes) {
+  if (!closes || closes.length < 8) return null; // too few bars to mean anything
+  const rets = [];
+  for (let i = 1; i < closes.length; i++) rets.push(Math.log(closes[i] / closes[i - 1]));
+  if (rets.length < 6) return null;
+  const mu = rets.reduce((a, b) => a + b, 0) / rets.length;
+  const variance = rets.reduce((a, b) => a + (b - mu) ** 2, 0) / (rets.length - 1);
+  const sd = Math.sqrt(variance);
+  if (!isFinite(sd) || sd <= 0) return null;
+  return +(sd * Math.sqrt(5) * 100).toFixed(2); // one-week sigma, in percent
+}
+
+// Returns { ORIGINAL_TICKER: weeklyVolPct|null }. Never throws.
+export async function getWeeklyVol(items) {
+  const reqs = [];
+  const seen = new Set();
+  for (const it of items || []) {
+    const ticker = typeof it === 'string' ? it : (it && (it.ticker || it.name));
+    const hint = typeof it === 'string' ? null : (it && it.exchange);
+    if (!ticker) continue;
+    const key = String(ticker).toUpperCase().trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const cls = classifyTicker(ticker, hint);
+    if (cls.ok) reqs.push({ key, sym: cls.yahooSymbol });
+  }
+  const out = {};
+  const need = [];
+  for (const r of reqs) {
+    const c = volCache.get(r.sym);
+    if (c && Date.now() - c.at < VOL_TTL_MS) out[r.key] = c.weeklyVolPct;
+    else need.push(r);
+  }
+  if (need.length) {
+    try {
+      const series = await sparkSeries(need.map((r) => r.sym), '1mo');
+      for (const r of need) {
+        const v = weeklyVolFrom(series[r.sym.toUpperCase()]);
+        out[r.key] = v;
+        volCache.set(r.sym, { at: Date.now(), weeklyVolPct: v });
+      }
+    } catch {
+      for (const r of need) out[r.key] = null;
+    }
+  }
+  return out;
+}
+
+// ---------- Public: earnings dates (Finnhub, US only) ----------
+// The catalyst gate needs to know when a dated event ACTUALLY lands, not when the model
+// claims it does. Finnhub's /calendar/earnings is on the existing free plan and nothing
+// called it until now.
+//
+// HONEST LIMIT: Finnhub free covers US symbols only, so this cross-check is US-only. For
+// SGX/TSE/HKEX names the model's claimed catalyst_date stands unverified — the WINDOW test
+// in the engine still applies to it, so a date three weeks out is still rejected; what we
+// cannot do for those names is catch a date that is simply wrong. Said plainly rather than
+// papered over, and flagged per-idea as catalyst_verified true/false.
+export async function getEarningsDates(items, fromIso, toIso) {
+  if (!FINNHUB_KEY) return {};
+  const reqs = [];
+  const seen = new Set();
+  for (const it of items || []) {
+    const ticker = typeof it === 'string' ? it : (it && (it.ticker || it.name));
+    const hint = typeof it === 'string' ? null : (it && it.exchange);
+    if (!ticker) continue;
+    const key = String(ticker).toUpperCase().trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const cls = classifyTicker(ticker, hint);
+    if (cls.ok && cls.isUS) reqs.push({ key, sym: cls.yahooSymbol });
+  }
+  const out = {};
+  await Promise.all(reqs.map(async (r) => {
+    try {
+      const url = `https://finnhub.io/api/v1/calendar/earnings?from=${fromIso}&to=${toIso}`
+        + `&symbol=${encodeURIComponent(r.sym)}&token=${FINNHUB_KEY}`;
+      const resp = await withTimeout(url, 8000, { Accept: 'application/json' });
+      if (!resp.ok) return;
+      const j = await resp.json();
+      const rows = j?.earningsCalendar;
+      if (!Array.isArray(rows) || !rows.length) return;
+      // earliest scheduled date in the queried window
+      const dates = rows.map((x) => x && x.date).filter(Boolean).sort();
+      if (dates.length) out[r.key] = { date: dates[0], source: 'finnhub', hour: rows[0].hour || null };
+    } catch { /* degrade: no verification for this name */ }
+  }));
+  return out;
+}
+
 // ---------- Public: FX ----------
 // Verified 22/07/2026: the same Yahoo spark endpoint quotes FX pairs, so currency
 // conversion needs no second provider and no second failure mode.

@@ -266,6 +266,18 @@ function GemCard({idea,ledgerId,onPass,onFlag,onTake,flagged}){
       {idea.off_universe && <div className="alertbox a-red" style={{marginTop:10,marginBottom:0}}>
         <b>NOT TRADEABLE VIA NOVA.</b> {idea.availability}
       </div>}
+      {/* HORIZON. He holds nothing longer than a week, so an idea whose catalyst cannot
+          land inside that window is not a trade for him however good the story reads. */}
+      {idea.horizon_broken && <div className="alertbox a-red" style={{marginTop:10,marginBottom:0}}>
+        {idea.horizon_warning}
+      </div>}
+      {idea.catalyst && !idea.horizon_broken && <div className="note" style={{marginTop:10}}>
+        <span className="steel">CATALYST</span> {idea.catalyst}
+        {idea.catalyst_when ? <b> — {idea.catalyst_when}</b> : null}
+        {idea.catalyst_verified
+          ? <span className="dim"> · date confirmed against the earnings calendar</span>
+          : <span className="dim"> · date as stated by the desk, unverified</span>}
+      </div>}
       {/* UNPRICED: a thesis, never a number. The model's own price is exactly what cannot
           be trusted for a name we could not quote, and showing it is how Sony reached
           this card at 2820 while Tokyo traded at 3425. */}
@@ -285,6 +297,9 @@ function GemCard({idea,ledgerId,onPass,onFlag,onTake,flagged}){
       {!idea.unpriced&&idea.price_delay_label&&
         <div className="note" style={{marginTop:6}}><span className="steel">PRICE</span> {idea.price_delay_label}
         {idea.price_age_mins!=null?` · last trade ${idea.price_age_mins}min ago`:''}</div>}
+      {/* Why the target is the size it is. Without this the cap looks arbitrary. */}
+      {!idea.unpriced&&idea.weekly_vol_pct!=null&&
+        <div className="note" style={{marginTop:4}}><span className="steel">TYPICAL WEEK</span> this name moves about {idea.weekly_vol_pct}% in a normal week, so the target is sized to what it can actually reach before he closes.</div>}
       {idea.levels_recomputed && !idea.levels_broken && <div className="note" style={{marginTop:6}}><span className="steel">◆ LEVELS ADJUSTED</span> The desk's original levels were anchored to a stale price; these entry/target/stop have been recomputed around the real live price of {px(idea.current_price,ccy)}. Confirm on your chart.</div>}
       {Array.isArray(idea.signals)&&idea.signals.length>0&&
         <div className="signal-row">{idea.signals.map((s,i)=><span key={i} className="sig">{s}</span>)}</div>}
