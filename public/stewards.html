@@ -264,7 +264,7 @@
   <div id="app">
     <div class="mast">
       <h1>The Stewards&rsquo; <b>Room</b> <span style="font-size:13px;font-weight:600;letter-spacing:0.08em;color:var(--brass);vertical-align:middle;">ELECTRIC BOOGALOO</span></h1>
-      <div class="sub">The Outsider Method, digitised. Priced, gated and shadow-tested \u2014 every leg argued under the Fourth Charter, every cent audited on demand.</div>
+      <div class="sub">The Outsider Method, digitised. Priced, gated and shadow-tested &mdash; every leg argued under the Fourth Charter, every cent audited on demand.</div>
     </div>
 
     <div class="lamps" id="lamps">
@@ -336,6 +336,14 @@ document.getElementById("gatePass").addEventListener("keydown",e=>{ if(e.key==="
 const API="/api/stewards";
 const $=(id)=>document.getElementById(id);
 function esc(s){return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+
+// ---- shadow-verdict labels ----
+// The proposal grades every kept leg pass/fail/nodata (api/propose.js shadowOf). Those
+// are internal enum keys; nothing raw should reach the screen. "nodata" means the leg
+// had no usable projected price at grade time (commonly France before the PMU pools
+// open), so it reads as "ungraded" rather than a failure.
+const VERDICT_LABEL={pass:"pass",fail:"fail",nodata:"ungraded","n/a":"n/a"};
+const verdictLabel=v=>VERDICT_LABEL[v]||v;
 
 // ---- line-art icon library (single-weight strokes, inherit currentColor) ----
 const IC={
@@ -512,7 +520,7 @@ async function upgradeWire(){
   if(sp){
     const c={pass:0,fail:0,nodata:0};
     (sp.kept||[]).forEach(x=>{c[x.verdict]=(c[x.verdict]||0)+1;});
-    shadow=(c.pass||0)+" pass \u00b7 "+(c.fail||0)+" fail \u00b7 "+(c.nodata||0)+" nodata";
+    shadow=(c.pass||0)+" "+verdictLabel("pass")+" \u00b7 "+(c.fail||0)+" "+verdictLabel("fail")+" \u00b7 "+(c.nodata||0)+" "+verdictLabel("nodata");
   }
   const pending=(typeof lastAudit!=="undefined"&&lastAudit&&lastAudit.audit)?lastAudit.audit.model.pending:0;
   wireFigs([
@@ -1717,7 +1725,7 @@ function renderVetoBookCard(){
     const s=spIx[l.meet+"|"+l.raceNo+"|"+l.horseNo]||{};
     const v=s.verdict||"\u2014";
     const cls=v==="pass"?"win":(v==="fail"?"lose":"");
-    h+='<div class="kv">KEPT \u00b7 '+esc(l.meet)+' R'+esc(l.raceNo)+' #'+esc(l.horseNo)+' <b>'+esc(l.horseName)+'</b> '+esc(l.betType)+' ['+esc(l.tier||"?")+'] <span class="chip '+cls+'">shadow: '+esc(v)+(s.price&&s.price.win?(" W"+s.price.win):"")+(s.price&&s.price.pla?(" P"+s.price.pla):"")+'</span></div>';
+    h+='<div class="kv">KEPT \u00b7 '+esc(l.meet)+' R'+esc(l.raceNo)+' #'+esc(l.horseNo)+' <b>'+esc(l.horseName)+'</b> '+esc(l.betType)+' ['+esc(l.tier||"?")+'] <span class="chip '+cls+'">shadow: '+esc(verdictLabel(v))+(s.price&&s.price.win?(" W"+s.price.win):"")+(s.price&&s.price.pla?(" P"+s.price.pla):"")+'</span></div>';
   });
   (proposal.vetoes||[]).forEach(v=>{
     h+='<div class="kv" style="opacity:0.75">VETOED \u00b7 '+esc(v.meet)+' R'+esc(v.raceNo)+' <b>'+esc(v.horseName||"")+'</b> '+esc(v.betType)+' <span class="chip lose">'+esc(v.rule)+'</span></div>';
