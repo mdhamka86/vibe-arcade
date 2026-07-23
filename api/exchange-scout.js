@@ -36,7 +36,10 @@
 import universeSeed from './exchange-universe.json' with { type: 'json' };
 import { classifyTicker, SUPPORTED } from './market-classifier.js';
 import { getEarningsDates } from './quote-provider.js';
-import { getNews } from './exchange-news.js';
+import { getNews, nameMatchesStory } from './exchange-news.js';
+// Re-exported: the matcher moved to exchange-news.js so the hunt's convergence gate and the
+// scout's catalyst tagging share ONE implementation. Kept exported here for its test.
+export { nameMatchesStory };
 
 const R_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const R_TOK = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
@@ -226,66 +229,6 @@ async function catalysts(names, dateKey) {
   return found;
 }
 
-// Corporate furniture that carries no identifying information.
-const SUFFIXES = new Set(['corp', 'corporation', 'inc', 'incorporated', 'ltd', 'limited', 'plc', 'co',
-  'company', 'holdings', 'holding', 'group', 'bhd', 'berhad', 'reit', 'trust', 'sa', 'ag', 'nv', 'the']);
-// Words common enough that a match on them alone means nothing. "ENN Energy" matching a
-// story about "X Energy" is not a catalyst, it is a coincidence.
-const GENERIC = new Set(['energy', 'motor', 'motors', 'bank', 'banking', 'financial', 'finance', 'technology',
-  'technologies', 'industries', 'industrial', 'electric', 'electronics', 'chemical', 'chemicals', 'steel',
-  'power', 'gas', 'oil', 'mining', 'pharma', 'pharmaceutical', 'pharmaceuticals', 'biosciences', 'health',
-  'healthcare', 'medical', 'insurance', 'securities', 'capital', 'investment', 'investments', 'properties',
-  'property', 'development', 'developments', 'construction', 'engineering', 'airlines', 'airways', 'air',
-  'telecom', 'telecommunications', 'communications', 'media', 'retail', 'foods', 'food', 'beverage',
-  'international', 'national', 'general', 'united', 'american', 'china', 'chinese', 'japan', 'japanese',
-  'singapore', 'malaysia', 'malaysian', 'hong', 'kong', 'asia', 'asian', 'pacific', 'global', 'world',
-  'first', 'new', 'sun', 'star', 'city', 'land', 'life', 'home', 'auto', 'digital', 'data', 'systems',
-  'solutions', 'services', 'products', 'materials', 'resources', 'partners', 'enterprise', 'enterprises',
-  // Place names. A story about "Shanghai declines" is market commentary, not company news,
-  // but Shanghai Airport's lead word would happily claim it. Same trap for every city that
-  // appears in a listed company's name.
-  'shanghai', 'shenzhen', 'beijing', 'tokyo', 'osaka', 'seoul', 'taipei', 'york', 'london',
-  'kuala', 'lumpur', 'macau', 'jardine', 'nippon', 'mitsui', 'mitsubishi', 'sumitomo',
-  // Common nouns that happen to be company names. "Target" matching any sentence containing
-  // the word target is a coincidence, not a catalyst.
-  'target', 'gap', 'ford', 'shell', 'total', 'orange', 'apple', 'amazon', 'block', 'match',
-  'union', 'public', 'central', 'eastern', 'western', 'northern', 'southern', 'great', 'grand',
-  'seven', 'eleven', 'next', 'now', 'open', 'square', 'summit', 'peak', 'bridge', 'gateway']);
-
-const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-// FALSE-CATALYST GUARD (22/07/2026). The first version of this matched substrings against
-// the first word over three letters, and production immediately produced nonsense: ENN
-// Energy matched a story about "X Energy" purely on the word energy, and Disco Corp matched
-// a Capital One story because "disco" is a substring of "Discover". A fabricated catalyst is
-// worse than none — it inflates the name's rank AND can be handed to the model as evidence.
-//
-// So: strip corporate furniture, then require either the full remaining phrase or, for
-// single-word names, a distinctive word matched on WORD BOUNDARIES. Generic industry words
-// never qualify on their own.
-export function nameMatchesStory(companyName, story) {
-  const hay = String(story || '').toLowerCase();
-  if (!hay) return false;
-  const words = String(companyName || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
-  const core = words.filter((w) => !SUFFIXES.has(w));
-  if (!core.length) return false;
-
-  // Multi-word names: require the whole phrase, so "Sands China" cannot be satisfied by a
-  // story that merely mentions China.
-  if (core.length >= 2) {
-    const phrase = new RegExp(`\\b${core.map(esc).join('[^a-z0-9]{1,3}')}\\b`, 'i');
-    if (phrase.test(hay)) return true;
-    // A distinctive leading word still counts (Tencent Holdings -> "Tencent"), but only if
-    // it is not generic and is long enough to be a real name.
-    const lead = core[0];
-    if (lead.length >= 5 && !GENERIC.has(lead)) return new RegExp(`\\b${esc(lead)}\\b`, 'i').test(hay);
-    return false;
-  }
-
-  const only = core[0];
-  if (only.length < 5 || GENERIC.has(only)) return false;
-  return new RegExp(`\\b${esc(only)}\\b`, 'i').test(hay);
-}
 
 // ---------- Stage 4: rank ----------
 // Scores are deliberately simple and legible: this picks a SHORTLIST for a model to reason

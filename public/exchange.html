@@ -441,6 +441,22 @@ function Vitals({state}){
   const vitals=state?.vitals;
   const coaching=state?.coaching;
   if(!vitals) return <div className="wrap"><div className="note">Sync your book on the Book tab to see your vitals.</div></div>;
+  // FAIL-HONEST (22/07/2026). "No account data" must be visibly different from "a real, empty
+  // $0 account" — everything sizes against these figures, so a wiped or unsynced book must
+  // shout, not show a tidy grid of blanks that reads as fact.
+  if(vitals.state==='UNSYNCED'){
+    return <div className="wrap">
+      <div className="card">
+        <div className="eyebrow"><Ic n="pulse"/>Vitals · no account data</div>
+        <div className="alertbox a-red" style={{marginTop:8}}>
+          <div style={{fontWeight:700}}><Ic n="target"/> Nothing to size against</div>
+          <div style={{marginTop:4}}>{vitals.message}</div>
+        </div>
+        <div className="note" style={{marginTop:10}}>This is deliberately not shown as a $0 account. Until your book is synced, the desk will not pretend to know your net liquidity or buying power, and will size every idea conservatively.</div>
+      </div>
+    </div>;
+  }
+  const fr=vitals.freshness||{};
   const f=vitals.figures||{};
   const reads=vitals.reads||[];
   const trend=vitals.trend;
@@ -467,13 +483,17 @@ function Vitals({state}){
         </div>
         {coaching.allMet
           ? <div className="note" style={{marginTop:10}}><span className="green" style={{fontWeight:600}}>Your book is well balanced across every health check.</span> Keep it here, and let the Hunt bring only genuine steals.</div>
-          : coaching.nextFocus && <div className="note" style={{marginTop:10}}><span className="steel">NEXT FOCUS</span> {coaching.nextFocus.label} — currently {coaching.nextFocus.detail}, aim for {coaching.nextFocus.target}. The Balance tab is built to help you get there.</div>}
+          : coaching.nextFocus && <div className="note" style={{marginTop:10}}><span className="steel">NEXT FOCUS</span> {coaching.nextFocus.label} — currently {coaching.nextFocus.detail}, aim for {coaching.nextFocus.target}.</div>}
       </div>}
 
       {/* headline figures */}
       <div className="card">
         <div className="eyebrow"><Ic n="pulse"/>Vitals · the state of your book</div>
-        <div className="grid2" style={{marginTop:4}}>
+        {/* Freshness stamp — never present stale figures as current. */}
+        {fr.asOf
+          ? <div className="note" style={{marginTop:2}}><span className={fr.stale?'ambr':'steel'}>{fr.stale?'⚠ AS OF':'AS OF'}</span> {new Date(fr.asOf).toLocaleString()} ({ago(Date.parse(fr.asOf))}){fr.stale?' — these figures are more than 3 days old; re-sync before sizing anything important.':''}</div>
+          : <div className="note" style={{marginTop:2}}><span className="ambr">⚠ NO SYNC TIMESTAMP</span> these figures have no known age — treat them as unverified and re-sync your book.</div>}
+        <div className="grid2" style={{marginTop:8}}>
           {f.netLiq!=null&&<div className="kv"><div className="k">Net Liquidity</div><div className="v">{fmt(f.netLiq)}</div></div>}
           {f.equityBalance!=null&&<div className="kv"><div className="k">Equity Balance</div><div className="v">{fmt(f.equityBalance)}</div></div>}
           {f.unrealizedPL!=null&&<div className="kv"><div className="k">Open P/L</div><div className={'v '+(f.unrealizedPL>=0?'green':'red')}>{f.unrealizedPL>=0?'+':''}{fmt(f.unrealizedPL)}</div></div>}
@@ -548,6 +568,12 @@ function Portfolio({state,refresh}){
   const [posImgs,setPosImgs]=useState([]);
   const [syncing,setSyncing]=useState(false);
   const [report,setReport]=useState(null);
+  // proof-of-close: relocated here from the removed Balance screen (22/07/2026). It is a
+  // Book-tab concern — you close a position on NOVA, upload the fresh screenshot, and the
+  // desk reconciles the freed capital and offers the next buy. The rebalance cockpit it used
+  // to sit beside is gone (the diversify-off-chips premise is obsolete); this flow is not.
+  const [proofBusy,setProofBusy]=useState(false);
+  const [proofOut,setProofOut]=useState(null);
   const book=state?.book;
   const holdings=book?.holdings||[];
 
@@ -560,6 +586,12 @@ function Portfolio({state,refresh}){
     try{ const r=await eng('sync',{positionsImages:posImgs,historyImage:histImg||null}); setReport(r.report); await refresh(); }
     catch(e){ alert(e.message); }
     setSyncing(false); setPosImgs([]);
+  };
+  const submitProof=async(b64)=>{
+    setProofBusy(true);
+    try{ const r=await eng('proofofclose',{positionsImage:b64}); setProofOut(r); await refresh(); }
+    catch(e){ alert(e.message); }
+    setProofBusy(false);
   };
 
   const cls=(a)=> a==='CFD'?'b-cfd':a==='ETF'?'b-etf':'b-eq';
@@ -603,6 +635,32 @@ function Portfolio({state,refresh}){
         {laggards.map(h=><HoldingRow key={h.id} h={h} cls={cls}/>)}</>}
       {holdings.filter(h=>!h.unrealised).length>0 && <><h3 className="sec">Flat / unclear</h3>
         {holdings.filter(h=>!h.unrealised).map(h=><HoldingRow key={h.id} h={h} cls={cls}/>)}</>}
+
+      {/* Proof of close — reconcile freed capital after closing a name, and offer the next buy. */}
+      <h3 className="sec"><Ic n="camera"/>After you close a position</h3>
+      <div className="card">
+        <div className="note">Closed a name on NOVA? Upload your fresh positions screenshot. The desk confirms the close, reconciles your margin and buying power, and if enough cash is freed, proposes the next fully-framed buy from the hunt.</div>
+        <div className="row" style={{marginTop:12}}>
+          <ShotButton primary label={proofBusy?'reconciling…':'Upload proof of close'} disabled={proofBusy} onImage={submitProof}/>
+        </div>
+      </div>
+      {proofOut && <>
+        {proofOut.balancePicture && <div className="card">
+          <div className="eyebrow">Reconciled</div>
+          <div className="grid2">
+            <div className="kv"><div className="k">Holdings</div><div className="v">{proofOut.balancePicture.holdingsBefore} → {proofOut.balancePicture.holdingsNow}</div></div>
+            <div className="kv"><div className="k">Buying Power</div><div className="v">{fmt(proofOut.balancePicture.buyingPowerNow)}</div></div>
+            {proofOut.balancePicture.freedThisClose!=null && <div className="kv"><div className="k">Freed this close</div><div className={'v '+(proofOut.balancePicture.freedThisClose>=0?'green':'red')}>{proofOut.balancePicture.freedThisClose>=0?'+':''}{fmt(proofOut.balancePicture.freedThisClose)}</div></div>}
+            {proofOut.balancePicture.netLiqNow!=null && <div className="kv"><div className="k">Net Liquidity</div><div className="v">{fmt(proofOut.balancePicture.netLiqNow)}</div></div>}
+          </div>
+          {proofOut.closesDetected?.length>0 && <div className="note" style={{marginTop:8}}><span className="green">Closed:</span> {proofOut.closesDetected.join(', ')}</div>}
+        </div>}
+        {proofOut.waiting && <div className="alertbox a-amber">{proofOut.waiting}</div>}
+        {proofOut.nextBuy && <>
+          <h3 className="sec"><Ic n="gem"/>Next buy</h3>
+          <GemCard idea={proofOut.nextBuy} ledgerId={null} onPass={()=>{}} onFlag={()=>{}} onTake={()=>{}}/>
+        </>}
+      </>}
     </div>
   );
 }
@@ -819,115 +877,6 @@ function Learn({state}){
   );
 }
 
-// ---------- Rebalance: the guided rebalancing cockpit ----------
-function Rebalance({state,refresh}){
-  const [busy,setBusy]=useState(false);
-  const [freshPlan,setFreshPlan]=useState(null);
-  const [err,setErr]=useState(null);
-  const [proofBusy,setProofBusy]=useState(false);
-  const [proofOut,setProofOut]=useState(null);
-
-  const run=async()=>{
-    setBusy(true); setErr(null);
-    try{ const r=await eng('rebalance'); setFreshPlan(r); await refresh(); }
-    catch(e){ setErr(e.message); }
-    setBusy(false);
-  };
-  const submitProof=async(b64)=>{
-    setProofBusy(true); setErr(null);
-    try{ const r=await eng('proofofclose',{positionsImage:b64}); setProofOut(r); await refresh(); }
-    catch(e){ setErr(e.message); }
-    setProofBusy(false);
-  };
-
-  // Persist across navigation: prefer a plan generated this session, otherwise fall back
-  // to the last saved plan on the book. This stays put until the user pulls prices again.
-  const saved=state?.book?.rebalance||null;
-  const plan = freshPlan || (saved ? { plan: saved.plan, concentration: saved.concentration, generatedAt: saved.at } : null);
-
-  const vCls=(v)=> v==='CLOSE'?'b-red':v==='TRIM'?'b-amber':'b-ok';
-  const p=plan?.plan;
-
-  return (
-    <div className="wrap">
-      <div className="card">
-        <div className="eyebrow"><Ic n="pulse"/>Rebalance · the guided cockpit</div>
-        <div className="note">One tap pulls live prices for every holding, measures your real concentration, and judges each position hold, trim or close toward a more balanced, less chip-heavy, more geographically spread book. Grounded in fresh market news.</div>
-        <div className="row" style={{marginTop:12}}>
-          <button className="pri" disabled={busy} onClick={run}>{busy?<span className="spin">◐</span>:(plan?'Pull fresh prices & re-run':'Pull prices & rebalance')}</button>
-        </div>
-        {plan?.generatedAt && !busy && <div className="meta" style={{marginTop:8}}><span>plan generated {ago(Date.parse(plan.generatedAt))} · stays here until you re-run</span></div>}
-        {err && <div className="alertbox a-red" style={{marginTop:10,marginBottom:0}}>{err} <span className="dim">Tap the button to try again.</span></div>}
-      </div>
-
-      {plan?.empty && <div className="note">{plan.note}</div>}
-
-      {p && <>
-        {p.headline && <div className="alertbox a-amber"><Ic n="target"/> {p.headline}</div>}
-
-        {plan.concentration && <div className="card">
-          <div className="eyebrow">Concentration now</div>
-          <div className="note"><span className="red" style={{fontWeight:600}}>{plan.concentration.chipPct}%</span> of your book is chip-exposed. By sector: {Object.entries(plan.concentration.bySector||{}).map(([k,v])=>`${k} ${v}%`).join(', ')}. By geography: {Object.entries(plan.concentration.byGeo||{}).map(([k,v])=>`${k} ${v}%`).join(', ')}.</div>
-        </div>}
-
-        {p.target && <div className="card accent">
-          <div className="eyebrow"><Ic n="brain"/>Target balance</div>
-          <div className="note" style={{color:'var(--ink2)'}}>{p.target.summary}</div>
-          {Array.isArray(p.target.sectors)&&p.target.sectors.length>0 && <div style={{marginTop:10}}>
-            {p.target.sectors.map((s,i)=><div key={i} className="meta" style={{justifyContent:'space-between'}}><span className="steel">{s.name}</span><span className="dim mono">{s.current} → <span className="ambr">{s.target}</span></span></div>)}
-          </div>}
-          {Array.isArray(p.target.geography)&&p.target.geography.length>0 && <div style={{marginTop:10,paddingTop:10,borderTop:'1px solid var(--line)'}}>
-            {p.target.geography.map((g,i)=><div key={i} className="meta" style={{justifyContent:'space-between'}}><span className="steel">{g.name}</span><span className="dim mono">{g.current} → <span className="ambr">{g.target}</span></span></div>)}
-          </div>}
-        </div>}
-
-        <h3 className="sec"><Ic n="review"/>Per-holding verdicts</h3>
-        {(p.verdicts||[]).map((v,i)=>(
-          <div key={i} className="card" style={{padding:13}}>
-            <div className="between">
-              <span className="hl" style={{fontSize:15}}>{v.name} {v.ticker&&<span className="dim mono" style={{fontSize:12}}>{v.ticker}</span>}</span>
-              <span className={'badge '+vCls(v.verdict)}>{v.verdict}</span>
-            </div>
-            <div className="meta">{v.sector&&<span className="steel">{v.sector}</span>}{v.weight&&<span className="dim">{v.weight} of book</span>}{v.exit_price&&v.exit_price!=='null'&&<span className="ambr" style={{fontWeight:600}}>exit ~{v.exit_price}</span>}</div>
-            {v.reason && <div className="note" style={{marginTop:6}}>{v.reason}</div>}
-            {(v.sources||[]).length>0 && <div className="note" style={{marginTop:4}}><span className="steel">◆ SOURCES</span> {(v.sources||[]).join('  ·  ')}</div>}
-          </div>
-        ))}
-        {p.next_step && <div className="alertbox a-green" style={{marginTop:8}}><span style={{fontWeight:600}}>Next step:</span> {p.next_step}</div>}
-      </>}
-
-      <h3 className="sec"><Ic n="camera"/>After you close a position</h3>
-      <div className="card">
-        <div className="note">Closed a name on NOVA? Upload your fresh positions screenshot. The desk confirms the close, reconciles your margin and balance, and if enough cash is freed, proposes the next fully-framed buy to rebalance into.</div>
-        <div className="row" style={{marginTop:12}}>
-          <ShotButton primary label={proofBusy?'reconciling…':'Upload proof of close'} disabled={proofBusy} onImage={submitProof}/>
-        </div>
-      </div>
-
-      {proofOut && <>
-        {proofOut.balancePicture && <div className="card">
-          <div className="eyebrow">Reconciled</div>
-          <div className="grid2">
-            <div className="kv"><div className="k">Holdings</div><div className="v">{proofOut.balancePicture.holdingsBefore} → {proofOut.balancePicture.holdingsNow}</div></div>
-            <div className="kv"><div className="k">Buying Power</div><div className="v">{fmt(proofOut.balancePicture.buyingPowerNow)}</div></div>
-            {proofOut.balancePicture.freedThisClose!=null && <div className="kv"><div className="k">Freed this close</div><div className={'v '+(proofOut.balancePicture.freedThisClose>=0?'green':'red')}>{proofOut.balancePicture.freedThisClose>=0?'+':''}{fmt(proofOut.balancePicture.freedThisClose)}</div></div>}
-            {proofOut.balancePicture.netLiqNow!=null && <div className="kv"><div className="k">Net Liquidity</div><div className="v">{fmt(proofOut.balancePicture.netLiqNow)}</div></div>}
-          </div>
-          {proofOut.closesDetected?.length>0 && <div className="note" style={{marginTop:8}}><span className="green">Closed:</span> {proofOut.closesDetected.join(', ')}</div>}
-        </div>}
-
-        {proofOut.waiting && <div className="alertbox a-amber">{proofOut.waiting}</div>}
-
-        {proofOut.nextBuy && <>
-          <h3 className="sec"><Ic n="gem"/>Next rebalancing buy</h3>
-          <GemCard idea={proofOut.nextBuy} ledgerId={null} onPass={()=>{}} onFlag={()=>{}} onTake={()=>{}}/>
-        </>}
-      </>}
-    </div>
-  );
-}
-
-// ---------- App shell ----------
 function App(){
   const [tab,setTab]=useState('desk');
   const [state,setState]=useState(null);
@@ -953,11 +902,10 @@ function App(){
     {engineErr && <div className="wrap" style={{paddingBottom:0}}><div className="alertbox a-red">Engine offline: {engineErr}. Check the API key and Upstash variables in Vercel, then reload.</div></div>}
     {tab==='desk' && <Desk state={state} refresh={refresh}/>}
     {tab==='portfolio' && <Portfolio state={state} refresh={refresh}/>}
-    {tab==='rebalance' && <Rebalance state={state} refresh={refresh}/>}
     {tab==='vitals' && <Vitals state={state}/>}
     {tab==='reviews' && <Reviews state={state} refresh={refresh}/>}
     <nav className="tabs">
-      {[['desk','Hunt','gem'],['portfolio','Book','book'],['rebalance','Balance','pulse'],['vitals','Vitals','target'],['reviews','Reviews','review']].map(([k,l,ic])=>
+      {[['desk','Hunt','gem'],['portfolio','Book','book'],['vitals','Vitals','target'],['reviews','Reviews','review']].map(([k,l,ic])=>
         <button key={k} className={tab===k?'on':''} onClick={()=>setTab(k)}><Ic n={ic}/>{l}</button>)}
     </nav>
   </>);

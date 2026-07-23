@@ -7,7 +7,7 @@
 //   ANTHROPIC_API_KEY
 //   UPSTASH_REDIS_REST_URL + UPSTASH_REDIS_REST_TOKEN  (or KV_REST_API_URL / KV_REST_API_TOKEN)
 
-import { getNews } from './exchange-news.js';
+import { getNews, nameMatchesStory } from './exchange-news.js';
 import { enrichTickers, signalsBlock } from './exchange-massive.js';
 import { getQuotes, getFxToUsd, toUsd, getWeeklyVol, getEarningsDates } from './quote-provider.js';
 import { classifyTicker, marketStatus, SUPPORTED } from './market-classifier.js';
@@ -70,7 +70,25 @@ function bkk() {
     iso: now.toISOString(),
   };
 }
-const daysHeld = (openedAt) => Math.max(0, Math.floor((Date.now() - openedAt) / 86400000));
+// Days a position has been held. Returns null (not NaN) when there is no valid open date, so
+// the review can say "age unknown" honestly instead of rendering "Held roughly NaN day(s)"
+// or, worse, silently treating an ageless holding as day 0.
+// Resolve an openedAt to epoch ms, or null. Careful with the source type: num() would
+// greedily pull "2026" out of an ISO date string and treat it as an epoch, so we branch on
+// type. A number (or all-digit string) is epoch ms; any other string goes through Date.parse;
+// anything else is undated. Shared by daysHeld and horizonStatus so neither can regress.
+const openedMs = (openedAt) => {
+  let ms;
+  if (typeof openedAt === 'number') ms = openedAt;
+  else if (typeof openedAt === 'string') ms = /^\d+$/.test(openedAt.trim()) ? parseInt(openedAt, 10) : Date.parse(openedAt);
+  else ms = NaN;
+  return isFinite(ms) ? ms : null;
+};
+const daysHeld = (openedAt) => {
+  const ms = openedMs(openedAt);
+  if (ms == null) return null;
+  return Math.max(0, Math.floor((Date.now() - ms) / 86400000));
+};
 
 // ---------- Live stock prices (market-routed: Finnhub for US, delayed feed for Asia) ----------
 // Gives the desk genuine eyes onto the market so ideas anchor to real prices and the
@@ -211,6 +229,34 @@ function levelGeometryProblem(direction, entry, sl, tp) {
   return null;
 }
 
+// CONVERGENCE GATE (extracted so it is testable in isolation, 22/07/2026). Top-two conviction
+// — the only rungs that let an idea QUALIFY — requires >=2 GENUINE, independent headlines
+// naming the company, counted by the robust word-boundary matcher (not the old substring one
+// that let a single coincidental "china" mention pass). A single source can never clear it:
+// one hit caps to MED, none to LOW, and neither qualifies. Direction-agnostic — a short
+// thesis needs the same real convergence a long does. Mutates the idea in place and returns
+// the effective conviction.
+function applyConvergenceCap(idea, newsSupport, newsFetchOk = true) {
+  const claimed = String(idea.conviction || '').toUpperCase();
+  const topTwo = claimed === 'MED-HIGH' || claimed === 'HIGH';
+  if (topTwo && newsSupport < 2) {
+    idea.convictionClaimed = idea.conviction;
+    idea.conviction = newsSupport === 1 ? 'MED' : 'LOW';
+    idea.conviction_note = newsFetchOk
+      ? `Auto-capped from ${idea.convictionClaimed}: only ${newsSupport} news item(s) genuinely name this company — not enough independent convergence for top conviction.`
+      : `Held at ${idea.conviction} (claimed ${idea.convictionClaimed}): the news check couldn't run this session, so convergence is unverified — treat cautiously and confirm before trading.`;
+  }
+  return idea.conviction;
+}
+
+// Whether an idea, AFTER all gates, qualifies (surfaces as a strong idea). Requires a top-two
+// conviction that survived the convergence cap AND clean levels. Kept as one helper so the
+// definition of "qualifies" cannot drift between the hunt and its tests.
+function ideaQualifies(idea) {
+  const c = String(idea.conviction || '').toUpperCase();
+  return (c === 'MED-HIGH' || c === 'HIGH') && !idea.level_warning && !idea.horizon_broken && !idea.unpriced;
+}
+
 // Infer a holding's direction when the record does not carry one. The platform's own P&L
 // sign is the most reliable tell we have: if price is ABOVE cost but the position is losing
 // money (or below cost but winning), it can only be a SHORT. Falls back to LONG, which is
@@ -297,7 +343,8 @@ function horizonStatus(h, now = Date.now()) {
   const planned = num(h && h.horizonDays);
   const isSwing = !!(h && (h.isSwing || h.fromGem)) && planned != null && planned > 0;
   if (!isSwing) return { isSwing: false, planned: null, held: null, overdue: false, due: false };
-  const held = Math.max(0, Math.floor((now - (num(h.openedAt) || now)) / 86400000));
+  const openedAtMs = openedMs(h.openedAt);
+  const held = Math.max(0, Math.floor((now - (openedAtMs != null ? openedAtMs : now)) / 86400000));
   const remaining = planned - held;
   return {
     isSwing: true,
@@ -493,6 +540,10 @@ async function loadAll() {
   ]);
   return {
     book: book || { holdings: [], pendingReview: [], netLiq: null, netLiqHistory: [] },
+    // Whether the book KEY genuinely existed. Vitals needs this to tell "no account data at
+    // all" apart from "a real, empty account" — a distinction that must not be lost to the
+    // `book || {default}` fallback above, since every sizing figure depends on it.
+    bookPresent: book != null,
     lessons: lessons || [],
     ledger: ledger || [],
     guidance: guidance || [],
@@ -924,33 +975,28 @@ Respond ONLY with JSON, no markdown:
     let candNews = null, newsFetchOk = true;
     try { candNews = await getNews('holdings', tickers); }
     catch { candNews = []; newsFetchOk = false; }
+    // CONVERGENCE MUST BE REAL, NOT COINCIDENTAL (22/07/2026). This used to match on the
+    // ticker as a substring OR the first word of the company name as a substring — so "China
+    // Life" scored a "mention" on any headline containing "china", and a 3-letter ticker
+    // matched fragments of unrelated words. That inflated convergence with coincidences and
+    // let a name reach top conviction on noise. Now it uses the same word-boundary,
+    // furniture-stripped, generic-word-excluded matcher the scout uses for catalyst tagging,
+    // so a "mention" genuinely names the company. Two of these is real convergence; a single
+    // coincidental hit no longer counts at all.
     const mentions = (idea) => {
-      const tick = (idea.ticker || '').toUpperCase();
-      const name = (idea.name || '').toLowerCase();
-      const nameKey = name.split(/\s+/)[0]; // first word of company name
-      return (candNews || []).filter((n) => {
-        const hay = ((n.title || '') + ' ' + (n.desc || '')).toLowerCase();
-        return (tick && hay.includes(tick.toLowerCase())) || (nameKey && nameKey.length > 3 && hay.includes(nameKey));
-      });
+      const name = idea.name || idea.ticker || '';
+      return (candNews || []).filter((n) => nameMatchesStory(name, `${n.title || ''} ${n.desc || ''}`));
     };
     (ideas.ideas || []).forEach((i) => {
       const hits = mentions(i);
       i.candidateNews = hits.slice(0, 4).map((n) => `[${n.source}] ${n.title}`);
       i.newsSupport = hits.length; // how many headlines actually mention this name
       i.newsChecked = newsFetchOk;
-      // convergence gate: top-two conviction needs >=2 independent supporting headlines
-      if (['MED-HIGH', 'HIGH'].includes((i.conviction || '').toUpperCase()) && hits.length < 2) {
-        i.convictionClaimed = i.conviction;
-        i.conviction = hits.length === 1 ? 'MED' : 'LOW';
-        i.conviction_note = newsFetchOk
-          ? `Auto-capped from ${i.convictionClaimed}: only ${hits.length} news item(s) actually mention this name — not enough verified convergence for top conviction.`
-          : `Held at ${i.conviction} (claimed ${i.convictionClaimed}): the news check couldn't run this session, so convergence is unverified — treat cautiously and confirm before trading.`;
-      }
+      applyConvergenceCap(i, hits.length, newsFetchOk);
     });
   }
 
-  const clears = (c) => ['MED-HIGH', 'HIGH'].includes((c || '').toUpperCase());
-  (ideas.ideas || []).forEach((i) => { i.qualifies = clears(i.conviction) && !i.level_warning; });
+  (ideas.ideas || []).forEach((i) => { i.qualifies = ideaQualifies(i); });
   ideas.qualifyingCount = (ideas.ideas || []).filter((i) => i.qualifies).length;
   await rSet(key, ideas);
 
@@ -1202,21 +1248,22 @@ async function actProofOfClose(positionsImg) {
   let nextBuy = null;
   let waiting = null;
   if (enough) {
-    // propose the next rebalancing buy, FULLY FRAMED like a gem card, and price-validated
+    // propose the NEXT buy, FULLY FRAMED like a gem card, and price-validated. This used to
+    // read a saved rebalance target from book.rebalance, but the rebalance cockpit was
+    // removed (22/07/2026) — the diversify-off-chips premise is obsolete — so the suggestion
+    // now stands on its own: a genuinely good name that fits the freed capital.
     const held = new Set((after.book.holdings || []).map((h) => (h.ticker || h.name || '').toUpperCase()));
     const unavailable = new Set((after.universe.unavailable || []).map((u) => (u || '').toUpperCase()));
-    const reb = after.book.rebalance ? JSON.stringify(after.book.rebalance.plan?.target || {}) : 'no saved target yet';
     const news = await getNews('market');
 
-    let prop = await claude(`You are THE EXCHANGE proposing the NEXT rebalancing BUY after the investor freed up about $${deployable.toFixed(0)} of buying power by closing a position. The goal is to move his book toward a more balanced, less chip-heavy, more geographically spread shape. Favour a name that genuinely diversifies him (away from US semiconductors), and prefer a Singapore/Hong Kong/regional name where sensible since those trade during his Phuket daytime.
+    let prop = await claude(`You are THE EXCHANGE proposing the NEXT BUY after the investor freed up about $${deployable.toFixed(0)} of buying power by closing a position. Propose a genuinely good name that fits the freed capital. Prefer a Singapore/Hong Kong/regional name where sensible, since those trade during his Phuket daytime.
 
-SAVED REBALANCE TARGET: ${reb}
 ALREADY HELD (do not propose): ${[...held].join(', ') || 'none'}
 UNAVAILABLE ON HIS PLATFORM (never propose): ${[...unavailable].join(', ') || 'none'}
 FREED BUYING POWER: about $${deployable.toFixed(0)} — the position must fit comfortably inside this.
 MARKET NEWS:\n${digest(news, 16)}
 
-Propose exactly ONE buy, fully framed like a proper trade idea, that fits the freed buying power and improves his diversification. Give real, sensible price levels (entry within ~8% of current; BUY = stop below entry, target above; stop ~3-10% from entry; reward:risk >= 1.5).
+Propose exactly ONE buy, fully framed like a proper trade idea, that fits the freed buying power. Give real, sensible price levels (entry within ~8% of current; BUY = stop below entry, target above; stop ~3-10% from entry; reward:risk >= 1.5).
 
 Respond ONLY with JSON, no markdown:
 {"name":"Company","ticker":"TICK","exchange":"NASDAQ|NYSE|SGX|HKEX","industry":"e.g. Consumer","instrument":"SHARE|CFD","direction":"BUY","current_price":"12.40","entry":"12.00-12.30","tp":"14.20","sl":"11.10","conviction":"LOW|MED|MED-HIGH|HIGH","reason":"why this name diversifies the book and fits the freed cash, max 45 words","availability":"likely — confirm on your NOVA platform","fits_budget":"one line on how it fits ~$${deployable.toFixed(0)}"}`, 1400);
@@ -1261,149 +1308,6 @@ Respond ONLY with JSON, no markdown:
   return { clock: t, reconciled: true, balancePicture, enoughToDeployNow: enough, nextBuy, waiting, closesDetected: balancePicture.closesDetected };
 }
 
-// ---------- Rebalance: judge the whole book and design a balanced target ----------
-// One tap pulls live prices for every holding, measures the real concentration, then
-// judges each position (HOLD/TRIM/CLOSE) with a sensible exit price and reasoning, and
-// designs a more balanced, less chip-heavy, more geographically spread target book.
-async function actRebalance() {
-  const t = bkk();
-  const s = await loadAll();
-  const holdings = s.book.holdings || [];
-  if (!holdings.length) return { clock: t, empty: true, note: 'No holdings to rebalance. Seed or sync your book first.' };
-
-  // 1) pull genuine live prices for every held name, so every judgement is current
-  const quoteReqs = holdings.map((h) => ({ ticker: h.ticker || h.name, exchange: h.exchange })).filter((r) => r.ticker);
-  const priceMap = await livePrices(quoteReqs);
-
-  // CURRENCY (22/07/2026). Concentration maths sums every holding into one pot, and until
-  // now that pot mixed currencies: a Tokyo name at JPY 3425 was added to a US name at USD
-  // 210 as though they were the same unit. Every sector and geography weight downstream of
-  // that was wrong, and wrong in the direction that makes Asian names look enormous. Weights
-  // are now computed in USD; the native price is still what gets DISPLAYED, because that is
-  // what he sees on NOVA.
-  const currencies = holdings.map((h) => {
-    const c = classifyTicker(h.ticker || h.name, h.exchange);
-    return c.ok ? c.currency : 'USD';
-  });
-  const fx = await getFxToUsd(currencies).catch(() => ({ USD: 1 }));
-
-  // fold live prices into a working copy so weights and P/L reflect the real market.
-  // SANITY GUARD: a feed can still return a bogus price for a regional ticker. If the
-  // "live" price disagrees with the platform's last synced price by more than the (now
-  // much tighter) tolerance, DISTRUST the feed and keep the platform price — the platform
-  // is the truth for what he actually holds.
-  const live = holdings.map((h, idx) => {
-    const feed = priceOf(priceMap[(h.ticker || h.name || '').toUpperCase()]);
-    const synced = num(h.lastPrice);
-    const avg = num(h.avgCost);
-    // reference is the platform's last price, or failing that avg cost
-    const sp = sanePrice(feed, synced != null ? synced : avg);
-    const lastPrice = sp.price;
-    const qty = num(h.qty) || 0;
-    const plPct = (avg && lastPrice) ? ((lastPrice - avg) / avg) * 100 : null;
-    const ccy = currencies[idx] || 'USD';
-    const nativeValue = Math.abs(qty * (lastPrice || avg || 0));
-    // An unknown FX rate must NOT silently become 1:1 — that is the JPY-as-USD bug again.
-    // Fall back to the native figure but mark it, so the prompt can say so honestly.
-    const usdValue = toUsd(nativeValue, ccy, fx);
-    return {
-      ...h, lastPrice, _sector: sectorOf(h),
-      _ccy: ccy, _nativeValue: nativeValue,
-      _value: usdValue != null ? usdValue : nativeValue,
-      _fxUnknown: usdValue == null && ccy !== 'USD',
-      _plPct: plPct, _hasLive: sp.usedFeed, _feedRejected: sp.rejected,
-    };
-  });
-
-  // 2) measure concentration: by sector, by chip-exposure, by geography (exchange)
-  const totalValue = live.reduce((a, h) => a + h._value, 0) || 1;
-  const bySector = {};
-  const byGeo = {};
-  let chipValue = 0;
-  for (const h of live) {
-    bySector[h._sector] = (bySector[h._sector] || 0) + h._value;
-    const geo = /SGX/i.test(h.exchange || '') ? 'Singapore' : /HK|HONG/i.test(h.exchange || '') ? 'Hong Kong' : 'US';
-    byGeo[geo] = (byGeo[geo] || 0) + h._value;
-    if (isChipExposed(h._sector)) chipValue += h._value;
-  }
-  const pct = (v) => +((v / totalValue) * 100).toFixed(1);
-  const sectorLines = Object.entries(bySector).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: ${pct(v)}%`).join(', ');
-  const geoLines = Object.entries(byGeo).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: ${pct(v)}%`).join(', ');
-  const chipPct = pct(chipValue);
-
-  // classify each holding's tradeable WINDOW from its exchange, so the plan never asks him
-  // to trade a US name during his daytime (US only trades in his late night).
-  const tradeWindow = (h) => {
-    const ex = (h.exchange || '').toUpperCase();
-    if (/SGX/.test(ex)) return 'DAYTIME (SGX, Phuket daytime)';
-    if (/HK|HONG/.test(ex)) return 'DAYTIME (HKEX, Phuket daytime)';
-    if (/NASDAQ|NYSE|US|NQ/.test(ex) || !ex) return 'NIGHT ONLY (US market, his late night)';
-    return 'check platform hours';
-  };
-
-  // 3) per-holding lines with live price, weight, P/L posture, and tradeable window
-  const holdingLines = live.map((h) => {
-    const w = pct(h._value);
-    const pl = h._plPct != null ? `${h._plPct >= 0 ? '+' : ''}${h._plPct.toFixed(1)}% vs cost` : 'cost unclear';
-    const src = h._feedRejected ? ' (platform price; live feed gave an implausible value and was rejected)' : h._hasLive ? '' : ' (platform price, no live feed)';
-    return `${h.name}${h.ticker ? ' (' + h.ticker + ')' : ''} [${h._sector}, ${h.exchange || '?'}] — tradeable: ${tradeWindow(h)}: ${h.qty} @ cost ${h.avgCost}, price ${h.lastPrice ?? '?'}${src}, weight ${w}%, ${pl}`;
-  }).join('\n');
-
-  const acc = s.book.account || {};
-  const buyingPower = num(acc.buyingPowerETD) ?? num(acc.buyingPowerSecurities);
-  const netLiq = num(s.book.netLiq) ?? num(acc.netLiquidityValue);
-
-  // pull fresh market + per-holding news so every verdict is grounded in what the market
-  // is actually saying right now, not price and concentration alone.
-  const newsQuery = live.map((h) => h.ticker ? `${h.ticker}|${h.name}` : h.name).filter(Boolean).join(',');
-  const news = await getNews('holdings', newsQuery);
-
-  const plan = await claude(`You are THE EXCHANGE's rebalancing strategist for a retail investor in Phuket trading via Phillip Nova (NOVA). His book is heavily concentrated in US semiconductors and you are helping him rebalance toward a healthier, more diversified portfolio, spread across sectors AND geographies. NOVA lets him trade US, Singapore, Hong Kong, Japan, Malaysia and China names.
-
-CRITICAL TRADING-HOURS CONSTRAINT (get this right, it is a hard rule): he can ONLY trade a US-listed name (NASDAQ/NYSE) when the US market is open, which is his LATE NIGHT in Phuket. He can ONLY trade SG (SGX) and HK (HKEX) names during his Phuket DAYTIME. Every holding above is tagged with its tradeable window. So:
-- To close or trim a US name (e.g. MBLY/Mobileye, CAMT/Camtek, MRVL, TSLA, COHR, AMD, most of his book) he must do it AT NIGHT during US hours. NEVER tell him to close a US name during SGX/daytime hours — that is impossible.
-- To close or trim an SGX name (e.g. C6L/Singapore Airlines, ES3) or an HK name, he does it during his Phuket DAYTIME.
-- When you write the next_step, CHECK each ticker's tagged window and only pair an action with a window that ticker can actually trade in. Getting a market wrong makes the whole plan untrustworthy.
-
-CURRENT BOOK (live prices pulled just now where available; each tagged with its tradeable window):
-${holdingLines}
-
-CONCENTRATION RIGHT NOW:
-By sector: ${sectorLines}
-By geography: ${geoLines}
-Total semiconductor/chip exposure: ${chipPct}% of position value (this is the core problem to reduce).
-Account: net liquidity ~${netLiq ?? '?'}, buying power ~${buyingPower ?? '?'}.
-
-FRESH MARKET & COMPANY NEWS (each item source-tagged in [brackets] — real finance/market outlets; ground every verdict in this, not just price and weight — if a name has a live catalyst, a broken story, or news that changes its outlook, that must shape the HOLD/TRIM/CLOSE call and the exit price):
-${digest(news, 24)}
-
-YOUR TASK, in two parts:
-
-PART 1 — TARGET BALANCE: Decide and EXPLAIN the best target shape for his book. Give sensible target weights by sector and by geography that meaningfully cut the chip concentration and add daytime-tradeable regional exposure, following sound diversification principles (no single stock dominating, no single sector above ~25-30%, genuine geographic spread). Explain WHY in plain, warm language.
-
-PART 2 — PER-HOLDING VERDICT: For EACH current holding, judge HOLD, TRIM, or CLOSE in service of that target. For any TRIM or CLOSE, give ONE sensible exit price (a single clean number) and a SHORT one-line reason (max 18 words, telegram style). Base the exit price on the real current level and a sensible technical/valuation judgement; where he is underwater but the story is intact, it is fine to suggest holding or waiting for a better level rather than crystallising a loss, and where a name is a genuine winner or a broken story, say so. Ground verdicts in the concentration problem: over-weight chip names are prime trim/close candidates; genuine diversifiers and winners are keepers. Keep every field tight; brevity matters. WHERE A VERDICT TURNS ON NEWS (a catalyst, a broken or confirmed story), validate it against CONVERGENCE and cite the specific sources in that holding's "sources" as ["[Source] point"] from MULTIPLE outlets where the wire allows; leave "sources" empty for a purely weight/valuation-driven call. Never fabricate sources.
-
-Respond ONLY with JSON, no markdown:
-{"target":{"summary":"2-3 sentence plain explanation of the target shape and why","sectors":[{"name":"Semiconductors","current":"X%","target":"Y%"}],"geography":[{"name":"US","current":"X%","target":"Y%"}]},"verdicts":[{"ticker":"TICK","name":"Company","verdict":"HOLD|TRIM|CLOSE","exit_price":"single number or null for HOLD","reason":"one line","sources":["[Source] point — only when the verdict turns on news, from multiple outlets; else empty"],"sector":"...","weight":"X%"}],"headline":"one honest sentence on the book's biggest imbalance","next_step":"what to do first, one line — and it MUST pair each named action with a window that ticker can actually trade in (US names at night, SGX/HK names in daytime); double-check every ticker's tagged window before writing this"}`, 8000);
-
-  const result = {
-    clock: t,
-    pulledPrices: Object.keys(priceMap).length,
-    totalHoldings: holdings.length,
-    concentration: { bySector: Object.fromEntries(Object.entries(bySector).map(([k, v]) => [k, pct(v)])), byGeo: Object.fromEntries(Object.entries(byGeo).map(([k, v]) => [k, pct(v)])), chipPct },
-    plan,
-    generatedAt: t.iso,
-  };
-  // remember the latest rebalance plan so the screen can show it and proof-of-close can reconcile against it
-  // BOUNDARY: the rebalance is DELIBERATELY separate from the Reviews tab. It writes ONLY to
-  // book.rebalance and never to any holding's reviewHistory or lastReview. The two produce
-  // different judgements for different purposes, so a rebalance verdict must never overwrite
-  // or pollute the per-holding review record. Do not wire rebalance verdicts into review fields.
-  s.book.rebalance = { plan, concentration: result.concentration, at: t.iso };
-  await rSet('exchange:book', s.book);
-  return result;
-}
-
 // ---------- Position health review: hold or close, with proposed levels ----------
 // The equity cousin of The Terminal's red flag review. Judges a single holding like a
 // patient analyst: is the story intact, how long held, how much longer is sensible,
@@ -1421,7 +1325,17 @@ async function actReview(holdingId) {
   const dir = inferDirection(h);
   if (h.direction !== dir) h.direction = dir;
 
-  const held = daysHeld(h.openedAt);
+  // DURATION. days-held feeds both the framing and the week-max time-stop, so it must be
+  // accurate and never fabricated. If the record has no open date, establish one NOW and say
+  // so — an ageless holding must not silently read as "day 0", which would make a stale
+  // position look fresh and disarm the time-stop.
+  let held = daysHeld(h.openedAt);
+  let heldEstimatedFrom = null;
+  if (held == null) {
+    if (h.firstSeen && isFinite(Date.parse(h.firstSeen))) { h.openedAt = Date.parse(h.firstSeen); heldEstimatedFrom = 'first seen in your book'; }
+    else { h.openedAt = Date.now(); heldEstimatedFrom = 'this review (no earlier date was on record)'; }
+    held = daysHeld(h.openedAt);
+  }
   const query = h.ticker ? `${h.ticker}|${h.name}` : h.name;
   const news = await getNews('holdings', query);
   const priorLessons = (s.lessons || []).slice(-8).map((l) => `- ${l.text}`).join('\n') || '- none yet';
@@ -1461,9 +1375,16 @@ async function actReview(holdingId) {
   const financeBlock = `Account posture: ${rvNetLiq != null ? `net liquidity about $${rvNetLiq.toFixed(0)}` : 'net liquidity not synced'}${rvBuyingPower != null ? `, buying power about $${rvBuyingPower.toFixed(0)}` : ''}${rvMarginUtil != null ? `, roughly ${rvMarginUtil.toFixed(0)}% of the account committed as margin` : ''}. This holding is a ${isLeveraged ? 'LEVERAGED CFD position, which consumes margin and carries financing/swap costs, so holding it on has an ongoing cost and closing it frees up margin and buying power' : 'non-leveraged owned position (share/ETF), which ties up capital but not margin in the same way'}. Weigh this in your call: if margin is stretched, be readier to free it by trimming or closing a weak leveraged holding; if there is ample room, financial pressure is not itself a reason to act.`;
 
   // ---- the running history of prior reviews, so each review builds on the last ----
+  // Each line carries the DAY-COUNT at that review, so the trajectory is legible: the model
+  // sees "day 2: HOLD ... day 6: HOLD" and can weigh how long this has already run against
+  // the one-week ceiling, rather than judging each review as if it were the first.
   const history = h.reviewHistory || [];
   const priorReviewsBlock = history.length
-    ? history.slice(-4).map((r, i) => `Review ${history.length - Math.min(4, history.length) + i + 1} (${r.at ? r.at.slice(0, 10) : '?'}): ${r.verdict} — ${r.reason}`).join('\n')
+    ? history.slice(-4).map((r, i) => {
+        const n = history.length - Math.min(4, history.length) + i + 1;
+        const day = r.daysHeldAtReview != null ? `day ${r.daysHeldAtReview}` : (r.at ? r.at.slice(0, 10) : '?');
+        return `Review ${n} (${day}): ${r.verdict} — ${r.reason}`;
+      }).join('\n')
     : 'No prior reviews. This is the first review of this holding.';
 
   // ---- LOCKED levels: set once on the first review, then immutable (only a manual
@@ -1527,7 +1448,7 @@ async function actReview(holdingId) {
 
 HOLDING UNDER REVIEW:
 ${h.name}${h.ticker ? ' (' + h.ticker + ')' : ''}, ${h.qty} shares @ avg cost ${h.avgCost}, live price ${priceNow ?? '?'}, unrealised P/L ${h.unrealised ?? '?'}.
-Posture: ${pl}. Held roughly ${held} day(s) since first tracked${hasLocked ? `. LOCKED levels (immutable): SL ${lockedSL ?? 'none'}, TP ${lockedTP ?? 'none'}` : '. No stop or target locked yet — this first review sets them.'}
+Posture: ${pl}. Held ${held} day(s)${heldEstimatedFrom ? ` (counted from ${heldEstimatedFrom})` : ' since first tracked'}${hasLocked ? `. LOCKED levels (immutable): SL ${lockedSL ?? 'none'}, TP ${lockedTP ?? 'none'}` : '. No stop or target locked yet — this first review sets them.'}
 ${timeStopBlock}
 
 YOUR OWN PRIOR REVIEWS OF THIS HOLDING (build on these; note what has changed, whether your prior call played out, and evolve the view rather than starting fresh):
@@ -1570,6 +1491,10 @@ ${isFirstReview
     sources: Array.isArray(verdict.sources) ? verdict.sources : [],
     source_convergence: verdict.source_convergence || null,
     priceAtReview: priceNow ?? null, at: t.iso,
+    // days-held AT THIS REVIEW, so a multi-review holding shows its trajectory (day 2, day 6,
+    // ...) rather than only its latest snapshot, and the week-max clock is legible in history.
+    daysHeldAtReview: held,
+    direction: dir,
     lockedSL: hasLocked ? lockedSL : (num(verdict.proposed_sl) ?? null),
     lockedTP: hasLocked ? lockedTP : (num(verdict.proposed_tp) ?? null),
   };
@@ -1832,16 +1757,46 @@ const isChipExposed = (sector) => /semiconductor/i.test(sector);
 // The equity cousin of The Terminal's Vitals. Beyond listing balances, it reads what
 // the numbers MEAN together: margin utilisation, leverage exposure, cash cushion, and
 // the health of the book, each with a plain-language read and a status colour.
-function computeVitals(book) {
-  if (!book) return null;
-  const acc = book.account || {};
-  const holdings = book.holdings || [];
-  const netLiq = num(book.netLiq) ?? num(acc.netLiquidityValue);
+// `bookPresent` says whether the exchange:book KEY genuinely existed in storage, passed
+// through from loadAll. It is the difference between "the account is empty" and "we have no
+// account data at all" — and everything sizes against these figures, so that difference must
+// never be silently collapsed to zeros.
+function computeVitals(book, bookPresent = true) {
+  // DEATHLY IMPORTANT (22/07/2026). loadAll defaults an ABSENT book key to an empty object,
+  // so a wiped or never-seeded book would otherwise reach here looking exactly like a real
+  // account that happens to hold nothing — figures all null, no reads — and the UI would
+  // present that as fact. Every sizing decision downstream keys off buying power and net
+  // liquidity, so presenting "unknown" as "zero/empty" corrupts them silently. We fail
+  // HONEST instead: if the book was never stored, OR carries no evidence of ever having been
+  // synced (no lastSync, no account figures, no holdings, no net liquidity), we return an
+  // explicit UNSYNCED state that the UI renders as "no data — sync your book", visibly
+  // different from a genuine empty account.
+  const acc = (book && book.account) || {};
+  const holdings = (book && book.holdings) || [];
+  const netLiq = num(book && book.netLiq) ?? num(acc.netLiquidityValue);
   const initialMargin = num(acc.initialMargin);
   const buyingPower = num(acc.buyingPowerETD);
   const equityBalance = num(acc.equityBalance);
   const ledgerBalance = num(acc.ledgerBalance);
   const unrealizedPL = num(acc.unrealizedPL);
+
+  const everSynced = !!(book && (book.lastSync
+    || holdings.length
+    || netLiq != null
+    || [acc.buyingPowerETD, acc.netLiquidityValue, acc.equityBalance, acc.ledgerBalance, acc.initialMargin, acc.unrealizedPL].some((v) => num(v) != null)));
+
+  if (!bookPresent || !everSynced) {
+    return {
+      state: 'UNSYNCED',
+      trustworthy: false,
+      message: !bookPresent
+        ? 'No account data is stored. Your book has not been seeded or synced (or the record is missing). This is NOT an empty $0 account — the desk has nothing to size against. Seed or sync your NOVA book before trusting any figure.'
+        : 'Your book exists but has never been synced with real account figures, so there is nothing to size against yet. Sync a NOVA screenshot to load net liquidity and buying power.',
+      figures: { netLiq: null, ledgerBalance: null, equityBalance: null, unrealizedPL: null, initialMargin: null, buyingPower: null },
+      reads: [], analytics: null, leveraged: [],
+      freshness: { lastSync: (book && book.lastSync) || null, ageMs: null, stale: true, asOf: null },
+    };
+  }
 
   const reads = []; // each: { label, value, status, note }
 
@@ -1946,7 +1901,7 @@ function computeVitals(book) {
       label: 'Sector concentration', value: `${topSector.name} ${topSector.pct}%`, status: st,
       note: st === 'GREEN'
         ? `Your largest sector, ${topSector.name}, is ${topSector.pct}% of the book, within a healthy spread (a common guide is no single sector above ~30%).`
-        : `Your book leans heavily on ${topSector.name} at ${topSector.pct}%. A common healthy guide is no single sector above ~25-30%, so this is a concentration worth easing via the Balance tab.`,
+        : `Your book leans heavily on ${topSector.name} at ${topSector.pct}%. A common healthy guide is no single sector above ~25-30%, so this is a concentration worth easing.`,
     });
   }
   if (chipPct > 0) {
@@ -1955,7 +1910,7 @@ function computeVitals(book) {
       label: 'Chip exposure (hidden)', value: `${chipPct}%`, status: st,
       note: st === 'GREEN'
         ? `About ${chipPct}% of your book is semiconductor-exposed once you look through the ETFs. A reasonable level.`
-        : `Roughly ${chipPct}% of your book rides on semiconductors once you look through the ETFs and separate names. They tend to move together, so this is real hidden concentration; the Balance tab is built to reduce it.`,
+        : `Roughly ${chipPct}% of your book rides on semiconductors once you look through the ETFs and separate names. They tend to move together, so this is real hidden concentration worth being aware of.`,
     });
   }
   if (topName && topName.pct > 10) {
@@ -1974,7 +1929,21 @@ function computeVitals(book) {
     });
   }
 
+  // FRESHNESS STAMP. Account figures age: a sync from a week ago must never be presented as
+  // if it were current. Surface the stamp and an explicit staleness flag (soft threshold of
+  // 3 days) so the UI can show "as of ..." and warn when it is old, rather than implying now.
+  const lastSyncMs = book.lastSync ? Date.parse(book.lastSync) : null;
+  const ageMs = lastSyncMs ? Date.now() - lastSyncMs : null;
+  const freshness = {
+    lastSync: book.lastSync || null,
+    ageMs,
+    stale: ageMs != null ? ageMs > 3 * 86400e3 : (book.lastSync ? false : true),
+    asOf: book.lastSync || null,
+  };
+
   return {
+    state: 'OK',
+    trustworthy: true,
     figures: {
       netLiq, ledgerBalance, equityBalance, unrealizedPL, initialMargin, buyingPower,
     },
@@ -1982,6 +1951,7 @@ function computeVitals(book) {
     analytics: { sectors, chipPct, geography, nameWeights: nameWeights.slice(0, 6), topWinners, topLaggards, holdingsCount: holdings.length },
     leveraged: levHoldings.map((h) => h.ticker || h.name),
     lastSync: book.lastSync || null,
+    freshness,
   };
 }
 
@@ -2073,7 +2043,7 @@ async function actGet() {
     }
     ideas.qualifyingCount = ideas.ideas.filter((i) => i.qualifies).length;
   }
-  const vitals = computeVitals(s.book);
+  const vitals = computeVitals(s.book, s.bookPresent);
   // coaching: compare current goals to the last saved snapshot to notice improvements
   const coaching = computeCoaching(s.book, vitals, (s.book.coachGoals || []));
   if (coaching) {
@@ -2200,6 +2170,9 @@ export const config = { maxDuration: 120 };
 // principle that a test quietly checking a copy is worse than no test at all.
 export { checkLevels, sanePrice, recomputeLevels, priceOf, tpCeiling, catalystCheck, addDays, horizonStatus, offListCheck, shortlistBlock };
 export { isShort, levelHitState, levelGeometryProblem, inferDirection };
+export { computeVitals };
+export { applyConvergenceCap, ideaQualifies };
+export { daysHeld };
 
 // ---------- Request handler: the single front door ----------
 export default async function handler(req, res) {
@@ -2213,7 +2186,6 @@ export default async function handler(req, res) {
     else if (action === 'sync') out = await actSync(p.positionsImages || p.positionsImage, p.historyImage);
     else if (action === 'review') out = await actReview(p.holdingId);
     else if (action === 'setlevels') out = await actSetLevels(p.holdingId, p.sl, p.tp);
-    else if (action === 'rebalance') out = await actRebalance();
     else if (action === 'proofofclose') out = await actProofOfClose(p.positionsImage);
     else if (action === 'pass') out = await actPass(p.ideaLedgerId, p.idea);
     else if (action === 'takeup') out = await actTakeUp(p.ideaLedgerId, p.idea);
