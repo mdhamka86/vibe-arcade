@@ -439,7 +439,6 @@ function ShotButton({label,onImage,onImages,primary,disabled,multiple}){
 // ---------- Vitals: the full interpretive read of the whole account ----------
 function Vitals({state}){
   const vitals=state?.vitals;
-  const coaching=state?.coaching;
   if(!vitals) return <div className="wrap"><div className="note">Sync your book on the Book tab to see your vitals.</div></div>;
   // FAIL-HONEST (22/07/2026). "No account data" must be visibly different from "a real, empty
   // $0 account" — everything sizes against these figures, so a wiped or unsynced book must
@@ -467,25 +466,6 @@ function Vitals({state}){
 
   return (
     <div className="wrap">
-      {/* coaching progression */}
-      {coaching && coaching.total>0 && <div className="card accent">
-        <div className="eyebrow"><Ic n="target"/>Book health · {coaching.metCount} of {coaching.total} on track</div>
-        {coaching.justAchieved?.length>0 && <div className="alertbox a-green" style={{marginTop:8}}>
-          <span style={{fontWeight:700}}>Nice work.</span> You've just hit: {coaching.justAchieved.join('; ')}. That's real progress toward a healthier book.
-        </div>}
-        <div style={{marginTop:10}}>
-          {coaching.goals.map((g,i)=>(
-            <div key={i} className="meta" style={{justifyContent:'space-between',padding:'5px 0',borderBottom:i<coaching.goals.length-1?'1px solid var(--line)':'none'}}>
-              <span><span className={g.met?'green':'dim'} style={{fontWeight:700,marginRight:6}}>{g.met?'✓':'○'}</span>{g.label}</span>
-              <span className={'mono dim'} style={{fontSize:12}}>{g.detail}</span>
-            </div>
-          ))}
-        </div>
-        {coaching.allMet
-          ? <div className="note" style={{marginTop:10}}><span className="green" style={{fontWeight:600}}>Your book is well balanced across every health check.</span> Keep it here, and let the Hunt bring only genuine steals.</div>
-          : coaching.nextFocus && <div className="note" style={{marginTop:10}}><span className="steel">NEXT FOCUS</span> {coaching.nextFocus.label} — currently {coaching.nextFocus.detail}, aim for {coaching.nextFocus.target}.</div>}
-      </div>}
-
       {/* headline figures */}
       <div className="card">
         <div className="eyebrow"><Ic n="pulse"/>Vitals · the state of your book</div>
@@ -512,7 +492,6 @@ function Vitals({state}){
       {/* sector concentration bars */}
       {Array.isArray(a.sectors)&&a.sectors.length>0 && <div className="card">
         <div className="eyebrow">Sector concentration</div>
-        {a.chipPct>0 && <div className="note" style={{marginBottom:10}}>Chip-exposed (through ETFs and separate names): <span className={a.chipPct>45?'red':a.chipPct>30?'ambr':'green'} style={{fontWeight:700}}>{a.chipPct}%</span></div>}
         {a.sectors.map((s,i)=>(
           <div key={i} style={{marginTop:8}}>
             <div className="meta" style={{justifyContent:'space-between',marginBottom:3}}><span className="steel">{s.name}</span><span className="mono dim" style={{fontSize:12}}>{s.pct}%</span></div>
@@ -521,15 +500,16 @@ function Vitals({state}){
         ))}
       </div>}
 
-      {/* geographic spread */}
+      {/* geographic spread — real markets, with WHEN he can trade each from Phuket */}
       {Array.isArray(a.geography)&&a.geography.length>0 && <div className="card">
-        <div className="eyebrow">Geographic spread</div>
+        <div className="eyebrow">Markets &amp; trading hours</div>
         {a.geography.map((g,i)=>(
           <div key={i} style={{marginTop:8}}>
-            <div className="meta" style={{justifyContent:'space-between',marginBottom:3}}><span className="steel">{g.name}{g.name!=='US'?' · daytime':' · night only'}</span><span className="mono dim" style={{fontSize:12}}>{g.pct}%</span></div>
-            <div style={{height:6,background:'var(--line)',borderRadius:3,overflow:'hidden'}}><div style={{width:Math.min(100,g.pct)+'%',height:'100%',background:g.name==='US'?'var(--amber)':'var(--steel)'}}/></div>
+            <div className="meta" style={{justifyContent:'space-between',marginBottom:3}}><span className="steel">{g.name}{g.name==='Unknown'?' · market unresolved':(g.daytime?' · daytime':' · night only')}</span><span className="mono dim" style={{fontSize:12}}>{g.pct}%</span></div>
+            <div style={{height:6,background:'var(--line)',borderRadius:3,overflow:'hidden'}}><div style={{width:Math.min(100,g.pct)+'%',height:'100%',background:g.name==='Unknown'?'var(--red)':(g.daytime?'var(--steel)':'var(--amber)')}}/></div>
           </div>
         ))}
+        {a.daytimePct!=null && <div className="note" style={{marginTop:10}}><span className="steel">DAYTIME-TRADEABLE</span> {a.daytimePct}% of your book you can act on in Phuket daylight; the rest is US, tradeable only late at night.</div>}
       </div>}
 
       {/* winner / laggard attribution */}

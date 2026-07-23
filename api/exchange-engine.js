@@ -10,7 +10,8 @@
 import { getNews, nameMatchesStory } from './exchange-news.js';
 import { enrichTickers, signalsBlock } from './exchange-massive.js';
 import { getQuotes, getFxToUsd, toUsd, getWeeklyVol, getEarningsDates } from './quote-provider.js';
-import { classifyTicker, marketStatus, SUPPORTED } from './market-classifier.js';
+import { classifyTicker, marketFromHint, marketStatus, MARKETS, SUPPORTED } from './market-classifier.js';
+import universeSeed from './exchange-universe.json' with { type: 'json' };
 
 const R_URL = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
 const R_TOK = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
@@ -1015,7 +1016,8 @@ async function parseShot(image, kind) {
   const spec = {
     positions: `This is a screenshot of a Phillip Nova (NOVA) equities account showing stock holdings and an account summary bar.
 Extract EVERY holding, note whether each is Leveraged (CFD) or Non-Leveraged (EQ/ETF), and read the account summary figures along the bottom.
-JSON: {"holdings":[{"name":"Company Name","ticker":"TICK or null","qty":5,"direction":"LONG|SHORT","avgCost":192.02,"lastPrice":195.02,"unrealised":11.59,"assetClass":"CFD|EQ|ETF","leveraged":true,"status":"Open"}],"netLiq":3864.04,"account":{"ledgerBalance":null,"equityBalance":null,"unrealizedPL":null,"initialMargin":null,"buyingPowerETD":null,"netLiquidityValue":null}}
+JSON: {"holdings":[{"name":"Company Name","ticker":"TICK or null","exchange":"NASDAQ|NYSE|AMEX|SGX|HKEX|TSE|Bursa|SSE|SZSE or null","qty":5,"direction":"LONG|SHORT","avgCost":192.02,"lastPrice":195.02,"unrealised":11.59,"assetClass":"CFD|EQ|ETF","leveraged":true,"status":"Open"}],"netLiq":3864.04,"account":{"ledgerBalance":null,"equityBalance":null,"unrealizedPL":null,"initialMargin":null,"buyingPowerETD":null,"netLiquidityValue":null}}
+EXCHANGE: NOVA usually prints the venue next to the name or ticker (e.g. "US:NQ", "NASD", "AMEX", "SGX", "SES", "HK"). Capture it as the exchange so the desk knows which market and currency this is — a Singapore (SGX) name is priced in SGD, a Tokyo name in JPY. If the venue is not visible, use null (the desk will infer it from the ticker).
 DIRECTION (important for CFDs): most stock holdings are LONG. But a CFD can be SHORT (a sell/short position that profits when price FALLS). Read the direction if the platform shows it (a "sell"/"short" label, a negative quantity, or a short indicator). If it's a plain long-only share holding or you can't tell, use "LONG". This matters: for a SHORT, a price rise is a LOSS, the opposite of a long.
 CRITICAL — SIGN OF UNREALISED P/L: the platform shows profit and loss BY COLOUR, often without a printed + or - sign. A figure shown in GREEN (or any up/positive tint) is a PROFIT and MUST be a POSITIVE number. A figure shown in RED is a LOSS and MUST be a NEGATIVE number. Read the colour carefully and set the sign accordingly; never drop or invert it. As a cross-check, if lastPrice is above avgCost on a normal long holding the unrealised is usually positive, and if below it is usually negative (leveraged/CFD and currency effects can shift the magnitude but rarely flip a clear move). When colour and this cross-check disagree, trust the colour but it is worth a second look.
 Use null for anything not visible. Numbers as numbers, not strings. Fractional qty is allowed (e.g. 0.1). leveraged is true only for CFD/Leveraged rows.`,
@@ -1159,10 +1161,16 @@ async function actSync(positionsImgs, historyImg) {
     {
       const adopted = {
         id: `hold_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-        name: x.name, ticker: x.ticker || null, qty: x.qty, avgCost: x.avgCost,
+        name: x.name, ticker: x.ticker || null, exchange: x.exchange || null,
+        qty: x.qty, avgCost: x.avgCost,
         lastPrice: x.lastPrice ?? null, unrealised: x.unrealised ?? null,
         openedAt: Date.now(), firstSeen: t.dmy,
       };
+      // Resolve and STORE the real market + currency now, so the holding is self-describing
+      // for vitals, reviews and pricing rather than being re-inferred every read. This is the
+      // fix for the vitals geography bug at its source: an adopted SGX name is recorded as SGX.
+      const rm = resolveHoldingMarket(adopted);
+      if (rm.market) { adopted.market = rm.market; adopted.currency = rm.currency; if (!adopted.exchange) adopted.exchange = rm.market; }
       // if this newly-appeared holding was a gem you took up, carry its thesis and
       // proposed levels across so the reasoning travels into the book with the position.
       const nm = (x.ticker || x.name || '').toUpperCase();
@@ -1732,25 +1740,95 @@ function resolveShadow(s, t, priceMap = {}) {
 // ---------- Portfolio analytics helpers ----------
 // A light sector map for the names this book actually holds and is likely to hold.
 // Grounded in real classifications; extend as new names appear. Unknown falls to 'Other'.
+// Real sector for a single stock, sourced from the committed universe seed (399 names, each
+// carrying a proper sector). Reused 22/07/2026 so Vitals sector concentration is measured from
+// real data rather than a tiny hardcoded map that dumped almost everything into "Other". Keyed
+// by ticker.
+const UNIVERSE_SECTOR = (() => {
+  const map = {};
+  for (const rows of Object.values(universeSeed.markets || {})) {
+    for (const [code, , sector] of rows) map[String(code).toUpperCase()] = sector;
+  }
+  return map;
+})();
+// Supplementary map for names the universe seed does not cover — chiefly the ETFs he holds.
+// An ETF is classified by what it actually gives EXPOSURE to, so sector concentration stays
+// honest (a semiconductor ETF is semiconductor exposure).
 const SECTOR_MAP = {
-  MARVELL: 'Semiconductors', MRVL: 'Semiconductors', NETAPP: 'Technology', NTAP: 'Technology',
-  AMBA: 'Semiconductors', AMD: 'Semiconductors', CAMT: 'Semiconductors', CRDO: 'Semiconductors',
-  MBLY: 'Semiconductors', MGNI: 'Advertising Tech', SPCX: 'Aerospace/Space', COHR: 'Semiconductors',
-  ONTO: 'Semiconductors', C6L: 'Airlines', TSLA: 'Autos/EV', NEM: 'Materials/Gold', AR: 'Energy',
-  VOO: 'Broad Index ETF', AIQ: 'Tech Thematic ETF', SMH: 'Semiconductor ETF', ES3: 'Broad Index ETF',
+  VOO: 'Diversified (ETF)', ES3: 'Diversified (ETF)', SPY: 'Diversified (ETF)', IVV: 'Diversified (ETF)',
+  SMH: 'Semiconductors', SOXX: 'Semiconductors',
+  AIQ: 'Technology', QQQ: 'Technology', XLK: 'Technology',
+  // held single stocks the universe seed does not carry, mapped to their real sector so they
+  // don't fall into "Other"
+  HLT: 'Consumer Discretionary', NVO: 'Healthcare', SYF: 'Financials',
+  SERVICENOW: 'Technology', NOW: 'Technology',
 };
 const sectorOf = (h) => {
-  const k = (h.ticker || h.name || '').toUpperCase();
-  if (SECTOR_MAP[k]) return SECTOR_MAP[k];
-  // ETFs that are clearly semis by name
-  if (/semi/i.test(h.name || '')) return 'Semiconductor ETF';
-  if ((h.assetClass || '') === 'ETF') return 'Broad Index ETF';
+  const tk = (h.ticker || '').toUpperCase();
+  const nm = h.name || '';
+  if (UNIVERSE_SECTOR[tk]) return UNIVERSE_SECTOR[tk];
+  if (SECTOR_MAP[tk]) return SECTOR_MAP[tk];
+  // ETF heuristics for anything not explicitly mapped
+  if ((h.assetClass || '') === 'ETF' || /\betf\b/i.test(nm)) {
+    if (/semi/i.test(nm)) return 'Semiconductors';
+    if (/s&p|index|broad|500|total market|diversif/i.test(nm)) return 'Diversified (ETF)';
+    return 'Thematic (ETF)';
+  }
+  if (/semi/i.test(nm)) return 'Semiconductors';
   return 'Other';
 };
-// A holding's market value (owned) or notional (leveraged), for weighting.
-const posValue = (h) => Math.abs((num(h.qty) || 0) * (num(h.lastPrice) || num(h.avgCost) || 0));
-// Group semis-adjacent sectors so hidden chip concentration is exposed honestly.
-const isChipExposed = (sector) => /semiconductor/i.test(sector);
+
+// ---------- Per-holding market / currency / geography (22/07/2026) ----------
+// THE VITALS BUG THIS CLOSES: Vitals derived geography with its own naive regex on h.exchange
+// and defaulted everything without an SGX/HK string to "US" — so C6L (SGX) and M44U (SGX REIT)
+// were counted as US, giving "US 100% · night only" on a book a quarter of which trades in
+// Singapore. And values were summed in native currency (SGD as if USD), distorting every
+// weight. This resolves each holding through the SAME market-classifier the rest of the desk
+// uses, and reports its real currency and geography.
+//
+// Screenshot-synced holdings carry no exchange field (the parser never captured it), so the
+// resolver falls back through: (1) an explicit h.exchange, (2) a venue token embedded in the
+// NOVA name ("AMD (US:NQ)", "NASD SMH", "AMEX VOO"), (3) ticker SHAPE via classifyTicker,
+// (4) a pure-alphabetic ticker with no Asian signal is assumed US. Genuinely unresolvable
+// names return market null and are flagged, never silently bucketed.
+const GEO_OF = { US: 'US', SGX: 'Singapore', HKEX: 'Hong Kong', TSE: 'Japan', BURSA: 'Malaysia', CHINA: 'China' };
+
+function exchangeHintFromName(name) {
+  const s = String(name || '').toUpperCase();
+  if (/\bSGX\b|\bSES\b|\bSINGAPORE\b/.test(s)) return 'SGX';
+  if (/\bHKEX\b|\bHKSE\b|\bHONG ?KONG\b/.test(s)) return 'HKEX';
+  if (/\bTSE\b|\bTYO\b|\bTOKYO\b|\bJAPAN\b/.test(s)) return 'TSE';
+  if (/\bBURSA\b|\bKLSE\b|\bMALAYSIA\b/.test(s)) return 'BURSA';
+  if (/\bSSE\b|\bSZSE\b|\bSHANGHAI\b|\bSHENZHEN\b/.test(s)) return 'CHINA';
+  if (/\bNQ\b|\bNASD(AQ)?\b|\bNYSE\b|\bAMEX\b|\bARCA\b|US:/.test(s)) return 'NASDAQ';
+  return null;
+}
+
+function resolveHoldingMarket(h) {
+  const ticker = h.ticker || h.name || '';
+  const hint = h.exchange || exchangeHintFromName(h.name);
+  const done = (market, currency, label, source) => Object.freeze({
+    market, currency, label: label || market,
+    geography: GEO_OF[market] || 'Unknown',
+    isUS: market === 'US', daytimeTradeable: !!market && market !== 'US', source,
+  });
+
+  const c = classifyTicker(ticker, hint);
+  if (c.ok) return done(c.market, c.currency, c.label, h.exchange ? 'field' : (hint ? 'name-hint' : 'shape'));
+
+  // classifyTicker refused (ambiguous shape, or a name jammed into the ticker slot). If the
+  // hint alone names a market, trust it.
+  const mk = hint ? marketFromHint(hint) : null;
+  if (mk && MARKETS[mk]) return done(mk, MARKETS[mk].currency, MARKETS[mk].label, 'name-hint');
+
+  // Last resort: a purely alphabetic ticker with no Asian signal is almost certainly US —
+  // Asian codes on the boards NOVA offers all carry digits. A long name-as-ticker (SERVICENOW)
+  // lands here correctly. Anything with a digit and no resolvable market stays unknown.
+  const t = String(ticker).toUpperCase().trim();
+  if (t && /^[A-Z][A-Z.\- ]*$/.test(t)) return done('US', 'USD', 'US', 'assumed-us');
+
+  return done(null, null, 'unknown', 'unknown');
+}
 
 // ---------- Gather the whole state for the front end ----------
 // ---------- Vitals: gather the account figures and interpret them with insight ----------
@@ -1761,7 +1839,7 @@ const isChipExposed = (sector) => /semiconductor/i.test(sector);
 // through from loadAll. It is the difference between "the account is empty" and "we have no
 // account data at all" — and everything sizes against these figures, so that difference must
 // never be silently collapsed to zeros.
-function computeVitals(book, bookPresent = true) {
+function computeVitals(book, bookPresent = true, fxRates = { USD: 1 }) {
   // DEATHLY IMPORTANT (22/07/2026). loadAll defaults an ABSENT book key to an empty object,
   // so a wiped or never-seeded book would otherwise reach here looking exactly like a real
   // account that happens to hold nothing — figures all null, no reads — and the UI would
@@ -1814,15 +1892,28 @@ function computeVitals(book, bookPresent = true) {
     });
   }
 
+  // Per-holding market + USD value, resolved ONCE and reused for every weight below. Value is
+  // now currency-correct: an SGX holding priced in SGD is converted to USD before it joins the
+  // book total, instead of its raw SGD notional being summed as if it were dollars.
+  const priced = holdings.map((h) => {
+    const m = resolveHoldingMarket(h);
+    const nativeVal = Math.abs((num(h.qty) || 0) * (num(h.lastPrice) || num(h.avgCost) || 0));
+    const usd = toUsd(nativeVal, m.currency || 'USD', fxRates);
+    return { h, market: m, nativeVal, usd, valued: usd != null };
+  });
+  const usdVal = (p) => (p.valued ? p.usd : 0);
+  const valuedTotal = priced.reduce((a, p) => a + usdVal(p), 0);
+  const totVal = valuedTotal || 1;
+  // FAIL-HONEST: a holding whose currency we could not convert (no FX rate) is EXCLUDED from
+  // the weighted maths rather than silently counted at a wrong figure — and we say how much of
+  // the book that is, so a percentage is never quietly computed on a partial denominator.
+  const unvalued = priced.filter((p) => !p.valued).map((p) => p.h.ticker || p.h.name);
+
   // 2) leverage exposure: what share of the book rides on CFDs vs owned shares
   const levHoldings = holdings.filter((h) => h.leveraged || h.assetClass === 'CFD');
-  if (holdings.length) {
-    // value falls back to avgCost when no live price is synced, so a leveraged holding
-    // without a fresh price is NOT silently dropped (which would understate leverage).
-    const posVal = (h) => Math.abs((num(h.qty) || 0) * (num(h.lastPrice) || num(h.avgCost) || 0));
-    const levValue = levHoldings.reduce((sum, h) => sum + posVal(h), 0);
-    const totalValue = holdings.reduce((sum, h) => sum + posVal(h), 0);
-    const levPct = totalValue > 0 ? (levValue / totalValue) * 100 : 0;
+  if (holdings.length && valuedTotal > 0) {
+    const levValue = priced.filter((p) => p.h.leveraged || p.h.assetClass === 'CFD').reduce((s, p) => s + usdVal(p), 0);
+    const levPct = (levValue / valuedTotal) * 100;
     const status = levPct > 50 ? 'AMBER' : 'GREEN';
     reads.push({
       label: 'Leverage exposure', value: `${levHoldings.length} of ${holdings.length} positions`, status,
@@ -1860,33 +1951,40 @@ function computeVitals(book, bookPresent = true) {
     }
   }
 
-  // ---- richer portfolio analytics (the expanded insights) ----
-  const val = (h) => Math.abs((num(h.qty) || 0) * (num(h.lastPrice) || num(h.avgCost) || 0));
-  const totVal = holdings.reduce((a, h) => a + val(h), 0) || 1;
-
-  // sector concentration + hidden chip exposure
+  // ---- richer portfolio analytics, all weighted on USD value ----
+  // sector concentration (real sectors from the universe seed; no AI-era "chip exposure" lens)
   const sectorAgg = {};
-  let chipVal = 0;
-  for (const h of holdings) {
-    const sec = sectorOf(h);
-    sectorAgg[sec] = (sectorAgg[sec] || 0) + val(h);
-    if (isChipExposed(sec)) chipVal += val(h);
+  for (const p of priced) {
+    const sec = sectorOf(p.h);
+    sectorAgg[sec] = (sectorAgg[sec] || 0) + usdVal(p);
   }
   const sectors = Object.entries(sectorAgg).map(([name, v]) => ({ name, pct: +((v / totVal) * 100).toFixed(1) })).sort((a, b) => b.pct - a.pct);
-  const chipPct = +((chipVal / totVal) * 100).toFixed(1);
   const topSector = sectors[0] || null;
 
-  // geographic spread
+  // geographic spread — resolved through the real market classifier, all six markets, with a
+  // daytime/night tag from the market (US is night-only from Phuket; SGX/HK/TSE/Bursa/China
+  // trade in his daylight).
   const geoAgg = {};
-  for (const h of holdings) {
-    const geo = /SGX/i.test(h.exchange || '') ? 'Singapore' : /HK|HONG/i.test(h.exchange || '') ? 'Hong Kong' : 'US';
-    geoAgg[geo] = (geoAgg[geo] || 0) + val(h);
+  let daytimeVal = 0;
+  for (const p of priced) {
+    const g = p.market.geography || 'Unknown';
+    geoAgg[g] = (geoAgg[g] || 0) + usdVal(p);
+    if (p.market.daytimeTradeable) daytimeVal += usdVal(p);
   }
-  const geography = Object.entries(geoAgg).map(([name, v]) => ({ name, pct: +((v / totVal) * 100).toFixed(1) })).sort((a, b) => b.pct - a.pct);
+  const geography = Object.entries(geoAgg).map(([name, v]) => ({ name, pct: +((v / totVal) * 100).toFixed(1), daytime: name !== 'US' && name !== 'Unknown' })).sort((a, b) => b.pct - a.pct);
+  const daytimePct = +((daytimeVal / totVal) * 100).toFixed(1);
 
   // single-name concentration: is any one position too large a share?
-  const nameWeights = holdings.map((h) => ({ name: h.ticker || h.name, pct: +((val(h) / totVal) * 100).toFixed(1) })).sort((a, b) => b.pct - a.pct);
+  const nameWeights = priced.map((p) => ({ name: p.h.ticker || p.h.name, pct: +((usdVal(p) / totVal) * 100).toFixed(1) })).sort((a, b) => b.pct - a.pct);
   const topName = nameWeights[0] || null;
+
+  // hold-duration (week-max) watch: days each position has been held, and how many are past
+  // the one-week ceiling. Factual, not scored — it tells him what to look at, not a target.
+  const aged = holdings.map((h) => ({ name: h.ticker || h.name, days: daysHeld(h.openedAt) }));
+  const datedAges = aged.filter((x) => x.days != null);
+  const undatedCount = aged.length - datedAges.length;
+  const pastWeek = datedAges.filter((x) => x.days > 7).sort((a, b) => b.days - a.days);
+  const longestHeld = datedAges.slice().sort((a, b) => b.days - a.days)[0] || null;
 
   // winner / laggard attribution: which positions actually drive the book
   const withPL = holdings.filter((h) => num(h.unrealised) != null);
@@ -1904,28 +2002,43 @@ function computeVitals(book, bookPresent = true) {
         : `Your book leans heavily on ${topSector.name} at ${topSector.pct}%. A common healthy guide is no single sector above ~25-30%, so this is a concentration worth easing.`,
     });
   }
-  if (chipPct > 0) {
-    const st = chipPct > 45 ? 'RED' : chipPct > 30 ? 'AMBER' : 'GREEN';
-    reads.push({
-      label: 'Chip exposure (hidden)', value: `${chipPct}%`, status: st,
-      note: st === 'GREEN'
-        ? `About ${chipPct}% of your book is semiconductor-exposed once you look through the ETFs. A reasonable level.`
-        : `Roughly ${chipPct}% of your book rides on semiconductors once you look through the ETFs and separate names. They tend to move together, so this is real hidden concentration worth being aware of.`,
-    });
-  }
   if (topName && topName.pct > 10) {
     reads.push({
-      label: 'Single-name risk', value: `${topName.name} ${topName.pct}%`, status: topName.pct > 20 ? 'AMBER' : 'GREEN',
-      note: `${topName.name} is ${topName.pct}% of your book. A common guide keeps any single stock under ~5-10%; a shock to one large name hits the whole book hardest.`,
+      label: 'Single-name risk', value: `${topName.name} ${topName.pct}%`, status: topName.pct > 25 ? 'AMBER' : 'GREEN',
+      note: `${topName.name} is ${topName.pct}% of your book (USD-weighted). A shock to one large name hits the whole book hardest, so keep an eye on any position that dominates.`,
     });
   }
+  // Geographic spread + WHEN he can trade it, on real markets. US is night-only from Phuket;
+  // SGX/HK/TSE/Bursa/China trade in his daylight. This read used to claim "US 100% · night
+  // only" on a book a quarter of which is Singapore, because non-US names defaulted to US.
   if (geography.length) {
-    const usPct = (geography.find((g) => g.name === 'US') || {}).pct || 0;
+    const hasDaytime = daytimePct > 0;
     reads.push({
-      label: 'Geographic spread', value: geography.map((g) => `${g.name} ${g.pct}%`).join(' · '), status: usPct > 85 ? 'AMBER' : 'GREEN',
-      note: usPct > 85
-        ? `About ${usPct}% of your book is US-listed, which you can only trade late at night. Adding SG/HK/regional daytime-tradeable names spreads both geography and trading hours.`
-        : `A genuine geographic spread across ${geography.map((g) => g.name).join(', ')}, which helps both diversification and daytime tradeability.`,
+      label: 'Markets & trading hours',
+      value: geography.map((g) => `${g.name} ${g.pct}%`).join(' · '),
+      status: hasDaytime ? 'GREEN' : 'AMBER',
+      note: hasDaytime
+        ? `${daytimePct}% of your book (USD-weighted) is in daytime-tradeable markets (${geography.filter((g) => g.daytime).map((g) => g.name).join(', ')}) you can act on from Phuket in daylight; the rest is US, tradeable only late at night.`
+        : `Your whole book is US-listed, which from Phuket you can only trade late at night. A Singapore/HK/regional name would give you something to act on in daylight.`,
+    });
+  }
+  // Hold duration — the one-week ceiling, surfaced factually.
+  if (longestHeld) {
+    reads.push({
+      label: 'Hold duration',
+      value: pastWeek.length ? `${pastWeek.length} past 7 days` : `longest ${longestHeld.days}d`,
+      status: pastWeek.length ? 'AMBER' : 'GREEN',
+      note: pastWeek.length
+        ? `${pastWeek.length} position${pastWeek.length !== 1 ? 's' : ''} held beyond your one-week ceiling (${pastWeek.slice(0, 3).map((x) => `${x.name} ${x.days}d`).join(', ')}). Review whether the thesis still holds or it is time to close.${undatedCount ? ` (${undatedCount} more have no recorded open date.)` : ''}`
+        : `Longest-held position is ${longestHeld.name} at ${longestHeld.days} day${longestHeld.days !== 1 ? 's' : ''} — all within your one-week hold.${undatedCount ? ` (${undatedCount} position${undatedCount !== 1 ? 's have' : ' has'} no recorded open date.)` : ''}`,
+    });
+  }
+  // Honesty read: if any holding could not be valued in USD, say so rather than let a weight
+  // silently rest on a partial denominator.
+  if (unvalued.length) {
+    reads.push({
+      label: 'Valuation gap', value: `${unvalued.length} unpriced in USD`, status: 'AMBER',
+      note: `Could not convert ${unvalued.join(', ')} to USD (no FX rate this session), so ${unvalued.length === holdings.length ? 'the' : 'these are left out of the'} weights above. Figures reflect the rest of the book; re-check after the next sync.`,
     });
   }
 
@@ -1948,49 +2061,25 @@ function computeVitals(book, bookPresent = true) {
       netLiq, ledgerBalance, equityBalance, unrealizedPL, initialMargin, buyingPower,
     },
     reads, trend,
-    analytics: { sectors, chipPct, geography, nameWeights: nameWeights.slice(0, 6), topWinners, topLaggards, holdingsCount: holdings.length },
+    analytics: {
+      sectors, geography, daytimePct,
+      nameWeights: nameWeights.slice(0, 6), topWinners, topLaggards,
+      holdingsCount: holdings.length,
+      holdDuration: { longest: longestHeld, pastWeek: pastWeek.slice(0, 5), undatedCount },
+      valuation: { valuedUsd: +valuedTotal.toFixed(2), unvalued },
+    },
     leveraged: levHoldings.map((h) => h.ticker || h.name),
     lastSync: book.lastSync || null,
     freshness,
   };
 }
 
-// ---------- Coaching progression: notice improvements, praise, advance ----------
-// Derives a small set of book-health goals from the vitals analytics, checks each
-// against a healthy threshold, and by comparing to the last saved snapshot, notices
-// when a goal has newly been MET so it can praise the win and surface the next focus.
-function computeCoaching(book, vitals, prevGoals) {
-  if (!vitals || !vitals.analytics) return null;
-  const a = vitals.analytics;
-  const goals = [];
-
-  // goal 1: cut chip concentration below 30%
-  if (a.chipPct != null) goals.push({ id: 'chip', label: 'Reduce chip exposure below 30%', met: a.chipPct <= 30, detail: `${a.chipPct}% chip-exposed`, target: '≤30%' });
-  // goal 2: no single sector above 30%
-  const top = (a.sectors || [])[0];
-  if (top) goals.push({ id: 'sector', label: 'No single sector above 30%', met: top.pct <= 30, detail: `${top.name} ${top.pct}%`, target: '≤30%' });
-  // goal 3: no single stock above 20%
-  const topName = (a.nameWeights || [])[0];
-  if (topName) goals.push({ id: 'name', label: 'No single stock above 20%', met: topName.pct <= 20, detail: `${topName.name} ${topName.pct}%`, target: '≤20%' });
-  // goal 4: some geographic spread (US under 85%)
-  const us = (a.geography || []).find((g) => g.name === 'US');
-  if (us) goals.push({ id: 'geo', label: 'Spread beyond US (US under 85%)', met: us.pct < 85, detail: `US ${us.pct}%`, target: '<85%' });
-
-  // compare to previous snapshot to detect NEWLY met goals (progress to praise)
-  const prevMap = {};
-  (prevGoals || []).forEach((g) => { prevMap[g.id] = g.met; });
-  const justAchieved = goals.filter((g) => g.met && prevMap[g.id] === false).map((g) => g.label);
-
-  const metCount = goals.filter((g) => g.met).length;
-  const nextFocus = goals.find((g) => !g.met) || null;
-
-  return {
-    goals, metCount, total: goals.length,
-    justAchieved,
-    nextFocus: nextFocus ? { label: nextFocus.label, detail: nextFocus.detail, target: nextFocus.target } : null,
-    allMet: metCount === goals.length && goals.length > 0,
-  };
-}
+// The Book Health "goals" coaching panel was removed 22/07/2026. Its four goals were AI-era
+// (reduce chip exposure, no sector above 30%, no name above 20%, spread beyond US) and two of
+// them were measured on the pre-fix mis-classified/mis-valued data. Per the user's decision,
+// Vitals now shows factual, decision-driving analysis derived from real synced data rather than
+// legacy thematic scoring — the concepts he still cares about (week-max hold, margin health,
+// multi-market presence) survive as honest READS in computeVitals, not as scored targets.
 
 async function actGet() {
   const t = bkk();
@@ -2043,14 +2132,14 @@ async function actGet() {
     }
     ideas.qualifyingCount = ideas.ideas.filter((i) => i.qualifies).length;
   }
-  const vitals = computeVitals(s.book, s.bookPresent);
-  // coaching: compare current goals to the last saved snapshot to notice improvements
-  const coaching = computeCoaching(s.book, vitals, (s.book.coachGoals || []));
-  if (coaching) {
-    // persist the current goal states so next time we can detect newly-met goals
-    s.book.coachGoals = coaching.goals.map((g) => ({ id: g.id, met: g.met }));
-    await rSet('exchange:book', s.book);
-  }
+  // FX for currency-correct vitals: resolve each holding's real market -> currency, fetch
+  // one FX bundle, and pass the rates in so an SGD/JPY holding is weighted in USD rather than
+  // summed as if its raw notional were dollars. Degrades to USD-only on any failure, which the
+  // vitals valuation-gap read then surfaces honestly.
+  const heldCurrencies = (s.book.holdings || []).map((h) => resolveHoldingMarket(h).currency).filter(Boolean);
+  let fxRates = { USD: 1 };
+  try { fxRates = await getFxToUsd(heldCurrencies); } catch { fxRates = { USD: 1 }; }
+  const vitals = computeVitals(s.book, s.bookPresent, fxRates);
   return {
     clock: t,
     book: s.book,
@@ -2061,7 +2150,6 @@ async function actGet() {
     universe: s.universe,
     ideasToday: ideas,
     vitals,
-    coaching,
   };
 }
 
@@ -2170,7 +2258,7 @@ export const config = { maxDuration: 120 };
 // principle that a test quietly checking a copy is worse than no test at all.
 export { checkLevels, sanePrice, recomputeLevels, priceOf, tpCeiling, catalystCheck, addDays, horizonStatus, offListCheck, shortlistBlock };
 export { isShort, levelHitState, levelGeometryProblem, inferDirection };
-export { computeVitals };
+export { computeVitals, resolveHoldingMarket, sectorOf };
 export { applyConvergenceCap, ideaQualifies };
 export { daysHeld };
 
