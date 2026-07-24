@@ -404,7 +404,10 @@ const SYSTEM =
   "cardShape: at most 2 sentences on the whole card. " +
   "Each faded entry: ONE sentence, and at most one per fixture — pick the single strongest reason you are not betting it, not every reason. " +
   "notes: at most 2 sentences for the entire card, and only if something genuinely needs flagging; leave it empty otherwise. " +
-  "Each leg's reason may run to 2 sentences because that is the argument for spending money, but no further. " +
+  "\n\nEACH LEG'S REASON IS A LIST, NOT A PARAGRAPH. Give 2 to 4 short points, each a single clause, ordered strongest first. " +
+  "Lead with the NUMBER that makes the case — the edge, the probability gap, the rating difference — because that is what is being looked at, and a point that opens with a figure is read in a glance. " +
+  "One point per idea: the edge is one point, the xPTS read is another, the form is another. Do not bundle three arguments into one sentence. " +
+  "If the edge is thin, say so as a point in its own right rather than burying it. " +
   "Length is not rigour. A long paragraph explaining why you did not bet something is wasted on a reader who has already moved on.";
 
 // ---------------------------------------------------------------------------
@@ -420,9 +423,14 @@ const MAX_LEGS = 5;
 const STAKE_STANDARD = 10;
 const STAKE_SPECULATIVE = 5;
 
-function gateLegs(rawLegs, fixtures) {
+// `answeredBy` maps mirrorCode -> the source ids that actually returned data for
+// THAT fixture. A competition's coverage and a fixture's coverage are different
+// numbers, and the first live slip showed "6/6 sources" on a leg only four
+// sources had informed. The leg must report what fed it, not what might have.
+function gateLegs(rawLegs, fixtures, answeredBy) {
   const byCode = {};
   fixtures.forEach((f) => { byCode[String(f.mirrorCode)] = f; });
+  const answered = answeredBy || {};
 
   const kept = [];
   const vetoes = [];
@@ -436,7 +444,14 @@ function gateLegs(rawLegs, fixtures) {
       betType: String(raw.betType || "").trim(),
       odds: num(raw.odds),
       confidence: String(raw.confidence || "").trim(),
-      reason: String(raw.reason || "").trim(),
+      // Accept EITHER an array of points or a plain string. Asking for a list is a
+      // request; a model under pressure will sometimes send prose anyway, and the
+      // reasoning is the last thing that should be dropped for a format slip.
+      reason: Array.isArray(raw.reason)
+        ? raw.reason.map((x) => String(x).trim()).filter(Boolean)
+        : String(raw.reason || "").trim()
+            ? [String(raw.reason).trim()]
+            : [],
       sourcesUsed: Array.isArray(raw.sourcesUsed) ? raw.sourcesUsed.map(String) : [],
     };
     const fx = byCode[leg.mirrorCode];
@@ -554,11 +569,19 @@ function gateLegs(rawLegs, fixtures) {
     // Carry the coverage facts onto the leg so the UI can show the caveat
     // beside the bet rather than in a footnote nobody reads.
     const cov = coverageFor(fx.league);
+    const got = answered[String(fx.mirrorCode)] || [];
     leg.league = fx.league;
     leg.fixture = fx.home + " v " + fx.away;
     leg.matchDate = fx.matchDate;
     leg.kickoff = fx.kickoff || null;
-    leg.coverage = { count: cov.count, sources: cov.sources, missing: cov.missing, tier: tierFor(fx.league).tier };
+    leg.coverage = {
+      count: cov.count,            // what the COMPETITION has
+      sources: cov.sources,
+      missing: cov.missing,
+      tier: tierFor(fx.league).tier,
+      answered: got,               // what actually informed THIS fixture
+      answeredCount: got.length,
+    };
     kept.push(leg);
   }
   return { kept, vetoes, corrections };
@@ -695,7 +718,7 @@ const handler = async (req, res) => {
         '"legs":[{"mirrorCode":"","market":"exact market name from the SGPOOLS MARKETS block",' +
         '"selection":"exact selection text from that market","betType":"unambiguous, e.g. 1X2 straight win",' +
         '"odds":0,"stake":10,"confidence":"Standard|Speculative",' +
-        '"reason":"which sources agree and why; name the disagreement with the market; state plainly if coverage is thin",' +
+        '"reason":["2-4 short points, strongest first, each opening with its number where it has one"],' +
         '"sourcesUsed":["clubelo","forebet"]}],' +
         '"faded":[{"mirrorCode":"","fixture":"","why":"ONE sentence, one entry per fixture at most"}],' +
         '"notes":"at most 2 sentences for the whole card, or empty"}';
@@ -720,8 +743,10 @@ const handler = async (req, res) => {
       try { parsed = parseReply(text); }
       catch (e) { return res.status(502).json({ error: String(e.message || e) }); }
 
+      const answeredBy = {};
+      fixtures.forEach((f, i) => { answeredBy[String(f.mirrorCode)] = enriched[i].present; });
       const { kept, vetoes, corrections } = gateLegs(
-        Array.isArray(parsed.legs) ? parsed.legs : [], fixtures);
+        Array.isArray(parsed.legs) ? parsed.legs : [], fixtures, answeredBy);
 
       const matchDate = fixtures[0] ? fixtures[0].matchDate : "";
       const result = {

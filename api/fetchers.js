@@ -297,8 +297,20 @@ export async function fetchXGScore(slug) {
 // ---------------------------------------------------------------------------
 export async function fetchForebet(path) {
   try {
-    // Chrome desktop is hard-403 here; iPhone and Firefox both serve.
-    const html = await grab(`https://www.forebet.com/en/${path}`, { ms: 20000, uas: UA_MOBILE });
+    // WWW IS BEHIND A CLOUDFLARE IP CHALLENGE; m.forebet.com IS NOT.
+    // The 403 body is the "Just a moment..." interstitial, which is Cloudflare
+    // judging the CALLER'S IP, not its User-Agent — so no amount of UA rotation
+    // fixes it. It passed from a residential-ish sandbox and failed from Vercel's
+    // Lambda ranges, which is why this looked like a UA problem and was not.
+    // The mobile host serves byte-identical markup: same `rcnt` blocks, same
+    // schema.org microdata, same fixture count. Try it FIRST, since it is the one
+    // that works from a datacentre, and fall back to www for the days that flips.
+    let html;
+    try {
+      html = await grab(`https://m.forebet.com/en/${path}`, { ms: 20000, uas: UA_MOBILE });
+    } catch (e) {
+      html = await grab(`https://www.forebet.com/en/${path}`, { ms: 20000, uas: UA_MOBILE });
+    }
 
     // Forebet emits schema.org microdata per fixture inside a `rcnt` block:
     //   <div class='rcnt ...'> ... <span class="homeTeam"><span itemprop="name">X</span>
