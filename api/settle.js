@@ -289,9 +289,36 @@ const handler = async (req, res) => {
       if (req.method !== "POST") return res.status(405).json({ error: "POST required" });
       const body = parseBody(req);
       const log = await getLog();
-      const pending = log.filter((b) => b.result === "pending" && b.ledger !== "Void");
+
+      // THE CLERK OUTRANKS THE GRADER. If a bet's receipt has already been filed
+      // from the SGPools statement, that record carries the operator's own payout
+      // — including the quarter-lines, half-time markets and multiples this file
+      // deliberately refuses to compute. Re-grading it here would put two
+      // authorities on one bet and let the weaker one write last.
+      //
+      // So pending proposals whose bet already has a receipt are SKIPPED, not
+      // graded. They are superseded, and vaultStats drops them from the figures
+      // for exactly the same reason.
+      const [placedRaw] = await redis([["GET", "ninety:placed"]]);
+      const placed = placedRaw ? JSON.parse(placedRaw) : [];
+      const nk = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const receipted = new Set();
+      placed.forEach((b) => (b.legs || []).forEach((l) =>
+        receipted.add(nk(l.fixture) + "|" + nk(l.selection))));
+
+      const allPending = log.filter((b) => b.result === "pending" && b.ledger !== "Void");
+      const supersededByReceipt = allPending.filter((b) => receipted.has(nk(b.fixture) + "|" + nk(b.selection)));
+      const pending = allPending.filter((b) => !receipted.has(nk(b.fixture) + "|" + nk(b.selection)));
       if (!pending.length)
-        return res.status(200).json({ ok: true, settled: 0, note: "Nothing pending to settle." });
+        return res.status(200).json({
+          ok: true, settled: 0,
+          supersededByReceipt: supersededByReceipt.length,
+          note: supersededByReceipt.length
+            ? "Nothing left to grade: " + supersededByReceipt.length + " pending leg" +
+              (supersededByReceipt.length === 1 ? " has" : "s have") +
+              " a receipt on file, and the statement's own figures are used for those."
+            : "Nothing pending to settle.",
+        });
 
       // Group by match date so each date's feed is fetched once.
       const dates = [...new Set(pending.map((b) => String(b.matchDateISO || "").replace(/-/g, "")).filter(Boolean))];
@@ -374,6 +401,7 @@ const handler = async (req, res) => {
         feedErrors,
         thisRun: { staked, returned, net: r2(returned - staked) },
         stillPending: log.filter((b) => b.result === "pending" && b.ledger !== "Void").length,
+        supersededByReceipt: supersededByReceipt.length,
         verify,
       });
     }

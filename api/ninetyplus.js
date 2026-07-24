@@ -455,7 +455,12 @@ const SYSTEM =
   "\n\nTHE TOTE MATTERS. On a pari-mutuel pool the most agreed-upon selection is by construction the most overbet one. Consensus is where the crowd's money is crushed, not where value lives. A price that looks short because 'everyone knows' the favourite wins is exactly the price to fade. " +
   "\n\nUSE THE DISAGREEMENT. Each fixture below carries several INDEPENDENT views: ClubElo (a pure Elo model with a full scoreline distribution), Forebet (a separate statistical model), xGscore (expected points, which exposes teams whose league position is luck-inflated), ESPN form and a second bookmaker's line, and SoccerSTATS tables. Where they AGREE with the SGPools price there is no edge to take. Where a model's probability implies materially better odds than SGPools is offering, that gap is the whole reason this tool exists. The EDGE line is pre-computed for you. " +
   "\n\nBEWARE THE TABLE. A team can top the league on luck. xGscore's expected-points column is the check: a large positive gap between points and xPTS means the table flatters them and their price is short for the wrong reason. A large negative gap means the opposite. Say so when it bites. " +
-  "\n\nDATA COVERAGE IS NOT UNIFORM AND YOU MUST RESPECT IT. Every fixture states how many of the available sources carry its competition. Norwegian and Swedish fixtures have up to six, including Elo and xG. K League and the other Asian leagues have fewer, with NO Elo and NO xG anywhere; some of what they do have is standings-grade rather than model-grade. Thai, Singapore and Malaysian competitions may have one. A read built on two sources is not the same animal as one built on six, and you must SAY SO in the reason field rather than writing with equal confidence either way. Never imply a model backs you when no model covers that league. " +
+  "\n\nDATA COVERAGE IS NOT UNIFORM AND YOU MUST RESPECT IT, AND WHAT MATTERS IS NOT HOW MANY SOURCES BUT WHAT KIND. " +
+  "Each fixture states its coverage as a MIX: models (a probability or expectation for this match), market (somebody else's price), supporting (league tables and fixture feeds). " +
+  "Only a MODEL has a view you can test the tote against. A league table describes the season that has already happened; it corroborates, it does not predict. Stacking three tables together does not produce an opinion. " +
+  "European leagues typically carry several models including Elo and expected goals. Asian competitions carry fewer, often ONE, and NO Elo or xG anywhere. " +
+  "A read built on one model plus tables is not the same animal as one built on three models that can disagree with each other, and you must SAY SO in the reason field rather than writing with equal confidence either way. " +
+  "NEVER imply a model backs you when the coverage line shows no model covers that competition. " +
   "\n\nHARD RULES, ENFORCED IN CODE AFTER YOU REPLY (proposing a leg that will be vetoed is worse than not proposing it): " +
   "(1) You may ONLY cite a market and selection that appears verbatim in that fixture's SGPOOLS MARKETS block. Never invent a market, never carry a price from another source. " +
   "(2) The odds you quote MUST match the scraped price exactly. " +
@@ -637,13 +642,21 @@ function gateLegs(rawLegs, fixtures, answeredBy) {
     leg.fixture = fx.home + " v " + fx.away;
     leg.matchDate = fx.matchDate;
     leg.kickoff = fx.kickoff || null;
+    const t = tierFor(fx.league);
     leg.coverage = {
       count: cov.count,            // what the COMPETITION has
+      total: cov.total,            // out of how many sources exist at all
       sources: cov.sources,
       missing: cov.missing,
-      tier: tierFor(fx.league).tier,
+      tier: t.tier,
+      label: t.label,              // the GRADED description ("1 model, 3 supporting")
+      mix: t.mix,
       answered: got,               // what actually informed THIS fixture
       answeredCount: got.length,
+      // How many of the sources that ANSWERED are models. This is the number
+      // that decides whether a leg rests on a probability or on a table, and
+      // the count alone cannot express it.
+      answeredModels: got.filter((k) => (SOURCES[k] || {}).grade === "model").length,
     };
     kept.push(leg);
   }
@@ -654,9 +667,66 @@ function gateLegs(rawLegs, fixtures, answeredBy) {
 // VAULT
 // ---------------------------------------------------------------------------
 
+// THE TWO LEDGERS, AND WHY ONLY ONE OF THEM COUNTS.
+//
+// `ninety:betlog` holds COMMITTED PROPOSALS: what the slip said, at the mirror's
+// lagging price, recorded when you tapped "I placed these".
+// `ninety:placed` holds RECEIPTS: what the SGPools statement says you actually
+// placed, at the real price, with SGPools' own payout where it has settled.
+//
+// These OVERLAP. Commit a slip and then upload its statement page and the same
+// bet exists in both. Summing them would double every figure on the page, and
+// the version being double-counted would be the less accurate one.
+//
+// So the rule is a hierarchy, not a merge: A RECEIPT SUPERSEDES A PROPOSAL.
+// A proposal counts only until its receipt arrives, and matching is by fixture
+// plus selection because the two ledgers key differently by design — the
+// proposal cannot know a receipt number that does not exist until you place it.
+//
+// The practical effect: commit whatever you like, upload whenever you like, in
+// any order, and the figures stay true. That is worth more than either ledger
+// being tidy on its own.
+function reconcile(betlog, placed) {
+  // Index the receipts by fixture+selection so a proposal can find its match.
+  const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const receiptKeys = new Set();
+  for (const b of placed) {
+    for (const l of (b.legs || [])) {
+      receiptKeys.add(norm(l.fixture) + "|" + norm(l.selection));
+    }
+  }
+  const superseded = [];
+  const survivingProposals = betlog.filter((p) => {
+    const k = norm(p.fixture) + "|" + norm(p.selection);
+    if (receiptKeys.has(k)) { superseded.push(p.id); return false; }
+    return true;
+  });
+  return { survivingProposals, superseded };
+}
+
 async function vaultStats() {
-  const [logRaw] = await redis([["GET", "ninety:betlog"]]);
-  const log = logRaw ? JSON.parse(logRaw) : [];
+  const [logRaw, placedRaw] = await redis([["GET", "ninety:betlog"], ["GET", "ninety:placed"]]);
+  const rawLog = logRaw ? JSON.parse(logRaw) : [];
+  const placed = placedRaw ? JSON.parse(placedRaw) : [];
+
+  // Receipts win. A proposal whose bet has a receipt is dropped from the figures
+  // entirely — not merged, not averaged: the receipt IS the record.
+  const { survivingProposals, superseded } = reconcile(rawLog, placed);
+
+  // Bets from the statement are already bet-shaped (a multiple is one bet with
+  // legs and one stake). Proposals are leg-shaped. Both flatten to the same
+  // fields for counting, and the multiple keeps its single stake.
+  const fromReceipts = placed.map((b) => ({
+    stake: b.stake, payout: b.payout, result: b.result,
+    confidence: b.confidence || "(from statement)",
+    ledger: b.result === "void" ? "Void" : "Model",
+    shape: b.shape, source: "receipt",
+  }));
+  const fromProposals = survivingProposals.map((p) => ({
+    stake: p.stake, payout: p.payout, result: p.result,
+    confidence: p.confidence, ledger: p.ledger, shape: "single", source: "proposal",
+  }));
+  const log = fromReceipts.concat(fromProposals);
   // Voided legs stay in the record but leave the figures entirely: a leg struck
   // for a reason that was not the model's fault is neither a win it earned nor a
   // loss it deserved, and counting it either way misreports the book.
@@ -692,6 +762,10 @@ async function vaultStats() {
 
   return {
     legsLoaded: live.length,
+    fromReceipts: fromReceipts.length,
+    fromProposals: fromProposals.length,
+    supersededByReceipt: superseded.length,
+    multiples: placed.filter((b) => b.shape === "multiple").length,
     settled: settled.length,
     pending: pending.length,
     pendingStake: r2(pending.reduce((a, b) => a + num(b.stake), 0)),

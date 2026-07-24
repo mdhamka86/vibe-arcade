@@ -142,7 +142,7 @@
   </div>
   <div id="app">
   <h1>Ninety <span class="plus">Plus</span></h1>
-  <div class="sub">Six sources walk into a fixture. Pull the card, tap the games worth a look, and Ninety Plus reads every market, gathers every model that covers the competition, and argues its way to a slip. Where they disagree with the tote is where the money is.</div>
+  <div class="sub">Nine sources walk into a fixture, and only some of them have an opinion. Pull the card, tap the games worth a look, and Ninety Plus reads every market, gathers every model that covers the competition, and argues its way to a slip. Where they disagree with the tote is where the money is.</div>
 
   <div class="cmatch">⚠ Card-match rule: the code shown comes from the lagging mirror and may NOT equal the SGPools app code. Always confirm the real code, the match date and the live price in the SGPools app before betting.</div>
 
@@ -169,7 +169,7 @@
   <div class="selbar"><button class="go" id="deepBtn" style="display:none">Analyse selected games</button><div class="advisory" id="advisory"></div></div>
   <div class="slip" id="slip"></div>
 
-  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v3.1</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
+  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v3.2</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
   </div>
 
 <script>
@@ -339,14 +339,23 @@ async function loadStats(){
     if(s.error) return;
     const cls=v=>v>0?"pos":(v<0?"neg":"");
     statsHost.innerHTML=
-      '<div class="stat"><div class="v">'+s.legsLoaded+'</div><div class="k">bets loaded</div></div>'+
+      '<div class="stat"><div class="v">'+s.legsLoaded+'</div><div class="k">'+
+        (s.fromReceipts?'bets ('+s.fromReceipts+' from receipts)':'bets loaded')+'</div></div>'+
       '<div class="stat"><div class="v">'+s.hits+'/'+s.settled+'</div><div class="k">hits</div></div>'+
       '<div class="stat"><div class="v '+cls(s.netPL)+'">'+(s.netPL<0?"-$":"$")+Math.abs(s.netPL).toFixed(2)+'</div><div class="k">net P&amp;L</div></div>'+
       '<div class="stat"><div class="v '+cls(s.roi)+'">'+(s.roi>0?"+":"")+s.roi+'%</div><div class="k">ROI</div></div>';
     statsHost.style.display="grid";
     // A strike rate off three legs is noise. Say so, rather than letting a big
     // number imply a significance the sample cannot carry.
-    if(s.settled>0 && !s.enoughToJudge){
+    // A figure built from proposals is provisional: it is what the slip SAID, at
+    // the mirror's lagging price, not what the coupon took. Say so rather than
+    // letting it pass as the book.
+    if(s.fromProposals>0){
+      youNote.textContent=s.fromProposals+" bet"+(s.fromProposals===1?"":"s")+
+        " in these figures come from committed slips rather than uploaded receipts, so the prices are the mirror's, not what you were actually given."+
+        (s.settled>0&&!s.enoughToJudge?" Only "+s.settled+" settled so far, too few to judge.":"");
+      youNote.style.display="block";
+    } else if(s.settled>0 && !s.enoughToJudge){
       youNote.textContent="Only "+s.settled+" settled leg"+(s.settled===1?"":"s")+" so far. These figures are too young to mean anything yet; roughly 30 is where they start to.";
       youNote.style.display="block";
     } else youNote.style.display="none";
@@ -640,10 +649,15 @@ function renderSlip(p,failed,total){
       if((cov.missing||[]).includes("clubelo")) gaps.push("no Elo");
       if((cov.missing||[]).includes("xgscore")) gaps.push("no xG");
       const ansN=cov.answeredCount!=null?cov.answeredCount:null;
+      // How many of the sources that answered actually hold an OPINION. A leg
+      // informed by four tables and a fixture feed is not the same animal as one
+      // informed by two models, and "4 sources answered" says nothing about which.
+      const mods=cov.answeredModels;
       const covTxt=cov.count!=null
         ? (ansN!=null
-            ? ansN+" source"+(ansN===1?"":"s")+" answered"+(ansN<cov.count?" of "+cov.count+" available":"")
-            : cov.count+"/6 sources")+
+            ? ansN+" source"+(ansN===1?"":"s")+" answered"+(ansN<cov.count?" of "+cov.count+" available":"")+
+              (mods!=null?" \u00b7 "+(mods===0?"no model":mods+" model"+(mods===1?"":"s")):"")
+            : cov.count+"/"+(cov.total||SRC_TOTAL)+" sources")+
           (gaps.length?" \u00b7 "+gaps.join(" \u00b7 "):"")
         : "";
       h+='<tr>'+
