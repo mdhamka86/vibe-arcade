@@ -47,6 +47,53 @@
   footer{color:var(--muted);font-size:12px;margin-top:20px;line-height:1.5;}
   .selbar{position:sticky;bottom:0;background:linear-gradient(transparent,var(--bg) 30%);padding-top:14px;}
   .advisory{font-size:11.5px;color:var(--warn);line-height:1.5;margin:8px 2px 0;text-align:center;}
+
+  /* League group header. Coverage is a standing property of the competition, so it
+     sits on the group rather than repeating on every card in it. */
+  .leaguebar{margin:18px 2px 8px;padding-bottom:7px;border-bottom:1px solid var(--line);}
+  .leaguebar .top{display:flex;align-items:baseline;justify-content:space-between;gap:10px;}
+  .leaguebar .lg{font-size:14px;font-weight:700;color:var(--blue);}
+  .leaguebar .n{font-size:12px;color:var(--muted);}
+  .leaguebar .cov{font-size:11.5px;margin-top:4px;line-height:1.5;}
+  .cov .dots{letter-spacing:2px;margin-right:6px;}
+  .cov .have{color:var(--accent);} .cov .lack{color:#3a4048;}
+  .cov .deep{color:var(--accent);} .cov .medium{color:var(--blue);}
+  .cov .thin{color:var(--warn);} .cov .single,.cov .none{color:var(--bad);}
+  .cov .missing{color:var(--muted);}
+
+  /* Headline vault figures */
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);
+    border:1px solid var(--line);border-radius:12px;overflow:hidden;margin-bottom:14px;}
+  .stat{background:var(--card);padding:11px 10px;text-align:center;}
+  .stat .v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums;}
+  .stat .k{font-size:9.5px;color:var(--muted);letter-spacing:.09em;text-transform:uppercase;margin-top:3px;}
+  .stat .v.pos{color:var(--accent);} .stat .v.neg{color:var(--bad);}
+  .younote{font-size:11px;color:var(--warn);text-align:center;margin:-6px 0 14px;line-height:1.5;}
+
+  /* The slip */
+  .slip{margin-top:16px;}
+  .slip h3{font-size:15px;margin:0 0 4px;font-weight:700;}
+  .shape{font-size:13px;color:var(--ink);line-height:1.6;background:var(--card);
+    border:1px solid var(--line);border-radius:12px;padding:13px 14px;margin-bottom:12px;}
+  table.bets{width:100%;border-collapse:collapse;font-size:12.5px;margin-bottom:12px;}
+  table.bets th{text-align:left;font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;
+    color:var(--muted);font-weight:600;padding:6px 7px;border-bottom:1px solid var(--line);}
+  table.bets td{padding:9px 7px;border-bottom:1px solid var(--line);vertical-align:top;}
+  table.bets tr:last-child td{border-bottom:none;}
+  table.bets .code{font-weight:700;color:var(--gold);font-variant-numeric:tabular-nums;white-space:nowrap;}
+  table.bets .odds{font-variant-numeric:tabular-nums;font-weight:700;text-align:right;white-space:nowrap;}
+  table.bets .stake{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap;}
+  .betmeta{color:var(--muted);font-size:11px;margin-top:2px;line-height:1.45;}
+  .conf{font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+    border:1px solid currentColor;border-radius:20px;padding:2px 7px;white-space:nowrap;}
+  .conf.standard{color:var(--accent);} .conf.speculative{color:var(--warn);}
+  .reason{font-size:12px;color:var(--ink);line-height:1.55;padding:2px 7px 10px;}
+  .covtag{font-size:10.5px;margin-top:4px;}
+  .vetobox,.fadebox{background:var(--card2,#12161b);border:1px solid var(--line);
+    border-radius:11px;padding:11px 13px;margin-bottom:9px;font-size:12px;line-height:1.55;color:var(--muted);}
+  .vetobox b{color:var(--warn);} .fadebox b{color:var(--blue);}
+  .placebar{background:#1a1410;border:1px solid var(--gold);border-radius:11px;
+    padding:11px 13px;font-size:12px;color:var(--gold);line-height:1.55;margin-bottom:10px;}
 </style>
 </head>
 <body>
@@ -59,19 +106,22 @@
   </div>
   <div id="app">
   <h1>Ninety <span class="plus">Plus</span></h1>
-  <div class="sub">Pull live SGPools football odds, tap the games you want, then deep-pull every market. Copy the lot to Claude, who trawls punters/tipsters/data, runs the convergence check, and hands back a recommended bet slip table. The pull layer for The Spread WC journal.</div>
+  <div class="sub">Pull live SGPools football odds, grouped by competition with the data coverage each one actually has. Tap the games you want and Ninety Plus reads every market, gathers six independent sources, and hands back a proposed slip with its reasoning. The football desk of The Spread WC journal.</div>
 
   <div class="cmatch">⚠ Card-match rule: the code shown comes from the lagging mirror and may NOT equal the SGPools app code. Always confirm the real code, the match date and the live price in the SGPools app before betting.</div>
+
+  <div class="stats" id="stats" style="display:none"></div>
+  <div class="younote" id="younote" style="display:none"></div>
 
   <button class="go" id="goBtn">Pull odds</button>
   <div class="status" id="status"></div>
   <div class="srcline" id="srcline"></div>
   <div id="warns"></div>
   <div id="out"></div>
-  <div class="selbar"><button class="go" id="deepBtn" style="display:none">Deep-pull selected games</button><div class="advisory" id="advisory"></div></div>
-  <button class="copy" id="copyBtn" style="display:none">Copy everything (paste to Claude)</button>
+  <div class="selbar"><button class="go" id="deepBtn" style="display:none">Analyse selected games</button><div class="advisory" id="advisory"></div></div>
+  <div class="slip" id="slip"></div>
 
-  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v1.1</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
+  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v2.0</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
   </div>
 
 <script>
@@ -84,8 +134,12 @@ document.getElementById("gateBtn").addEventListener("click",tryUnlock);
 document.getElementById("gatePass").addEventListener("keydown",e=>{if(e.key==="Enter")tryUnlock();});
 
 const ODDS="/api/odds2";
-const goBtn=document.getElementById("goBtn"),deepBtn=document.getElementById("deepBtn"),statusEl=document.getElementById("status"),srcline=document.getElementById("srcline"),out=document.getElementById("out"),copyBtn=document.getElementById("copyBtn"),warns=document.getElementById("warns"),advisory=document.getElementById("advisory");
-let fixtures=[],selected=new Set(),deepData={},copyText="";
+const goBtn=document.getElementById("goBtn"),deepBtn=document.getElementById("deepBtn"),statusEl=document.getElementById("status"),srcline=document.getElementById("srcline"),out=document.getElementById("out"),warns=document.getElementById("warns"),advisory=document.getElementById("advisory"),slipHost=document.getElementById("slip"),statsHost=document.getElementById("stats"),youNote=document.getElementById("younote");
+let fixtures=[],selected=new Set(),deepData={},proposal=null;
+// Coverage is fetched once and cached: it is a standing property of each
+// competition, not something that changes between pulls.
+let COVERAGE=null;
+const ANALYSE="/api/ninetyplus";
 function esc(s){return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 function setStatus(s){statusEl.textContent=s||"";}
 
@@ -105,7 +159,7 @@ function mvHtml(v){
 }
 
 function renderList(data){
-  out.innerHTML="";warns.innerHTML="";advisory.textContent="";selected.clear();deepData={};copyBtn.style.display="none";deepBtn.style.display="none";
+  out.innerHTML="";warns.innerHTML="";advisory.textContent="";slipHost.innerHTML="";selected.clear();deepData={};proposal=null;deepBtn.style.display="none";
   const a=ageLabel(data.mirror_age_seconds);
   srcline.innerHTML='<span class="'+a.cls+'">● sgodds mirror &middot; updated '+esc(data.last_updated||"?")+' ('+a.txt+')</span>';
 
@@ -118,42 +172,126 @@ function renderList(data){
   if(!data.fixtures||!data.fixtures.length){out.innerHTML='<div class="status">No fixtures parsed. Screenshot the SGPools card and I will read it manually.</div>';return;}
   fixtures=data.fixtures;
 
-  // Group into day sections so a forward-dated card can never read as tonight's.
-  const groups=[];
-  let cur=null;
+  // Group by DAY first (a forward-dated card must never read as tonight's), then
+  // by LEAGUE within the day. The league grouping exists so the coverage line has
+  // somewhere honest to live: it describes the competition, so it belongs on the
+  // competition, stated once, before you choose anything from it.
+  const days=[];
+  let curDay=null;
   fixtures.forEach((f,idx)=>{
-    const key=f.match_date||"unknown";
-    if(!cur||cur.key!==key){cur={key:key,label:f.match_date_display||"Date unknown",items:[]};groups.push(cur);}
-    cur.items.push({f:f,idx:idx});
+    const dk=f.match_date||"unknown";
+    if(!curDay||curDay.key!==dk){
+      curDay={key:dk,label:f.match_date_display||"Date unknown",leagues:[],byLeague:{}};
+      days.push(curDay);
+    }
+    const lk=f.league||"(unknown competition)";
+    if(!curDay.byLeague[lk]){ curDay.byLeague[lk]={name:lk,items:[]}; curDay.leagues.push(curDay.byLeague[lk]); }
+    curDay.byLeague[lk].items.push({f:f,idx:idx});
   });
 
-  for(const g of groups){
+  for(const day of days){
     const bar=document.createElement("div");
     bar.className="daybar";
-    bar.innerHTML='<span class="d">'+esc(g.label)+'</span><span class="n">'+g.items.length+' game'+(g.items.length>1?"s":"")+'</span>';
+    const n=day.leagues.reduce((a,l)=>a+l.items.length,0);
+    bar.innerHTML='<span class="d">'+esc(day.label)+'</span><span class="n">'+n+' game'+(n>1?"s":"")+'</span>';
     out.appendChild(bar);
 
-    for(const {f,idx} of g.items){
-      const o=f.odds_1x2||{}, mv=f.movement_1x2||{};
-      const div=document.createElement("div");div.className="match";div.dataset.idx=idx;
-      div.innerHTML=
-        '<h2><span>'+esc(f.home)+' v '+esc(f.away)+'</span><span class="mcode">'+esc(f.mirror_code||"?")+'</span></h2>'+
-        '<div class="mtime">'+esc(f.time_sgt||"")+' SGT · '+esc(f.league||"")+' <span class="chk" style="float:right">○</span></div>'+
-        '<div class="odds3">'+
-          '<div class="o"><div class="lab">1 '+esc(f.home)+'</div><div class="val">'+esc(o.home)+'</div>'+mvHtml(mv.home)+'</div>'+
-          '<div class="o"><div class="lab">X Draw</div><div class="val">'+esc(o.draw)+'</div>'+mvHtml(mv.draw)+'</div>'+
-          '<div class="o"><div class="lab">2 '+esc(f.away)+'</div><div class="val">'+esc(o.away)+'</div>'+mvHtml(mv.away)+'</div>'+
-        '</div>';
-      div.addEventListener("click",()=>{
-        if(selected.has(idx)){selected.delete(idx);div.classList.remove("sel");div.querySelector(".chk").textContent="○";}
-        else{selected.add(idx);div.classList.add("sel");div.querySelector(".chk").textContent="●";}
-        deepBtn.style.display=selected.size?"block":"none";
-        deepBtn.textContent="Deep-pull "+selected.size+" selected game"+(selected.size>1?"s":"");
-        updateAdvisory();
-      });
-      out.appendChild(div);
+    for(const lg of day.leagues){
+      const lbar=document.createElement("div");
+      lbar.className="leaguebar";
+      lbar.innerHTML='<div class="top"><span class="lg">'+esc(lg.name)+'</span>'+
+        '<span class="n">'+lg.items.length+' game'+(lg.items.length>1?"s":"")+'</span></div>'+
+        coverageHtml(lg.name);
+      out.appendChild(lbar);
+
+      for(const {f,idx} of lg.items){
+        const o=f.odds_1x2||{}, mv=f.movement_1x2||{};
+        const div=document.createElement("div");div.className="match";div.dataset.idx=idx;
+        div.innerHTML=
+          '<h2><span>'+esc(f.home)+' v '+esc(f.away)+'</span><span class="mcode">'+esc(f.mirror_code||"?")+'</span></h2>'+
+          '<div class="mtime">'+esc(f.time_sgt||"")+' SGT <span class="chk" style="float:right">\u25cb</span></div>'+
+          '<div class="odds3">'+
+            '<div class="o"><div class="lab">1 '+esc(f.home)+'</div><div class="val">'+esc(o.home)+'</div>'+mvHtml(mv.home)+'</div>'+
+            '<div class="o"><div class="lab">X Draw</div><div class="val">'+esc(o.draw)+'</div>'+mvHtml(mv.draw)+'</div>'+
+            '<div class="o"><div class="lab">2 '+esc(f.away)+'</div><div class="val">'+esc(o.away)+'</div>'+mvHtml(mv.away)+'</div>'+
+          '</div>';
+        div.addEventListener("click",()=>{
+          if(selected.has(idx)){selected.delete(idx);div.classList.remove("sel");div.querySelector(".chk").textContent="\u25cb";}
+          else{selected.add(idx);div.classList.add("sel");div.querySelector(".chk").textContent="\u25cf";}
+          deepBtn.style.display=selected.size?"block":"none";
+          deepBtn.textContent="Analyse "+selected.size+" selected game"+(selected.size>1?"s":"");
+          updateAdvisory();
+        });
+        out.appendChild(div);
+      }
     }
   }
+}
+
+// ---- coverage: what data actually exists for a competition -------------------
+// Fetched once and cached. Rendered on the LEAGUE GROUP rather than each fixture,
+// because it describes the competition, not the match: repeating it on twelve
+// Norwegian cards would be noise, and burying it in a footnote would mean it is
+// never read at the moment it matters, which is while choosing what to bet.
+async function loadCoverage(){
+  if(COVERAGE) return COVERAGE;
+  try{
+    const r=await fetch(ANALYSE+"?action=coverage");
+    const j=await r.json();
+    COVERAGE=j.leagues||{};
+  }catch(e){ COVERAGE={}; }
+  return COVERAGE;
+}
+const SRC_LABEL={espn:"ESPN",clubelo:"Elo",xgscore:"xG",forebet:"Forebet",
+  soccerstats:"SoccerSTATS",footballdata:"closing odds"};
+function coverageHtml(league){
+  const c=(COVERAGE||{})[league];
+  if(!c) return '<div class="cov"><span class="none">no source mapping for this competition &mdash; SGPools prices only</span></div>';
+  const total=6, have=c.count;
+  const dots="\u25cf".repeat(have)+"\u25cb".repeat(Math.max(0,total-have));
+  const named=(c.sources||[]).map(s=>SRC_LABEL[s]||s).join(", ");
+  const all=["espn","clubelo","xgscore","forebet","soccerstats","footballdata"];
+  const missing=all.filter(s=>!(c.sources||[]).includes(s));
+  // Name the ABSENCES that change how a read should be weighed. "No Elo, no xG"
+  // is the difference between a modelled opinion and a hunch, and the punter
+  // should see that before selecting, not after being handed a confident answer.
+  // When the count is zero, listing what is missing is noise: everything is. Say
+  // the one thing that matters instead, which is that there is nothing to read.
+  const keyMissing=[];
+  if(have>0){
+    if(missing.includes("clubelo")) keyMissing.push("no Elo");
+    if(missing.includes("xgscore")) keyMissing.push("no xG");
+    if(missing.includes("footballdata")) keyMissing.push("no closing odds");
+  }
+  if(have===0) keyMissing.push("SGPools prices only \u2014 nothing to cross-check against");
+  return '<div class="cov">'+
+    '<span class="dots"><span class="have">'+dots.slice(0,have)+'</span><span class="lack">'+dots.slice(have)+'</span></span>'+
+    '<span class="'+esc(c.tier)+'">'+have+'/6 sources</span>'+
+    (named?' &middot; '+esc(named):'')+
+    (keyMissing.length?' &middot; <span class="missing">'+esc(keyMissing.join(" \u00b7 "))+'</span>':'')+
+    '</div>';
+}
+
+// ---- headline vault figures --------------------------------------------------
+async function loadStats(){
+  try{
+    const r=await fetch(ANALYSE+"?action=stats");
+    const s=await r.json();
+    if(s.error) return;
+    const cls=v=>v>0?"pos":(v<0?"neg":"");
+    statsHost.innerHTML=
+      '<div class="stat"><div class="v">'+s.legsLoaded+'</div><div class="k">bets loaded</div></div>'+
+      '<div class="stat"><div class="v">'+s.hits+'/'+s.settled+'</div><div class="k">hits</div></div>'+
+      '<div class="stat"><div class="v '+cls(s.netPL)+'">'+(s.netPL<0?"-$":"$")+Math.abs(s.netPL).toFixed(2)+'</div><div class="k">net P&amp;L</div></div>'+
+      '<div class="stat"><div class="v '+cls(s.roi)+'">'+(s.roi>0?"+":"")+s.roi+'%</div><div class="k">ROI</div></div>';
+    statsHost.style.display="grid";
+    // A strike rate off three legs is noise. Say so, rather than letting a big
+    // number imply a significance the sample cannot carry.
+    if(s.settled>0 && !s.enoughToJudge){
+      youNote.textContent="Only "+s.settled+" settled leg"+(s.settled===1?"":"s")+" so far. These figures are too young to mean anything yet; roughly 30 is where they start to.";
+      youNote.style.display="block";
+    } else youNote.style.display="none";
+  }catch(e){ /* stats are decoration; never block the pull */ }
 }
 
 // Deep-pull tuning. Pool stays small on purpose: firing 20 requests at sgodds
@@ -162,6 +300,10 @@ function renderList(data){
 const POOL = 3;          // concurrent deep pulls
 const STAGGER_MS = 120;  // delay between worker launches
 const BIG_PULL = 12;     // soft advisory threshold, not a block
+// The analysis endpoint declares maxDuration 120 in its own config; the client
+// leash is DERIVED from that rather than restated, so the two cannot drift.
+const ANALYSE_MAX_MS = 120000;
+const LEASH = (serverMs) => serverMs - 5000;
 
 // Soft nudge, never a block. Two reasons a very large pull is worth pausing on:
 // it leans on the mirror harder, and a 20-game paste means shallower analysis
@@ -179,59 +321,23 @@ function updateAdvisory(){
 // small pool (POOL) with a short stagger. Pool stays small on purpose: firing
 // 20 requests at sgodds at once is a good way to earn a Cloudflare challenge,
 // which is exactly the AbortError the API's retry logic exists to survive.
-function buildBlock(f, j){
-  let b="==== "+f.home+" v "+f.away+" ====\n";
-  b+="SGPools code (CARD-MATCH IN APP): "+(f.mirror_code||"?")+"\n";
-  b+="Match date: "+(f.match_date_display||j.match_date||"?")+"\n";
-  b+="Kickoff: "+(f.time_sgt||"?")+" SGT\n";
-  b+="League: "+(f.league||"?")+"\n";
-  b+="Mirror updated: "+(j.last_updated||"?")+
-     (j.mirror_age_seconds!=null?" ("+ageLabel(j.mirror_age_seconds).txt+")":"")+"\n";
-  if(j.parse_warnings&&j.parse_warnings.length){
-    b+="PARSE WARNINGS: "+j.parse_warnings.join(" | ")+"\n";
-  }
-  b+="\nMARKETS (mirror; opening -> current, with movement since open):\n";
-  const order=j.market_order||Object.keys(j.markets||{});
-  if(order.length){
-    for(const mk of order){
-      const m=j.markets[mk];
-      if(!m||!m.selections) continue;
-      b+="\n["+mk+"]\n";
-      m.selections.forEach(s=>{
-        const mvTxt = (s.movement==null||s.movement===0) ? "" :
-          "  ("+(s.movement>0?"+":"")+s.movement+"% since open "+s.opening+")";
-        b+="  "+s.selection+"  @ "+s.odds+mvTxt+"\n";
-      });
-    }
-  }else{
-    b+="(no detailed markets parsed; 1X2 from list: "+f.home+" "+(f.odds_1x2&&f.odds_1x2.home)+
-       " / Draw "+(f.odds_1x2&&f.odds_1x2.draw)+" / "+f.away+" "+(f.odds_1x2&&f.odds_1x2.away)+")\n";
-  }
-  if(j.history_1x2&&j.history_1x2.samples&&j.history_1x2.samples.length){
-    const s=j.history_1x2.samples, ser=j.history_1x2.series||{};
-    b+="\n[1X2 movement history] "+s.length+" samples, "+s[0]+" -> "+s[s.length-1]+"\n";
-    for(const k of Object.keys(ser)){
-      b+="  "+k+": "+ser[k].join(", ")+"\n";
-    }
-  }
-  return b;
-}
-
 async function deepPull(){
-  deepBtn.disabled=true;copyBtn.style.display="none";
+  deepBtn.disabled=true;
+  slipHost.innerHTML="";
+  proposal=null;
   const picks=[...selected].map(i=>fixtures[i]);
   const total=picks.length;
 
-  // Results are held by index so pool completion order never scrambles the card.
-  const results=new Array(total).fill(null);
+  // ---- stage 1: deep-pull every selected fixture's full market set ----
+  // Results held by index so pool completion order never scrambles the card.
+  const deep=new Array(total).fill(null);
   const failed=[];
   let done=0;
-  const tick=()=>{setStatus("Deep-pulling… "+(++done)+" of "+total+(failed.length?"  ("+failed.length+" failed)":""));};
-  setStatus("Deep-pulling… 0 of "+total);
+  const tick=()=>{setStatus("Reading markets\u2026 "+(++done)+" of "+total+(failed.length?"  ("+failed.length+" failed)":""));};
+  setStatus("Reading markets\u2026 0 of "+total);
 
   let next=0;
   async function worker(slot){
-    // Stagger the launches so we don't open every socket on the same tick.
     await new Promise(r=>setTimeout(r,slot*STAGGER_MS));
     while(true){
       const i=next++;
@@ -240,54 +346,150 @@ async function deepPull(){
       try{
         const r=await fetch(ODDS+"?match="+encodeURIComponent(f.match_url));
         const j=await r.json();
-        // A soft API error still returns 200 with {error}, so check for it.
         if(j&&j.error) throw new Error(j.error);
         deepData[f.match_url]=j;
-        results[i]=buildBlock(f,j);
+        deep[i]=j;
       }catch(e){
-        // Isolate the failure: one bad fetch must not kill the batch.
         failed.push({f:f,why:String(e&&e.message?e.message:e)});
-        results[i]="==== "+f.home+" v "+f.away+" ====\n"+
-          "SGPools code (CARD-MATCH IN APP): "+(f.mirror_code||"?")+"\n"+
-          "Match date: "+(f.match_date_display||"?")+"\n"+
-          "*** DEEP PULL FAILED - no market data retrieved for this fixture. ***\n"+
-          "*** This is a fetch failure, NOT a fixture without markets. Re-pull before judging it. ***\n";
       }
       tick();
     }
   }
-
   await Promise.all(Array.from({length:Math.min(POOL,total)},(_,s)=>worker(s)));
 
-  // Failures are called out up top as well as inline, so a long paste can't
-  // hide them and they can't be mistaken for "this fixture had no markets".
-  let head="DEEP-DIVE THESE GAMES (The Spread WC):\n";
-  if(failed.length){
-    head+="\n!! "+failed.length+" of "+total+" fixtures FAILED to deep-pull and have NO market data below:\n";
-    failed.forEach(x=>{head+="   - "+x.f.home+" v "+x.f.away+" (#"+(x.f.mirror_code||"?")+"): "+x.why+"\n";});
-    head+="   Treat these as missing data, not as fixtures worth fading. Re-pull them.\n";
+  // ---- stage 2: hand the card to the analysis endpoint ----
+  // Only fixtures whose markets actually came back are sent. A fixture with no
+  // markets cannot be bet on, and including it would invite a proposal against
+  // prices nobody scraped.
+  const payload=[];
+  picks.forEach((f,i)=>{
+    const j=deep[i];
+    if(!j) return;
+    const markets={};
+    const order=j.market_order||Object.keys(j.markets||{});
+    for(const mk of order){
+      const m=j.markets[mk];
+      if(!m||!m.selections) continue;
+      markets[mk]=m.selections.map(s=>({selection:s.selection,odds:s.odds,opening:s.opening,movement:s.movement}));
+    }
+    payload.push({
+      mirrorCode:f.mirror_code, mirrorId:f.mirror_id, matchUrl:f.match_url,
+      home:f.home, away:f.away, league:f.league,
+      matchDate:f.match_date_display||f.match_date, matchDateISO:f.match_date,
+      kickoff:f.time_sgt, markets:markets,
+      mirrorUpdated:j.last_updated||null,
+    });
+  });
+
+  if(!payload.length){
+    setStatus("No markets could be read, so there is nothing to analyse.");
+    renderFailures(failed,total);
+    deepBtn.disabled=false;
+    return;
   }
 
-  copyText=
-    head+"\n"+
-    results.join("\n\n")+
-    "\n\n----\nPlease trawl punters/tipsters/press + run the data cross-check and convergence/confidence check, "+
-    "then recommend the best-value bets and build me a SGPools bet slip table (code, bet type, selection, odds, confidence, stake) ready to place. "+
-    "State bet types explicitly (e.g. '1X2 straight win' vs 'AH -0.75') so there is no ambiguity at the point of placing. "+
-    "Note the match date on each block - the mirror lists several days ahead, so these may not be today. "+
-    "Remember mirror codes need card-matching in the app.";
+  setStatus("Gathering sources and analysing "+payload.length+" fixture"+(payload.length>1?"s":"")+"\u2026 this takes 30-60s.");
+  try{
+    const ctrl=new AbortController();
+    const t=setTimeout(()=>ctrl.abort(),LEASH(ANALYSE_MAX_MS));
+    const r=await fetch(ANALYSE+"?action=analyse",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({fixtures:payload}),signal:ctrl.signal});
+    clearTimeout(t);
+    const j=await r.json();
+    if(j.error){ setStatus("Analysis failed: "+j.error); renderFailures(failed,total); deepBtn.disabled=false; return; }
+    proposal=j;
+    setStatus(j.legs.length?("Slip ready: "+j.legs.length+" leg"+(j.legs.length>1?"s":"")+", $"+j.counts.staked+" staked."):"Analysed. No leg cleared the bar, which is a real answer.");
+    renderSlip(j,failed,total);
+    slipHost.scrollIntoView({behavior:"smooth",block:"start"});
+    loadStats();
+  }catch(e){
+    const why=e.name==="AbortError"?"the analysis took too long and was cut off; select fewer fixtures":(e.message||String(e));
+    setStatus("Analysis failed: "+why);
+    renderFailures(failed,total);
+  }finally{ deepBtn.disabled=false; }
+}
 
-  setStatus(failed.length
-    ? "Done, but "+failed.length+" of "+total+" failed. Copy anyway, or re-pull those."
-    : "Done. Copy and paste to Claude.");
-  copyBtn.style.display="block";
-  deepBtn.disabled=false;
-  copyBtn.scrollIntoView({behavior:"smooth",block:"center"});
+function renderFailures(failed,total){
+  if(!failed.length) return;
+  slipHost.innerHTML=
+    '<div class="vetobox"><b>'+failed.length+' of '+total+' fixtures failed to read</b><br>'+
+    failed.map(x=>esc(x.f.home+" v "+x.f.away+": "+x.why)).join("<br>")+
+    '<br>These are fetch failures, not fixtures without markets. Re-pull before judging them.</div>'+slipHost.innerHTML;
+}
+
+// ---- the slip -----------------------------------------------------------------
+function renderSlip(p,failed,total){
+  let h="";
+
+  if(failed&&failed.length){
+    h+='<div class="vetobox"><b>'+failed.length+' of '+total+' fixtures failed to read</b> and were left out of the analysis entirely:<br>'+
+      failed.map(x=>esc(x.f.home+" v "+x.f.away+": "+x.why)).join("<br>")+'</div>';
+  }
+
+  if(p.cardShape) h+='<div class="shape">'+esc(p.cardShape)+'</div>';
+
+  if(p.legs&&p.legs.length){
+    h+='<h3>Proposed slip &middot; '+esc(p.matchDate||"")+'</h3>';
+    h+='<table class="bets"><tr><th>Code</th><th>Match / bet</th><th style="text-align:right">Odds</th><th style="text-align:right">Stake</th></tr>';
+    p.legs.forEach(l=>{
+      const cov=l.coverage||{};
+      // Name only the absences that change how the read should be weighed. Listing
+      // all four missing sources equally buries the two that matter: a leg with no
+      // Elo and no xG rests on prose, and that is the thing to see at a glance.
+      const gaps=[];
+      if((cov.missing||[]).includes("clubelo")) gaps.push("no Elo");
+      if((cov.missing||[]).includes("xgscore")) gaps.push("no xG");
+      const covTxt=cov.count!=null
+        ? cov.count+"/6 sources"+(gaps.length?" \u00b7 "+gaps.join(" \u00b7 "):"")
+        : "";
+      h+='<tr>'+
+        '<td class="code">'+esc(l.mirrorCode)+'</td>'+
+        '<td><div>'+esc(l.fixture)+'</div>'+
+          '<div class="betmeta"><b style="color:var(--ink)">'+esc(l.betType)+'</b> \u00b7 '+esc(l.selection)+'</div>'+
+          '<div class="betmeta">'+esc(l.league)+(l.kickoff?' \u00b7 '+esc(l.kickoff)+' SGT':'')+'</div>'+
+          (covTxt?'<div class="covtag '+esc((cov.tier||""))+'">'+esc(covTxt)+'</div>':'')+
+        '</td>'+
+        '<td class="odds">'+esc(l.odds)+
+          (l.movement!=null&&l.movement!==0?'<div class="betmeta">'+(l.movement>0?"+":"")+esc(l.movement)+'%</div>':'')+
+        '</td>'+
+        '<td class="stake">$'+esc(l.stake)+'<div class="betmeta"><span class="conf '+esc(l.confidence.toLowerCase())+'">'+esc(l.confidence)+'</span></div></td>'+
+        '</tr>'+
+        '<tr><td></td><td colspan="3" class="reason">'+esc(l.reason)+'</td></tr>';
+    });
+    h+='</table>';
+    h+='<div class="placebar">\u26a0 Card-match every code in the SGPools app before placing, and re-check the price \u2014 these are mirror prices and they move. Total staked: $'+esc(p.counts.staked)+' across '+p.legs.length+' leg'+(p.legs.length>1?"s":"")+'.</div>';
+  }else{
+    h+='<div class="vetobox"><b>No leg proposed.</b> Nothing on this card cleared the bar. That is a real answer, not a failure \u2014 a short slip beats a manufactured one.</div>';
+  }
+
+  // What the law cut. A short slip must be VISIBLY short: if five legs were
+  // proposed and four vetoed, that is the most useful thing on the page.
+  if(p.vetoes&&p.vetoes.length){
+    h+='<div class="vetobox"><b>'+p.vetoes.length+' leg'+(p.vetoes.length>1?"s":"")+' vetoed in code</b><br>'+
+      p.vetoes.map(v=>'\u00b7 '+esc((v.selection||"?")+" ("+(v.fixture||"")+") \u2014 "+v.rule+": "+v.why)).join("<br>")+'</div>';
+  }
+  if(p.corrections&&p.corrections.length){
+    h+='<div class="vetobox"><b>Corrections applied</b><br>'+p.corrections.map(c=>'\u00b7 '+esc(c)).join("<br>")+'</div>';
+  }
+  if(p.faded&&p.faded.length){
+    h+='<div class="fadebox"><b>Faded</b><br>'+
+      p.faded.map(f=>'\u00b7 '+esc((f.fixture||f.mirrorCode||"")+" \u2014 "+(f.why||""))).join("<br>")+'</div>';
+  }
+  if(p.notes) h+='<div class="fadebox"><b>Notes</b><br>'+esc(p.notes)+'</div>';
+  if(p.sourceErrors&&p.sourceErrors.length){
+    h+='<div class="vetobox"><b>Sources that did not answer ('+p.sourceErrors.length+')</b><br>'+
+      p.sourceErrors.slice(0,8).map(e=>'\u00b7 '+esc(e.source+" for "+e.league+": "+e.why)).join("<br>")+'</div>';
+  }
+  slipHost.innerHTML=h;
 }
 
 async function pull(){
-  goBtn.disabled=true;out.innerHTML="";warns.innerHTML="";copyBtn.style.display="none";deepBtn.style.display="none";srcline.innerHTML="";
+  goBtn.disabled=true;out.innerHTML="";warns.innerHTML="";slipHost.innerHTML="";deepBtn.style.display="none";srcline.innerHTML="";
   setStatus("Pulling odds from mirror…");
+  // Coverage must be in hand BEFORE the list renders, or the league headers draw
+  // without the one line they exist to carry.
+  await loadCoverage();
   try{
     const r=await fetch(ODDS);const j=await r.json();
     if(j.error){setStatus("Error: "+j.error);}
@@ -300,13 +502,11 @@ async function pull(){
   catch(e){setStatus("Request failed: "+e);}
   finally{goBtn.disabled=false;}
 }
-copyBtn.addEventListener("click",async()=>{
-  try{await navigator.clipboard.writeText(copyText);}
-  catch(e){const ta=document.createElement("textarea");ta.value=copyText;document.body.appendChild(ta);ta.select();document.execCommand("copy");document.body.removeChild(ta);}
-  copyBtn.textContent="Copied! Paste to Claude";setTimeout(()=>copyBtn.textContent="Copy everything (paste to Claude)",1800);
-});
 goBtn.addEventListener("click",pull);
 deepBtn.addEventListener("click",deepPull);
+
+// Headline figures on open, so the book's state is the first thing seen.
+loadStats();
 </script>
 </body>
 </html>
