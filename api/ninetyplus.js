@@ -657,8 +657,15 @@ function gateLegs(rawLegs, fixtures, answeredBy) {
 async function vaultStats() {
   const [logRaw] = await redis([["GET", "ninety:betlog"]]);
   const log = logRaw ? JSON.parse(logRaw) : [];
+  // Voided legs stay in the record but leave the figures entirely: a leg struck
+  // for a reason that was not the model's fault is neither a win it earned nor a
+  // loss it deserved, and counting it either way misreports the book.
   const live = log.filter((b) => String(b.ledger || "Model").toLowerCase() !== "void");
-  const settled = live.filter((b) => ["win", "lose", "void-result", "push"].includes(String(b.result || "").toLowerCase()));
+  // A void-result (match postponed) returns the stake and is likewise excluded
+  // from ROI — the model never got to be right or wrong. A push IS counted,
+  // because the model did make a call and the line landed exactly on it.
+  const settled = live.filter((b) => ["win", "lose", "push"].includes(String(b.result || "").toLowerCase()));
+  const voided = live.filter((b) => String(b.result || "").toLowerCase() === "void-result");
   const pending = live.filter((b) => String(b.result || "pending").toLowerCase() === "pending");
   const staked = r2(settled.reduce((a, b) => a + num(b.stake), 0));
   const payout = r2(settled.reduce((a, b) => a + num(b.payout), 0));
@@ -692,6 +699,7 @@ async function vaultStats() {
     netPL: r2(payout - staked),
     roi: staked ? Math.round(((payout - staked) / staked) * 1000) / 10 : 0,
     hits: wins,
+    voided: voided.length,
     strikeRate: settled.length ? Math.round((wins / settled.length) * 1000) / 10 : 0,
     byConfidence: byConf,
     // Honest about its own youth: a strike rate off three legs is noise, and the

@@ -102,6 +102,19 @@
   .vetoleg .vb{color:var(--muted);font-size:12px;margin-top:3px;}
   .vetoleg .vw{color:var(--warn);font-size:11.5px;margin-top:4px;line-height:1.5;}
   .vetoleg .vr{color:var(--muted);font-size:11.5px;margin-top:4px;line-height:1.5;font-style:italic;}
+  .commitbar{display:flex;gap:8px;margin-bottom:10px;}
+  .commitbar button{flex:1;padding:12px;border-radius:11px;font-size:13px;font-weight:700;
+    border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer;}
+  .commitbar button:disabled{opacity:.45;cursor:default;}
+  .commitbar button.done{border-color:var(--muted);color:var(--muted);}
+  .settlebar{margin:14px 0;padding:11px 13px;background:var(--card);border:1px solid var(--line);
+    border-radius:11px;font-size:12px;color:var(--muted);line-height:1.55;}
+  .settlebar .row{display:flex;align-items:center;gap:9px;justify-content:space-between;}
+  .settlebar button{padding:8px 14px;border-radius:9px;font-size:12px;font-weight:700;
+    border:1px solid var(--blue);background:transparent;color:var(--blue);cursor:pointer;white-space:nowrap;}
+  .settlebar button:disabled{opacity:.45;cursor:default;}
+  .res{margin-top:8px;font-size:11.5px;line-height:1.6;}
+  .res .w{color:var(--accent);} .res .l{color:var(--bad);} .res .v{color:var(--muted);}
   .placebar{background:#1a1410;border:1px solid var(--gold);border-radius:11px;
     padding:11px 13px;font-size:12px;color:var(--gold);line-height:1.55;margin-bottom:10px;}
 </style>
@@ -122,6 +135,10 @@
 
   <div class="stats" id="stats" style="display:none"></div>
   <div class="younote" id="younote" style="display:none"></div>
+  <div class="settlebar" id="settlebar" style="display:none">
+    <div class="row"><span id="pendtext"></span><button id="settleBtn">Settle results</button></div>
+    <div class="res" id="settleres"></div>
+  </div>
 
   <button class="go" id="goBtn">Pull odds</button>
   <div class="status" id="status"></div>
@@ -131,7 +148,7 @@
   <div class="selbar"><button class="go" id="deepBtn" style="display:none">Analyse selected games</button><div class="advisory" id="advisory"></div></div>
   <div class="slip" id="slip"></div>
 
-  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v2.3</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
+  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v3.0</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
   </div>
 
 <script>
@@ -144,12 +161,15 @@ document.getElementById("gateBtn").addEventListener("click",tryUnlock);
 document.getElementById("gatePass").addEventListener("keydown",e=>{if(e.key==="Enter")tryUnlock();});
 
 const ODDS="/api/odds2";
-const goBtn=document.getElementById("goBtn"),deepBtn=document.getElementById("deepBtn"),statusEl=document.getElementById("status"),srcline=document.getElementById("srcline"),out=document.getElementById("out"),warns=document.getElementById("warns"),advisory=document.getElementById("advisory"),slipHost=document.getElementById("slip"),statsHost=document.getElementById("stats"),youNote=document.getElementById("younote");
+const goBtn=document.getElementById("goBtn"),deepBtn=document.getElementById("deepBtn"),statusEl=document.getElementById("status"),srcline=document.getElementById("srcline"),out=document.getElementById("out"),warns=document.getElementById("warns"),advisory=document.getElementById("advisory"),slipHost=document.getElementById("slip"),statsHost=document.getElementById("stats"),youNote=document.getElementById("younote"),
+  settleBar=document.getElementById("settlebar"),pendText=document.getElementById("pendtext"),
+  settleBtn=document.getElementById("settleBtn"),settleRes=document.getElementById("settleres");
 let fixtures=[],selected=new Set(),deepData={},proposal=null;
 // Coverage is fetched once and cached: it is a standing property of each
 // competition, not something that changes between pulls.
 let COVERAGE=null;
 const ANALYSE="/api/ninetyplus";
+const SETTLE="/api/settle";
 function esc(s){return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 function setStatus(s){statusEl.textContent=s||"";}
 
@@ -417,6 +437,8 @@ async function deepPull(){
     proposal=j;
     setStatus(j.legs.length?("Slip ready: "+j.legs.length+" leg"+(j.legs.length>1?"s":"")+", $"+j.counts.staked+" staked."):"Analysed. No leg cleared the bar, which is a real answer.");
     renderSlip(j,failed,total);
+    const cb=document.getElementById("commitBtn");
+    if(cb) cb.addEventListener("click",commitSlip);
     slipHost.scrollIntoView({behavior:"smooth",block:"start"});
     loadStats();
   }catch(e){
@@ -441,6 +463,70 @@ function reasonHtml(reason){
   if(!pts.length) return "";
   if(pts.length===1) return esc(pts[0]);
   return '<ol class="pts">'+pts.map(p=>'<li>'+esc(p)+'</li>').join("")+'</ol>';
+}
+
+// ---- commit & settle ----------------------------------------------------------
+async function commitSlip(){
+  if(!proposal||!proposal.legs||!proposal.legs.length) return;
+  const btn=document.getElementById("commitBtn");
+  if(btn){btn.disabled=true;btn.textContent="Logging\u2026";}
+  // Split the fixture back into its two teams: the settler matches on team names
+  // against a worldwide feed, and "A v B" as one string cannot be matched.
+  const legs=proposal.legs.map(l=>{
+    const parts=String(l.fixture||"").split(" v ");
+    return {...l, homeTeam:(parts[0]||"").trim(), awayTeam:(parts[1]||"").trim(),
+            matchDate:proposal.matchDate, matchDateISO:l.matchDateISO||proposal.matchDateISO||""};
+  });
+  try{
+    const r=await fetch(SETTLE+"?action=commit",{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify({legs:legs})});
+    const j=await r.json();
+    if(j.error){ if(btn){btn.disabled=false;btn.textContent="Logging failed \u2014 tap to retry";} setStatus("Could not log: "+j.error); return; }
+    if(btn){
+      btn.classList.add("done");
+      btn.textContent=j.added+" logged"+(j.skipped&&j.skipped.length?", "+j.skipped.length+" already there":"");
+    }
+    loadStats(); loadPending();
+  }catch(e){ if(btn){btn.disabled=false;btn.textContent="Logging failed \u2014 tap to retry";} }
+}
+
+async function loadPending(){
+  try{
+    const r=await fetch(SETTLE+"?action=pending");
+    const j=await r.json();
+    if(j.error||!j.count){ settleBar.style.display=j.count?"block":"none"; return; }
+    pendText.textContent=j.count+" leg"+(j.count===1?"":"s")+" awaiting a result ($"+j.staked+" at stake)";
+    settleBar.style.display="block";
+  }catch(e){}
+}
+
+async function settleNow(){
+  settleBtn.disabled=true; settleBtn.textContent="Checking\u2026"; settleRes.innerHTML="";
+  try{
+    const r=await fetch(SETTLE+"?action=settle",{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+    const j=await r.json();
+    if(j.error){ settleRes.innerHTML='<span class="l">'+esc(j.error)+'</span>'; return; }
+    let out="";
+    if(j.settled){
+      out+=j.legs.map(l=>{
+        const cls=l.result==="win"?"w":(l.result==="lose"?"l":"v");
+        return '<div><span class="'+cls+'">'+esc(l.result.toUpperCase())+'</span> '+esc(l.fixture)+
+          ' '+esc(l.score||"")+' \u00b7 '+esc(l.selection||"")+
+          (l.payout!=null?' \u2192 $'+esc(l.payout):'')+'</div>';
+      }).join("");
+      out+='<div style="margin-top:6px">This run: $'+esc(j.thisRun.staked)+' staked, $'+esc(j.thisRun.returned)+
+        ' returned, net <span class="'+(j.thisRun.net>=0?"w":"l")+'">'+(j.thisRun.net>=0?"+":"")+'$'+esc(j.thisRun.net)+'</span></div>';
+    } else out+='<div class="v">Nothing could be settled yet.</div>';
+    // Unresolved legs are shown, never hidden: a leg that cannot be graded is a
+    // thing to act on, and silence would just make the book look complete.
+    if(j.unresolved&&j.unresolved.length){
+      out+='<div style="margin-top:7px" class="v">Not settled ('+j.unresolved.length+'):<br>'+
+        j.unresolved.map(u=>'\u00b7 '+esc((u.fixture||u.id)+" \u2014 "+u.why)).join("<br>")+'</div>';
+    }
+    settleRes.innerHTML=out;
+    loadStats(); loadPending();
+  }catch(e){ settleRes.innerHTML='<span class="l">'+esc(e.message||String(e))+'</span>'; }
+  finally{ settleBtn.disabled=false; settleBtn.textContent="Settle results"; }
 }
 
 // ---- the slip -----------------------------------------------------------------
@@ -488,6 +574,11 @@ function renderSlip(p,failed,total){
         '<tr><td></td><td colspan="3" class="reason">'+reasonHtml(l.reason)+'</td></tr>';
     });
     h+='</table>';
+    // COMMIT is a separate, deliberate act. The slip is a proposal until you have
+    // actually placed it in the app; recording it before that would fill the
+    // ledger with bets that never existed and quietly poison every figure the
+    // stats header reports.
+    h+='<div class="commitbar"><button id="commitBtn">I placed these \u2014 log '+p.legs.length+' leg'+(p.legs.length>1?"s":"")+'</button></div>';
     h+='<div class="placebar">\u26a0 The code above came from a mirror that is always slightly behind. It is a strong hint, not gospel. Card-match it in the SGPools app, check the date, check the price, and only then part with money. Total staked: $'+esc(p.counts.staked)+' across '+p.legs.length+' leg'+(p.legs.length>1?"s":"")+'.</div>';
   }else{
     h+='<div class="vetobox"><b>No leg proposed.</b> Nothing on this card cleared the bar. That is a real answer, not a failure \u2014 a short slip beats a manufactured one.</div>';
@@ -563,8 +654,11 @@ async function pull(){
 goBtn.addEventListener("click",pull);
 deepBtn.addEventListener("click",deepPull);
 
+settleBtn.addEventListener("click",settleNow);
+
 // Headline figures on open, so the book's state is the first thing seen.
 loadStats();
+loadPending();
 </script>
 </body>
 </html>
