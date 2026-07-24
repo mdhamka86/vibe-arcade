@@ -29,6 +29,7 @@ export const SOURCES = {
     kind: 'json',
     // fixtures, W-D-L record, 5-game form, DraftKings moneyline + O/U, standings
     gives: ['fixtures', 'form', 'record', 'market_odds', 'totals_line', 'standings'],
+    grade: 'market',   // a second bookmaker's line, plus form
     weight: 1.0,
     note: 'Undocumented public API. 220 leagues. No K League.',
   },
@@ -37,6 +38,7 @@ export const SOURCES = {
     kind: 'csv',
     // Elo rating + FULL scoreline/goal-difference probability distribution
     gives: ['elo', 'prob_1x2', 'prob_scoreline', 'prob_totals'],
+    grade: 'model',    // a full scoreline distribution: the strongest thing here
     weight: 1.25,          // highest: independent model, full distribution
     note: 'EUROPE ONLY (55 countries, ~594 clubs). No Asia, no Americas.',
   },
@@ -45,6 +47,7 @@ export const SOURCES = {
     kind: 'html',
     // xG, xGA, xPTS (expected points) - exposes luck-inflated table positions
     gives: ['xg', 'xga', 'xpts', 'match_xg'],
+    grade: 'model',    // expected points: exposes luck-inflated table position
     weight: 1.15,
     note: 'No Asian league coverage at all.',
   },
@@ -53,6 +56,7 @@ export const SOURCES = {
     kind: 'html',
     // explicit win/draw/loss %, predicted score, avg goals, Kelly criterion
     gives: ['prob_1x2', 'pred_score', 'avg_goals', 'kelly', 'trends'],
+    grade: 'model',
     weight: 1.0,
     note: 'Widest model coverage incl. K League + J League.',
   },
@@ -61,6 +65,7 @@ export const SOURCES = {
     kind: 'html',
     // PPG, pseudo-points, strength-of-schedule performance rating, splits
     gives: ['ppg', 'ppts', 'perf_rating', 'home_away_split', 'over_under'],
+    grade: 'table',    // describes what happened; states no opinion on what will
     weight: 0.9,
     note: 'Widest ASIAN reach. Often the ONLY source for SGP/MYS/THA.',
   },
@@ -69,6 +74,7 @@ export const SOURCES = {
     kind: 'csv',
     // historical results + CLOSING ODDS -> the CLV benchmark
     gives: ['results_history', 'closing_odds', 'match_stats'],
+    grade: 'market',   // closing odds: the CLV benchmark, not a pre-match read
     weight: 0.85,
     note: 'Historical only, not pre-match. Powers CLV, not the read.',
   },
@@ -77,6 +83,7 @@ export const SOURCES = {
     name: 'TheSportsDB',
     kind: 'json',
     gives: ['standings'],
+    grade: 'table',
     weight: 0.6,
     note: 'Free key. THE ASIAN TABLE FILL (K League, Thai, SGP, MYS). Rate-limited; tables can be PARTIAL (K League returned 5 of 12 rows) - corroboration, never the full standings.',
   },
@@ -84,6 +91,7 @@ export const SOURCES = {
     name: 'LiveScore',
     kind: 'json',
     gives: ['fixtures', 'live_scores', 'results'],
+    grade: 'fixture',  // confirms the match exists. Vital for settling, silent on value
     weight: 0.5,
     note: 'Keyless JSON, worldwide incl. K League 1 AND 2. Confirms fixtures now; its real destiny is SETTLEMENT (Eps flips NS->FT with the score).',
   },
@@ -91,6 +99,7 @@ export const SOURCES = {
     name: 'API-Football',
     kind: 'json',
     gives: ['prob_1x2', 'advice', 'standings', 'fixtures'],
+    grade: 'model',
     weight: 1.0,
     // DORMANT UNTIL A KEY EXISTS. Free tier is 100 req/day and covers K League
     // with per-fixture win probabilities - the model layer Asia otherwise lacks.
@@ -213,14 +222,59 @@ export function coverageFor(league) {
 }
 
 /** Coverage tier - drives how much confidence the scoring layer may claim. */
-export function tierFor(league) {
+// WHAT A SOURCE CONTRIBUTES, counted separately.
+//   model   - states a probability or expectation for THIS match (Elo, xG, Forebet)
+//   market  - somebody else's price (ESPN line, closing odds)
+//   table   - describes the season so far, no view on the match (SoccerSTATS, TSDB)
+//   fixture - confirms the match exists (LiveScore)
+export function gradeMix(league) {
   const c = coverageFor(league);
-  if (!c.known) return { tier: 'unknown', label: 'Unmapped competition', cap: 'Low' };
-  if (c.count >= 5) return { tier: 'deep',   label: `${c.count} sources`, cap: 'High' };
-  if (c.count >= 3) return { tier: 'medium', label: `${c.count} sources`, cap: 'Medium-High' };
-  if (c.count >= 2) return { tier: 'thin',   label: `${c.count} sources`, cap: 'Medium' };
-  if (c.count === 1) return { tier: 'single', label: '1 source', cap: 'Low' };
-  return { tier: 'none', label: 'no sources', cap: 'None' };
+  const mix = { model: 0, market: 0, table: 0, fixture: 0 };
+  (c.sources || []).forEach((k) => {
+    const g = (SOURCES[k] || {}).grade;
+    if (g && mix[g] != null) mix[g]++;
+  });
+  return mix;
 }
 
-export default { SOURCES, LEAGUES, coverageFor, tierFor };
+// TIER BY WHAT THE SOURCES DO, NOT HOW MANY THERE ARE.
+//
+// The count-only version called K League "deep" the day it reached five sources.
+// But those five were two models and three descriptions, against Norway's six
+// which include a full scoreline distribution and expected points. Treating a
+// partial league table as the equal of ClubElo flattened a real difference into
+// one confident word, and the word was doing work it had not earned.
+//
+// A read is only as strong as the OPINIONS in it. Tables and fixture feeds are
+// worth having — they corroborate, and they settle — but no stack of them adds
+// up to a probability. So models set the ceiling and everything else refines it.
+export function tierFor(league) {
+  const c = coverageFor(league);
+  if (!c.known) return { tier: 'unknown', label: 'Unmapped competition', cap: 'Low', mix: null };
+  const m = gradeMix(league);
+  const opinions = m.model + m.market;          // things with a view on this match
+  const support = m.table + m.fixture;          // things that describe or confirm
+  const label =
+    c.count === 0 ? 'no sources'
+      : m.model + ' model' + (m.model === 1 ? '' : 's') +
+        (m.market ? ', ' + m.market + ' market' : '') +
+        (support ? ', ' + support + ' supporting' : '');
+
+  if (c.count === 0) return { tier: 'none', label, cap: 'None', mix: m };
+  // DEEP means three independent opinions, at least two of them models. That is
+  // Norway's shape (Elo + xG + Forebet, plus two market lines) and it is the only
+  // shape where genuine disagreement between models can be weighed. Two models
+  // and three tables is a good read, not a deep one: with only two opinions a
+  // disagreement is a coin toss between them, with nothing to break the tie.
+  if (m.model >= 2 && opinions >= 3) return { tier: 'deep', label, cap: 'High', mix: m };
+  // Two models, or one model with a second opinion beside it.
+  if (m.model >= 2 || (m.model >= 1 && opinions >= 2)) return { tier: 'medium', label, cap: 'Medium-High', mix: m };
+  // Exactly one voice with a view. Tables cannot promote this.
+  if (m.model === 1) return { tier: 'thin', label, cap: 'Medium', mix: m };
+  // No model at all. However many tables are stacked up, nothing here has an
+  // opinion about the match, and the label must not pretend otherwise.
+  if (opinions >= 1) return { tier: 'thin', label, cap: 'Medium', mix: m };
+  return { tier: 'single', label: label + ' (no model covers this competition)', cap: 'Low', mix: m };
+}
+
+export default { SOURCES, LEAGUES, coverageFor, tierFor, gradeMix, enabledSources, sourceTotal };

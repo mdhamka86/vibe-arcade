@@ -102,6 +102,19 @@
   .vetoleg .vb{color:var(--muted);font-size:12px;margin-top:3px;}
   .vetoleg .vw{color:var(--warn);font-size:11.5px;margin-top:4px;line-height:1.5;}
   .vetoleg .vr{color:var(--muted);font-size:11.5px;margin-top:4px;line-height:1.5;font-style:italic;}
+  .clerkbar{margin:14px 0;padding:11px 13px;background:var(--card);border:1px solid var(--line);
+    border-radius:11px;font-size:12px;color:var(--muted);line-height:1.55;}
+  .clerkbar .row{display:flex;align-items:center;gap:9px;justify-content:space-between;}
+  .clerkbar label{padding:8px 14px;border-radius:9px;font-size:12px;font-weight:700;
+    border:1px solid var(--gold);color:var(--gold);cursor:pointer;white-space:nowrap;}
+  .clerkbar input[type=file]{display:none;}
+  .clerkres{margin-top:8px;font-size:11.5px;line-height:1.6;}
+  .clerkres .bet{border-top:1px solid var(--line);margin-top:6px;padding-top:6px;}
+  .clerkres .rc{color:var(--gold);font-weight:700;font-size:10.5px;}
+  .clerkres .mult{color:var(--blue);font-size:9.5px;font-weight:700;letter-spacing:.04em;
+    text-transform:uppercase;border:1px solid var(--blue);border-radius:20px;padding:1px 6px;margin-left:6px;}
+  .clerkres .leg{color:var(--ink);margin-left:9px;}
+  .clerkres .w{color:var(--accent);} .clerkres .l{color:var(--bad);} .clerkres .p{color:var(--muted);}
   .commitbar{display:flex;gap:8px;margin-bottom:10px;}
   .commitbar button{flex:1;padding:12px;border-radius:11px;font-size:13px;font-weight:700;
     border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer;}
@@ -139,6 +152,14 @@
     <div class="row"><span id="pendtext"></span><button id="settleBtn">Settle results</button></div>
     <div class="res" id="settleres"></div>
   </div>
+  <div class="clerkbar" id="clerkbar">
+    <div class="row">
+      <span id="clerktext">Upload SGPools transaction history pages to record what you actually placed.</span>
+      <label for="clerkfile">Upload pages</label>
+      <input type="file" id="clerkfile" accept="image/*" multiple>
+    </div>
+    <div class="clerkres" id="clerkres"></div>
+  </div>
 
   <button class="go" id="goBtn">Pull odds</button>
   <div class="status" id="status"></div>
@@ -148,7 +169,7 @@
   <div class="selbar"><button class="go" id="deepBtn" style="display:none">Analyse selected games</button><div class="advisory" id="advisory"></div></div>
   <div class="slip" id="slip"></div>
 
-  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v3.0</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
+  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v3.1</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
   </div>
 
 <script>
@@ -163,13 +184,15 @@ document.getElementById("gatePass").addEventListener("keydown",e=>{if(e.key==="E
 const ODDS="/api/odds2";
 const goBtn=document.getElementById("goBtn"),deepBtn=document.getElementById("deepBtn"),statusEl=document.getElementById("status"),srcline=document.getElementById("srcline"),out=document.getElementById("out"),warns=document.getElementById("warns"),advisory=document.getElementById("advisory"),slipHost=document.getElementById("slip"),statsHost=document.getElementById("stats"),youNote=document.getElementById("younote"),
   settleBar=document.getElementById("settlebar"),pendText=document.getElementById("pendtext"),
-  settleBtn=document.getElementById("settleBtn"),settleRes=document.getElementById("settleres");
+  settleBtn=document.getElementById("settleBtn"),settleRes=document.getElementById("settleres"),
+  clerkFile=document.getElementById("clerkfile"),clerkRes=document.getElementById("clerkres"),clerkText=document.getElementById("clerktext");
 let fixtures=[],selected=new Set(),deepData={},proposal=null;
 // Coverage is fetched once and cached: it is a standing property of each
 // competition, not something that changes between pulls.
 let COVERAGE=null;
 const ANALYSE="/api/ninetyplus";
 const SETTLE="/api/settle";
+const CLERK="/api/clerk";
 function esc(s){return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 function setStatus(s){statusEl.textContent=s||"";}
 
@@ -302,7 +325,7 @@ function coverageHtml(league){
   if(have===0) keyMissing.push("SGPools prices only \u2014 nothing to cross-check against");
   return '<div class="cov">'+
     '<span class="dots"><span class="have">'+dots.slice(0,have)+'</span><span class="lack">'+dots.slice(have)+'</span></span>'+
-    '<span class="'+esc(c.tier)+'">'+have+'/'+total+' sources</span>'+
+    '<span class="'+esc(c.tier)+'">'+esc(c.label||(have+'/'+total+' sources'))+'</span>'+
     (named?' &middot; '+esc(named):'')+
     (keyMissing.length?' &middot; <span class="missing">'+esc(keyMissing.join(" \u00b7 "))+'</span>':'')+
     '</div>';
@@ -529,6 +552,70 @@ async function settleNow(){
   finally{ settleBtn.disabled=false; settleBtn.textContent="Settle results"; }
 }
 
+// ---- the intake clerk ---------------------------------------------------------
+// Reads SGPools transaction-history pages and files what was ACTUALLY placed:
+// the real price after the mirror's lag, the real stake, and the payout where
+// the statement has already settled it.
+function fileToBase64(f){
+  return new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=()=>res({media_type:f.type||"image/jpeg",data:String(r.result).split(",")[1]});
+    r.onerror=()=>rej(new Error("could not read "+f.name));
+    r.readAsDataURL(f);
+  });
+}
+
+async function readStatement(files){
+  if(!files||!files.length) return;
+  if(files.length>8){ clerkRes.innerHTML='<span class="l">Up to 8 pages at a time, please.</span>'; return; }
+  clerkText.textContent="Reading "+files.length+" page"+(files.length>1?"s":"")+"\u2026";
+  clerkRes.innerHTML="";
+  try{
+    const images=await Promise.all([...files].map(fileToBase64));
+    const r=await fetch(CLERK+"?action=read",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({images:images,commit:true})});
+    const j=await r.json();
+    if(j.error){ clerkText.textContent="Upload SGPools transaction history pages."; clerkRes.innerHTML='<span class="l">'+esc(j.error)+'</span>'; return; }
+    renderClerk(j);
+    loadStats();
+  }catch(e){
+    clerkText.textContent="Upload SGPools transaction history pages.";
+    clerkRes.innerHTML='<span class="l">'+esc(e.message||String(e))+'</span>';
+  }
+}
+
+function renderClerk(j){
+  const pages=(j.pages||[]).map(p=>p.pageLabel).filter(Boolean).join(", ");
+  clerkText.textContent=(pages?pages+" \u00b7 ":"")+j.accepted+" bet"+(j.accepted===1?"":"s")+" read"+
+    (j.added!=null?" \u00b7 "+j.added+" new, "+j.updated+" updated, "+j.unchanged+" already filed":"");
+  let h="";
+  (j.bets||[]).forEach(b=>{
+    const cls=b.result==="win"?"w":(b.result==="lose"?"l":"p");
+    h+='<div class="bet"><span class="rc">'+esc(b.receipt)+'</span>'+
+      (b.shape==="multiple"?'<span class="mult">'+b.legCount+'-leg multi @ '+esc(b.combinedOdds)+'</span>':'')+
+      ' \u00b7 $'+esc(b.stake)+
+      ' \u00b7 <span class="'+cls+'">'+esc(b.result.toUpperCase())+'</span>'+
+      (b.payout!=null?' $'+esc(b.payout):'')+
+      b.legs.map(l=>'<div class="leg">'+esc(l.fixture)+' \u00b7 '+esc(l.market)+' \u00b7 '+esc(l.selection)+' @ '+esc(l.odds)+'</div>').join("")+
+      '</div>';
+  });
+  // Everything the clerk could not vouch for, itemised. A half-read row that
+  // gets filed silently is a lie in the ledger; shown, it is a thing to re-shoot.
+  if(j.rejected&&j.rejected.length){
+    h+='<div class="bet"><span class="l">'+j.rejected.length+' row'+(j.rejected.length>1?"s":"")+' not filed</span>'+
+      j.rejected.map(r=>'<div class="leg">'+esc(r.receipt)+': '+esc((r.problems||[]).join("; "))+'</div>').join("")+'</div>';
+  }
+  if(j.orphanLegs&&j.orphanLegs.length){
+    h+='<div class="bet"><span class="p">'+j.orphanLegs.length+' leg fragment'+(j.orphanLegs.length>1?"s":"")+
+      ' from a bet whose header was on a page you have not uploaded. Held, not filed.</span></div>';
+  }
+  if(j.unreadable&&j.unreadable.length){
+    h+='<div class="bet"><span class="p">Could not read: '+esc(j.unreadable.join("; "))+'</span></div>';
+  }
+  clerkRes.innerHTML=h;
+}
+
 // ---- the slip -----------------------------------------------------------------
 function renderSlip(p,failed,total){
   let h="";
@@ -655,6 +742,7 @@ goBtn.addEventListener("click",pull);
 deepBtn.addEventListener("click",deepPull);
 
 settleBtn.addEventListener("click",settleNow);
+clerkFile.addEventListener("change",e=>{ readStatement(e.target.files); e.target.value=""; });
 
 // Headline figures on open, so the book's state is the first thing seen.
 loadStats();

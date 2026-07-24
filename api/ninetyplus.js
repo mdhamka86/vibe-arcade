@@ -722,7 +722,11 @@ const handler = async (req, res) => {
       const all = {};
       Object.keys(LEAGUES).forEach((k) => {
         const c = coverageFor(k);
-        all[k] = { count: c.count, sources: c.sources, tier: tierFor(k).tier };
+        const t = tierFor(k);
+        // `label` carries the GRADED description ("3 models, 2 market, 1
+        // supporting"), which is what the coverage line shows. A bare count says
+        // five sources; only the label says whether any of them has a view.
+        all[k] = { count: c.count, sources: c.sources, tier: t.tier, label: t.label, mix: t.mix };
       });
       return res.status(200).json({ sources: SOURCES, leagues: all });
     }
