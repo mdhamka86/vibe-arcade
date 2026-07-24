@@ -116,7 +116,7 @@
   </div>
   <div id="app">
   <h1>Ninety <span class="plus">Plus</span></h1>
-  <div class="sub">Pull live SGPools football odds, grouped by competition with the data coverage each one actually has. Tap the games you want and Ninety Plus reads every market, gathers six independent sources, and hands back a proposed slip with its reasoning. The football desk of The Spread WC journal.</div>
+  <div class="sub">Six sources walk into a fixture. Pull the card, tap the games worth a look, and Ninety Plus reads every market, gathers every model that covers the competition, and argues its way to a slip. Where they disagree with the tote is where the money is.</div>
 
   <div class="cmatch">⚠ Card-match rule: the code shown comes from the lagging mirror and may NOT equal the SGPools app code. Always confirm the real code, the match date and the live price in the SGPools app before betting.</div>
 
@@ -131,7 +131,7 @@
   <div class="selbar"><button class="go" id="deepBtn" style="display:none">Analyse selected games</button><div class="advisory" id="advisory"></div></div>
   <div class="slip" id="slip"></div>
 
-  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v2.2</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
+  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v2.3</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
   </div>
 
 <script>
@@ -249,15 +249,21 @@ async function loadCoverage(){
     const r=await fetch(ANALYSE+"?action=coverage");
     const j=await r.json();
     COVERAGE=j.leagues||{};
+    const srcs=j.sources||{};
+    SRC_TOTAL=Object.keys(srcs).filter(k=>srcs[k].enabled!==false).length||6;
   }catch(e){ COVERAGE={}; }
   return COVERAGE;
 }
 const SRC_LABEL={espn:"ESPN",clubelo:"Elo",xgscore:"xG",forebet:"Forebet",
-  soccerstats:"SoccerSTATS",footballdata:"closing odds"};
+  soccerstats:"SoccerSTATS",footballdata:"closing odds",tsdb:"TSDB",
+  livescore:"LiveScore",apifootball:"API-F"};
+// The denominator comes from the endpoint, never from a literal. v2.2 shipped a
+// hard-coded 6 and it survived two whole source additions before the dots lied.
+let SRC_TOTAL=6;
 function coverageHtml(league){
   const c=(COVERAGE||{})[league];
   if(!c) return '<div class="cov"><span class="none">no source mapping for this competition &mdash; SGPools prices only</span></div>';
-  const total=6, have=c.count;
+  const total=(COVERAGE&&COVERAGE._total)||SRC_TOTAL, have=c.count;
   const dots="\u25cf".repeat(have)+"\u25cb".repeat(Math.max(0,total-have));
   const named=(c.sources||[]).map(s=>SRC_LABEL[s]||s).join(", ");
   const all=["espn","clubelo","xgscore","forebet","soccerstats","footballdata"];
@@ -276,7 +282,7 @@ function coverageHtml(league){
   if(have===0) keyMissing.push("SGPools prices only \u2014 nothing to cross-check against");
   return '<div class="cov">'+
     '<span class="dots"><span class="have">'+dots.slice(0,have)+'</span><span class="lack">'+dots.slice(have)+'</span></span>'+
-    '<span class="'+esc(c.tier)+'">'+have+'/6 sources</span>'+
+    '<span class="'+esc(c.tier)+'">'+have+'/'+total+' sources</span>'+
     (named?' &middot; '+esc(named):'')+
     (keyMissing.length?' &middot; <span class="missing">'+esc(keyMissing.join(" \u00b7 "))+'</span>':'')+
     '</div>';
@@ -482,7 +488,7 @@ function renderSlip(p,failed,total){
         '<tr><td></td><td colspan="3" class="reason">'+reasonHtml(l.reason)+'</td></tr>';
     });
     h+='</table>';
-    h+='<div class="placebar">\u26a0 Card-match every code in the SGPools app before placing, and re-check the price \u2014 these are mirror prices and they move. Total staked: $'+esc(p.counts.staked)+' across '+p.legs.length+' leg'+(p.legs.length>1?"s":"")+'.</div>';
+    h+='<div class="placebar">\u26a0 The code above came from a mirror that is always slightly behind. It is a strong hint, not gospel. Card-match it in the SGPools app, check the date, check the price, and only then part with money. Total staked: $'+esc(p.counts.staked)+' across '+p.legs.length+' leg'+(p.legs.length>1?"s":"")+'.</div>';
   }else{
     h+='<div class="vetobox"><b>No leg proposed.</b> Nothing on this card cleared the bar. That is a real answer, not a failure \u2014 a short slip beats a manufactured one.</div>';
   }

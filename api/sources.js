@@ -72,7 +72,44 @@ export const SOURCES = {
     weight: 0.85,
     note: 'Historical only, not pre-match. Powers CLV, not the read.',
   },
+  // ---- second-pass finds, 24/07/2026 ----
+  tsdb: {
+    name: 'TheSportsDB',
+    kind: 'json',
+    gives: ['standings'],
+    weight: 0.6,
+    note: 'Free key. THE ASIAN TABLE FILL (K League, Thai, SGP, MYS). Rate-limited; tables can be PARTIAL (K League returned 5 of 12 rows) - corroboration, never the full standings.',
+  },
+  livescore: {
+    name: 'LiveScore',
+    kind: 'json',
+    gives: ['fixtures', 'live_scores', 'results'],
+    weight: 0.5,
+    note: 'Keyless JSON, worldwide incl. K League 1 AND 2. Confirms fixtures now; its real destiny is SETTLEMENT (Eps flips NS->FT with the score).',
+  },
+  apifootball: {
+    name: 'API-Football',
+    kind: 'json',
+    gives: ['prob_1x2', 'advice', 'standings', 'fixtures'],
+    weight: 1.0,
+    // DORMANT UNTIL A KEY EXISTS. Free tier is 100 req/day and covers K League
+    // with per-fixture win probabilities - the model layer Asia otherwise lacks.
+    // The fetcher is written against documented schema but has NEVER RUN LIVE:
+    // it activates the moment APIFOOTBALL_KEY lands in the env, and its first
+    // production run is its first test. Treat its first slip accordingly.
+    enabled: !!process.env.APIFOOTBALL_KEY,
+    note: 'Keyed (free 100/day). K League win probabilities. UNTESTED until first live run.',
+  },
 };
+
+// A source is in play unless it declares itself disabled (apifootball without a
+// key). Totals everywhere derive from this, never from a hard-coded 6 - the
+// first frontend shipped "X/6" as a literal and it survived two source
+// additions before anyone noticed the denominator was a lie.
+export function enabledSources() {
+  return Object.keys(SOURCES).filter((k) => SOURCES[k].enabled !== false);
+}
+export function sourceTotal() { return enabledSources().length; }
 
 // ---------------------------------------------------------------------------
 // SGPools competition -> per-source identifier.
@@ -125,26 +162,26 @@ export const LEAGUES = {
   'N America Champions':  { espn:'concacaf.champions', clubelo:null, xgscore:null, forebet:null, soccerstats:null, footballdata:null },
 
   // ===== ASIA: THIN. No ClubElo, no xG anywhere. =====
-  'K League':             { espn:null, clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-south-korea/k-league-1', soccerstats:'southkorea', footballdata:null },
+  'K League':             { espn:null, clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-south-korea/k-league-1', soccerstats:'southkorea', footballdata:null, tsdb:'4689', livescore:{c:'Korea',t:'K-League 1'}, apifootball:{q:'K League 1',c:'Korea'}, },
   'K Cup':                { espn:null, clubelo:null, xgscore:null, forebet:null, soccerstats:null, footballdata:null },
-  'J League':             { espn:'jpn.1', clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-japan/j1-league', soccerstats:null, footballdata:'new/JPN' },
+  'J League':             { espn:'jpn.1', clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-japan/j1-league', soccerstats:null, footballdata:'new/JPN', tsdb:'4633', livescore:{c:'Japan',t:'J1'}, apifootball:{q:'J1 League',c:'Japan'}, },
   'J League Div 2':       { espn:null, clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-japan/j2-league', soccerstats:null, footballdata:null },
   'J League Div 3':       { espn:null, clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-japan/j3-league', soccerstats:null, footballdata:null },
   'J Cup':                { espn:null, clubelo:null, xgscore:null, forebet:null, soccerstats:null, footballdata:null },
   'J League Cup':         { espn:null, clubelo:null, xgscore:null, forebet:null, soccerstats:null, footballdata:null },
-  'Chinese League':       { espn:'chn.1', clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-china/super-league', soccerstats:'china', footballdata:'new/CHN' },
-  'Thai League':          { espn:null, clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-thailand/thai-league-1', soccerstats:'thailand', footballdata:null },
+  'Chinese League':       { espn:'chn.1', clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-china/super-league', soccerstats:'china', footballdata:'new/CHN', tsdb:'4359', livescore:{c:'China',t:'Super League'}, apifootball:{q:'Super League',c:'China'}, },
+  'Thai League':          { espn:null, clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-thailand/thai-league-1', soccerstats:'thailand', footballdata:null, tsdb:'4743', livescore:{c:'Thailand',t:''}, apifootball:{q:'Thai League 1',c:'Thailand'}, },
   // NOTE: soccerstats/malaysia loads but its table layout differs from the
   // European pages and the generic parser extracts 0 teams. Treat M League as
   // effectively UNCOVERED until a bespoke parser exists.
-  'M League':             { espn:null, clubelo:null, xgscore:null, forebet:null, soccerstats:'malaysia', footballdata:null, parserGap:true },
+  'M League':             { espn:null, clubelo:null, xgscore:null, forebet:null, soccerstats:'malaysia', footballdata:null, parserGap:true, tsdb:'4792', livescore:{c:'Malaysia',t:''}, apifootball:{q:'Super League',c:'Malaysia'}, },
   'M Cup':                { espn:null, clubelo:null, xgscore:null, forebet:null, soccerstats:null, footballdata:null },
   'M FA Cup':             { espn:null, clubelo:null, xgscore:null, forebet:null, soccerstats:null, footballdata:null },
-  'Singapore Premier League': { espn:null, clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-singapore/premier-league', soccerstats:'singapore', footballdata:null },
+  'Singapore Premier League': { espn:null, clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-singapore/premier-league', soccerstats:'singapore', footballdata:null, tsdb:'4795', livescore:{c:'Singapore',t:''}, apifootball:{q:'Premier League',c:'Singapore'}, },
   'Singapore Cup':        { espn:null, clubelo:null, xgscore:null, forebet:null, soccerstats:null, footballdata:null },
-  'Indian S League':      { espn:'ind.1', clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-india/indian-super-league', soccerstats:'india', footballdata:null },
+  'Indian S League':      { espn:'ind.1', clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-india/indian-super-league', soccerstats:'india', footballdata:null, tsdb:'4791', apifootball:{q:'Indian Super League',c:'India'}, },
   'Indian FB League':     { espn:'ind.2', clubelo:null, xgscore:null, forebet:null, soccerstats:null, footballdata:null },
-  'Saudi League':         { espn:'ksa.1', clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-saudi-arabia/professional-league', soccerstats:'saudiarabia', footballdata:null },
+  'Saudi League':         { espn:'ksa.1', clubelo:null, xgscore:null, forebet:'football-tips-and-predictions-for-saudi-arabia/professional-league', soccerstats:'saudiarabia', footballdata:null, tsdb:'4668', apifootball:{q:'Pro League',c:'Saudi'}, },
   'A League':             { espn:'aus.1', clubelo:null, xgscore:null, forebet:'tips-and-predictions-for-australia/a-league', soccerstats:'australia', footballdata:null },
   'A League (Women)':     { espn:'aus.w.1', clubelo:null, xgscore:null, forebet:null, soccerstats:null, footballdata:null },
   'A Cup':                { espn:null, clubelo:null, xgscore:null, forebet:null, soccerstats:null, footballdata:null },
@@ -168,10 +205,11 @@ export const LEAGUES = {
 /** How many sources carry this competition, and which. */
 export function coverageFor(league) {
   const m = LEAGUES[league];
-  if (!m) return { known: false, count: 0, sources: [], missing: Object.keys(SOURCES) };
-  const sources = Object.keys(SOURCES).filter((s) => m[s]);
-  const missing = Object.keys(SOURCES).filter((s) => !m[s]);
-  return { known: true, count: sources.length, sources, missing, map: m };
+  const enabled = enabledSources();
+  if (!m) return { known: false, count: 0, sources: [], missing: enabled, total: enabled.length };
+  const sources = enabled.filter((s) => m[s]);
+  const missing = enabled.filter((s) => !m[s]);
+  return { known: true, count: sources.length, sources, missing, total: enabled.length, map: m };
 }
 
 /** Coverage tier - drives how much confidence the scoring layer may claim. */

@@ -37,6 +37,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const UA_DESKTOP = [UAS[2], UAS[1]];   // chrome, then firefox
 const UA_MOBILE  = [UAS[0], UAS[1]];   // iphone, then firefox
 
+// Fetch a page through r.jina.ai's renderer. The proxy does its own fetch from
+// its own network, then returns the fully rendered HTML (X-Return-Format: html).
+// Slower than a direct hit (it renders), so callers use it as a LAST resort.
+async function grabVia(targetUrl) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 30000);
+  try {
+    const r = await fetch('https://r.jina.ai/' + targetUrl, {
+      signal: ctrl.signal,
+      headers: { 'User-Agent': UAS[0], 'X-Return-Format': 'html' },
+    });
+    if (!r.ok) throw new Error('jina HTTP ' + r.status);
+    return await r.text();
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 async function grab(url, { ms = 15000, tries = 3, json = false, uas = UA_DESKTOP } = {}) {
   let last;
   for (let i = 0; i < tries; i++) {
@@ -297,19 +315,31 @@ export async function fetchXGScore(slug) {
 // ---------------------------------------------------------------------------
 export async function fetchForebet(path) {
   try {
-    // WWW IS BEHIND A CLOUDFLARE IP CHALLENGE; m.forebet.com IS NOT.
-    // The 403 body is the "Just a moment..." interstitial, which is Cloudflare
-    // judging the CALLER'S IP, not its User-Agent — so no amount of UA rotation
-    // fixes it. It passed from a residential-ish sandbox and failed from Vercel's
-    // Lambda ranges, which is why this looked like a UA problem and was not.
-    // The mobile host serves byte-identical markup: same `rcnt` blocks, same
-    // schema.org microdata, same fixture count. Try it FIRST, since it is the one
-    // that works from a datacentre, and fall back to www for the days that flips.
-    let html;
+    // FOREBET IS BEHIND A CLOUDFLARE *IP* CHALLENGE, and that changes everything
+    // about how to reach it. The 403 body is the "Just a moment..." interstitial:
+    // Cloudflare judging the CALLER'S IP REPUTATION, not its headers. Both hosts
+    // pass from a residential-ish sandbox and both fail from Vercel's Lambda
+    // ranges, which is why two successive "fixes" (UA rotation, then the mobile
+    // host) each worked in testing and died in production. The lesson, earned
+    // twice now: A FIX FOR AN IP-REPUTATION BLOCK CANNOT BE VERIFIED FROM A
+    // TRUSTED IP. Only the deployed function's own origin proves anything.
+    //
+    // The fallback that actually breaks the dependency: r.jina.ai, a rendering
+    // proxy that fetches the page FROM JINA'S infrastructure and returns the
+    // rendered HTML. Vercel's IP never touches Forebet. Keyless tier is rate
+    // limited (~20 req/min) but the 10-minute source cache keeps us far under.
+    // Direct hosts are still tried first: cheaper, faster, and they may work
+    // from other deploy targets.
+    let html, via = "direct";
     try {
-      html = await grab(`https://m.forebet.com/en/${path}`, { ms: 20000, uas: UA_MOBILE });
-    } catch (e) {
-      html = await grab(`https://www.forebet.com/en/${path}`, { ms: 20000, uas: UA_MOBILE });
+      html = await grab(`https://m.forebet.com/en/${path}`, { ms: 15000, tries: 1, uas: UA_MOBILE });
+    } catch (e1) {
+      try {
+        html = await grab(`https://www.forebet.com/en/${path}`, { ms: 15000, tries: 1, uas: UA_MOBILE });
+      } catch (e2) {
+        via = "jina";
+        html = await grabVia(`https://m.forebet.com/en/${path}`);
+      }
     }
 
     // Forebet emits schema.org microdata per fixture inside a `rcnt` block:
@@ -320,7 +350,11 @@ export async function fetchForebet(path) {
     // Parsing per-block (rather than splitting flattened page text) is what
     // keeps multi-word clubs intact: "Pohang Steelers", not "Pohang".
     const fixtures = [];
-    const blocks = html.split(/<div class='rcnt/).slice(1);
+    // QUOTE-TOLERANT SPLIT. Forebet's own markup uses single quotes on this class
+    // (class='rcnt') but any DOM round-trip — jina's renderer included — re-emits
+    // it with double quotes. A split pinned to one quote style silently parses
+    // ZERO fixtures from a perfectly good page.
+    const blocks = html.split(/<div class=['"]rcnt/).slice(1);
 
     for (const b of blocks) {
       const home = b.match(/class="homeTeam"[\s\S]*?itemprop="name">([^<]+)</);
@@ -351,7 +385,7 @@ export async function fetchForebet(path) {
       });
     }
     return { source: 'forebet', ok: true, fixtures,
-             meta: { count: fixtures.length, path, blocks: blocks.length } };
+             meta: { count: fixtures.length, path, blocks: blocks.length, via } };
   } catch (e) {
     return { source: 'forebet', ok: false, error: String(e.message || e) };
   }
@@ -419,8 +453,137 @@ export async function fetchFootballData(path) {
   }
 }
 
+
+// ---------------------------------------------------------------------------
+// TheSportsDB  -  league tables for the ASIAN GAP (K League, Thai, SGP, MYS...)
+// Free key "3". Season format is the bare year ("2026").
+// TWO HONEST CAVEATS, both verified 24/07/2026:
+//   1. The free key RATE LIMITS hard: single calls succeed, a burst of nine
+//      returns HTML error pages that fail JSON parsing. One retry after a
+//      polite delay recovers it; hammering does not.
+//   2. Tables can be PARTIAL - K League 1 returned 5 rows for a 12-team
+//      league. Treat as corroboration, never as the full standings.
+// ---------------------------------------------------------------------------
+export async function fetchTheSportsDB(leagueId) {
+  const url = `https://www.thesportsdb.com/api/v1/json/3/lookuptable.php?l=${leagueId}&s=2026`;
+  try {
+    let j;
+    try {
+      j = await grab(url, { ms: 15000, tries: 1, json: true });
+    } catch (e) {
+      await sleep(1200);                       // rate-limit backoff, then one retry
+      j = await grab(url, { ms: 15000, tries: 1, json: true });
+    }
+    const rows = Array.isArray(j.table) ? j.table : [];
+    const teams = {};
+    for (const r of rows) {
+      const club = r.strTeam;
+      if (!club) continue;
+      teams[teamKey(club)] = {
+        club, rank: Number(r.intRank), played: Number(r.intPlayed),
+        w: Number(r.intWin), d: Number(r.intDraw), l: Number(r.intLoss),
+        gf: Number(r.intGoalsFor), ga: Number(r.intGoalsAgainst), pts: Number(r.intPoints),
+      };
+    }
+    return { source: 'tsdb', ok: true, teams,
+             meta: { count: Object.keys(teams).length, leagueId,
+                     partial: rows.length > 0 && rows.length < 8 } };
+  } catch (e) {
+    return { source: 'tsdb', ok: false, error: String(e.message || e) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// LiveScore  -  worldwide fixtures + live scores + results as clean JSON.
+// No key. Verified 24/07/2026 across matchdays: carries K League 1 AND 2,
+// Chinese Super League, and in-season Thai / Singapore / Malaysia / J.League.
+// For analysis it confirms a fixture exists and when it kicks off; its real
+// destiny is SETTLEMENT - Eps flips NS -> FT and Tr1/Tr2 carry the score, which
+// is exactly what the future clerk of the scales needs, for free.
+// ---------------------------------------------------------------------------
+export async function fetchLivescore(yyyymmdd) {
+  const url = `https://prod-public-api.livescore.com/v1/api/app/date/soccer/${yyyymmdd}/0?MD=1`;
+  try {
+    const j = await grab(url, { ms: 20000, json: true });
+    const fixtures = [];
+    for (const st of (j.Stages || [])) {
+      for (const e of (st.Events || [])) {
+        fixtures.push({
+          country: st.Cnm || '', stage: st.Snm || '',
+          home: ((e.T1 || [])[0] || {}).Nm || '',
+          away: ((e.T2 || [])[0] || {}).Nm || '',
+          status: e.Eps || '',                       // NS / FT / HT / 45' ...
+          scoreHome: e.Tr1 != null ? Number(e.Tr1) : null,
+          scoreAway: e.Tr2 != null ? Number(e.Tr2) : null,
+          startsAt: e.Esd ? String(e.Esd) : null,     // yyyymmddHHMMSS
+        });
+      }
+    }
+    return { source: 'livescore', ok: true, fixtures,
+             meta: { count: fixtures.length, date: yyyymmdd, stages: (j.Stages || []).length } };
+  } catch (e) {
+    return { source: 'livescore', ok: false, error: String(e.message || e) };
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// API-Football  -  per-fixture WIN PROBABILITIES for leagues no free model
+// touches (K League above all). Free tier: 100 req/day with a key.
+//
+// *** THIS FETCHER HAS NEVER RUN LIVE. *** It is written against the v3
+// documented schema and stays DORMANT until APIFOOTBALL_KEY exists in the env.
+// Its first production run is its first test, so its first contribution to a
+// slip should be read with that in mind - meta.untested says so in the output.
+// League ids are RESOLVED BY SEARCH, never hard-coded from memory: a guessed id
+// is exactly the class of silent wrongness the rest of this file exists to kill.
+// ---------------------------------------------------------------------------
+export async function fetchApiFootball(cfg, dateISO) {
+  const key = process.env.APIFOOTBALL_KEY || '';
+  if (!key) return { source: 'apifootball', ok: false, error: 'no APIFOOTBALL_KEY in env (dormant)' };
+  const H = { 'x-apisports-key': key };
+  const api = async (path) => {
+    const r = await fetch('https://v3.football.api-sports.io' + path, { headers: H });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    if (j.errors && Object.keys(j.errors).length) throw new Error(JSON.stringify(j.errors).slice(0, 120));
+    return j.response || [];
+  };
+  try {
+    // 1) resolve the league id by search + country filter
+    const leagues = await api('/leagues?search=' + encodeURIComponent(cfg.q));
+    const hit = leagues.find((r) =>
+      ((r.country || {}).name || '').toLowerCase().includes(String(cfg.c || '').toLowerCase()));
+    if (!hit) return { source: 'apifootball', ok: false, error: 'league not resolved for "' + cfg.q + '" (' + cfg.c + ')' };
+    const id = hit.league.id;
+    const season = (hit.seasons || []).find((x) => x.current) || { year: new Date().getFullYear() };
+
+    // 2) that day's fixtures, then predictions per fixture (respect the budget)
+    const fx = await api('/fixtures?league=' + id + '&season=' + season.year + (dateISO ? '&date=' + dateISO : ''));
+    const out = [];
+    for (const f of fx.slice(0, 6)) {                 // cap: 100 req/day is finite
+      await sleep(350);
+      try {
+        const p = (await api('/predictions?fixture=' + f.fixture.id))[0];
+        const pct = ((p || {}).predictions || {}).percent || {};
+        out.push({
+          home: f.teams.home.name, away: f.teams.away.name,
+          pHome: parseInt(pct.home, 10) || null,
+          pDraw: parseInt(pct.draw, 10) || null,
+          pAway: parseInt(pct.away, 10) || null,
+          advice: ((p || {}).predictions || {}).advice || null,
+        });
+      } catch (e) { /* one bad prediction never sinks the batch */ }
+    }
+    return { source: 'apifootball', ok: true, fixtures: out,
+             meta: { count: out.length, leagueId: id, season: season.year, untested: true } };
+  } catch (e) {
+    return { source: 'apifootball', ok: false, error: String(e.message || e) };
+  }
+}
+
 export default {
-  fetchESPN, fetchClubElo, fetchClubEloRatings,
+  fetchESPN, fetchTheSportsDB, fetchLivescore, fetchApiFootball, fetchClubElo, fetchClubEloRatings,
   fetchXGScore, fetchForebet, fetchSoccerStats, fetchFootballData,
   teamKey, matchTeam,
 };

@@ -26,10 +26,11 @@
 // match what was scraped) rather than STRATEGIC (which bets are good). Strategy
 // earns its way into code only once the ledger can argue for it.
 
-import { SOURCES, LEAGUES, coverageFor, tierFor } from "./sources.js";
+import { SOURCES, LEAGUES, coverageFor, tierFor, sourceTotal } from "./sources.js";
 import {
   fetchESPN, fetchClubElo, fetchClubEloRatings, fetchXGScore,
-  fetchForebet, fetchSoccerStats, teamKey, matchTeam,
+  fetchForebet, fetchSoccerStats, fetchTheSportsDB, fetchLivescore,
+  fetchApiFootball, teamKey, matchTeam,
 } from "./fetchers.js";
 
 const R_URL =
@@ -177,6 +178,28 @@ async function gatherSources(leagues, dateISO) {
     if (m.xgscore)     take("xgscore",     "ninety:src:xgscore:" + m.xgscore,     () => fetchXGScore(m.xgscore));
     if (m.forebet)     take("forebet",     "ninety:src:forebet:" + m.forebet,     () => fetchForebet(m.forebet));
     if (m.soccerstats) take("soccerstats", "ninety:src:soccerstats:" + m.soccerstats, () => fetchSoccerStats(m.soccerstats));
+    if (m.tsdb)        take("tsdb",        "ninety:src:tsdb:" + m.tsdb,               () => fetchTheSportsDB(m.tsdb));
+    if (m.apifootball && SOURCES.apifootball.enabled)
+      take("apifootball", "ninety:src:apif:" + m.apifootball.q + ":" + d, () => fetchApiFootball(m.apifootball, dateISO));
+  }
+  // LiveScore is fetched ONCE for the whole date - it returns every competition in
+  // the world in one response, so per-league fetches would be the same bytes N
+  // times over - then each league takes its own filtered slice by country/stage.
+  const lsLeagues = leagues.filter((lg) => LEAGUES[lg] && LEAGUES[lg].livescore);
+  if (lsLeagues.length && dateISO) {
+    const day = dateISO.replace(/-/g, "");
+    jobs.push(cached("ninety:src:livescore:" + day, CACHE_TTL, () => fetchLivescore(day))
+      .then((r) => {
+        if (!(r && r.ok)) { lsLeagues.forEach((lg) => errors.push({ league: lg, source: "livescore", why: (r && r.error) || "no data" })); return; }
+        if (r._cached) cacheHits.push("*/livescore");
+        for (const lg of lsLeagues) {
+          const f = LEAGUES[lg].livescore;
+          const slice = r.fixtures.filter((x) =>
+            x.country.toLowerCase().includes(String(f.c).toLowerCase()) &&
+            (!f.t || (x.stage || "").toLowerCase().includes(String(f.t).toLowerCase())));
+          if (slice.length) store[lg].livescore = { source: "livescore", ok: true, fixtures: slice, meta: { count: slice.length } };
+        }
+      }));
   }
   // Elo ratings are global, so one call serves every European competition.
   let eloRatings = null;
@@ -273,6 +296,29 @@ function enrichFixture(fx, store, eloRatings) {
       out.present.push("elo");
     }
   }
+  if (s.tsdb) {
+    const h = matchTeam(fx.home, s.tsdb.teams);
+    const a = matchTeam(fx.away, s.tsdb.teams);
+    if (h || a) {
+      out.sources.tsdb = { home: h || null, away: a || null, partial: !!(s.tsdb.meta || {}).partial };
+      out.present.push("tsdb");
+    }
+  }
+  if (s.livescore) {
+    const f = findFixture(s.livescore.fixtures, fx.home, fx.away);
+    if (f) {
+      out.sources.livescore = { status: f.status, startsAt: f.startsAt, stage: f.stage };
+      out.present.push("livescore");
+    }
+  }
+  if (s.apifootball) {
+    const f = findFixture(s.apifootball.fixtures, fx.home, fx.away);
+    if (f) {
+      out.sources.apifootball = { pHome: f.pHome, pDraw: f.pDraw, pAway: f.pAway, advice: f.advice,
+                                  untested: !!(s.apifootball.meta || {}).untested };
+      out.present.push("apifootball");
+    }
+  }
   if (s.soccerstats) {
     const h = matchTeam(fx.home, s.soccerstats.teams);
     const a = matchTeam(fx.away, s.soccerstats.teams);
@@ -311,7 +357,7 @@ function buildBrief(fixtures, enriched) {
     L.push("Competition: " + fx.league + " | " + fx.matchDate + " " + (fx.kickoff || "") + " SGT");
     // Coverage stated plainly per fixture: a two-source K League read and a
     // six-source Norwegian read must not look alike in the brief.
-    L.push("DATA COVERAGE: " + cov.count + " of 6 sources carry this competition (" +
+    L.push("DATA COVERAGE: " + cov.count + " of " + cov.total + " sources carry this competition (" +
       (cov.sources.join(", ") || "none") + ")" +
       (cov.missing.length ? " | NOT available: " + cov.missing.join(", ") : ""));
     if (en.present.length < cov.count) {
@@ -363,6 +409,23 @@ function buildBrief(fixtures, enriched) {
         L.push("  " + e.marketProvider + " line: spread " + e.marketSpread + ", total " + e.marketTotal +
           "  <- a SECOND bookmaker's price, compare against SGPools above");
     }
+    if (S.tsdb) {
+      const t = S.tsdb;
+      const row = (x, who) => x
+        ? who + ": " + x.rank + ". P" + x.played + " " + x.w + "-" + x.d + "-" + x.l + ", GF" + x.gf + " GA" + x.ga + ", " + x.pts + " pts"
+        : who + ": not in table";
+      L.push("THESPORTSDB TABLE" + (t.partial ? " (PARTIAL - not the full standings)" : "") + ":");
+      L.push("  " + row(t.home, fx.home));
+      L.push("  " + row(t.away, fx.away));
+    }
+    if (S.livescore) {
+      L.push("LIVESCORE: fixture confirmed on the worldwide feed (" + S.livescore.stage + ", status " + S.livescore.status + ")");
+    }
+    if (S.apifootball) {
+      const a = S.apifootball;
+      L.push("API-FOOTBALL MODEL" + (a.untested ? " (first live run - treat gently)" : "") + ": P = " +
+        a.pHome + "% / " + a.pDraw + "% / " + a.pAway + "%" + (a.advice ? ", advice: " + a.advice : ""));
+    }
     if (S.soccerstats) {
       const s = S.soccerstats;
       if (s.home) L.push("SOCCERSTATS " + fx.home + ": [" + s.home.raw.join(", ") + "]");
@@ -392,7 +455,7 @@ const SYSTEM =
   "\n\nTHE TOTE MATTERS. On a pari-mutuel pool the most agreed-upon selection is by construction the most overbet one. Consensus is where the crowd's money is crushed, not where value lives. A price that looks short because 'everyone knows' the favourite wins is exactly the price to fade. " +
   "\n\nUSE THE DISAGREEMENT. Each fixture below carries several INDEPENDENT views: ClubElo (a pure Elo model with a full scoreline distribution), Forebet (a separate statistical model), xGscore (expected points, which exposes teams whose league position is luck-inflated), ESPN form and a second bookmaker's line, and SoccerSTATS tables. Where they AGREE with the SGPools price there is no edge to take. Where a model's probability implies materially better odds than SGPools is offering, that gap is the whole reason this tool exists. The EDGE line is pre-computed for you. " +
   "\n\nBEWARE THE TABLE. A team can top the league on luck. xGscore's expected-points column is the check: a large positive gap between points and xPTS means the table flatters them and their price is short for the wrong reason. A large negative gap means the opposite. Say so when it bites. " +
-  "\n\nDATA COVERAGE IS NOT UNIFORM AND YOU MUST RESPECT IT. Every fixture states how many of six sources carry its competition. Norwegian and Swedish fixtures have up to six, including Elo and xG. K League has two, with NO Elo and NO xG anywhere. Thai, Singapore and Malaysian competitions may have one. A read built on two sources is not the same animal as one built on six, and you must SAY SO in the reason field rather than writing with equal confidence either way. Never imply a model backs you when no model covers that league. " +
+  "\n\nDATA COVERAGE IS NOT UNIFORM AND YOU MUST RESPECT IT. Every fixture states how many of the available sources carry its competition. Norwegian and Swedish fixtures have up to six, including Elo and xG. K League and the other Asian leagues have fewer, with NO Elo and NO xG anywhere; some of what they do have is standings-grade rather than model-grade. Thai, Singapore and Malaysian competitions may have one. A read built on two sources is not the same animal as one built on six, and you must SAY SO in the reason field rather than writing with equal confidence either way. Never imply a model backs you when no model covers that league. " +
   "\n\nHARD RULES, ENFORCED IN CODE AFTER YOU REPLY (proposing a leg that will be vetoed is worse than not proposing it): " +
   "(1) You may ONLY cite a market and selection that appears verbatim in that fixture's SGPOOLS MARKETS block. Never invent a market, never carry a price from another source. " +
   "(2) The odds you quote MUST match the scraped price exactly. " +
