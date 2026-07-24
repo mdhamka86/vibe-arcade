@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Ninety Plus</title>
+<style>
+  :root{--bg:#0e1116;--card:#171b22;--line:#262b34;--ink:#e9edf2;--muted:#8b94a3;--accent:#2ecc71;--accent2:#1f9e57;--warn:#e6a23c;--bad:#e05c5c;--gold:#d4a13c;--blue:#6db8ff;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:16px;max-width:680px;margin:0 auto;}
+  h1{font-size:22px;margin:4px 0 2px;letter-spacing:-0.3px;}
+  h1 .plus{color:var(--accent);}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:16px;line-height:1.5;}
+  button{font-size:16px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:12px 14px;}
+  button.go{background:var(--accent);color:#04210f;font-weight:700;border:none;width:100%;padding:16px;font-size:17px;border-radius:14px;}
+  button.go:active{background:var(--accent2);}
+  button.go:disabled{opacity:.6;}
+  button.copy{background:var(--card);color:var(--accent);border:1px solid var(--accent2);width:100%;padding:14px;font-weight:600;margin:12px 0;}
+  .status{color:var(--muted);font-size:13px;margin:12px 2px;min-height:18px;}
+  .srcline{font-size:12px;margin:6px 2px 14px;line-height:1.5;}
+  .fresh{color:var(--accent);} .aging{color:var(--warn);} .stale{color:var(--bad);}
+  #gate{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;z-index:9999;}
+  #gate h2{font-size:20px;margin:0;} #gate h2 .plus{color:var(--accent);}
+  #gate p{color:var(--muted);font-size:13px;margin:0;text-align:center;}
+  #gate input{font-size:16px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:13px 14px;width:100%;max-width:280px;}
+  #gate button{background:var(--accent);color:#04210f;font-weight:700;border:none;padding:13px 24px;font-size:16px;border-radius:12px;width:100%;max-width:280px;}
+  #gateErr{color:var(--warn);font-size:13px;min-height:16px;}
+  #app{display:none;}
+  .daybar{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:20px 2px 8px;padding-bottom:6px;border-bottom:1px solid var(--line);}
+  .daybar .d{font-size:14px;font-weight:700;color:var(--blue);}
+  .daybar .n{font-size:12px;color:var(--muted);}
+  .match{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px;cursor:pointer;transition:border-color .15s;}
+  .match.sel{border-color:var(--accent2);background:#0f1a13;}
+  .match h2{margin:0 0 4px;font-size:16px;display:flex;justify-content:space-between;gap:10px;align-items:center;}
+  .mcode{font-size:12px;font-weight:700;color:var(--gold);border:1px solid var(--gold);border-radius:999px;padding:2px 9px;white-space:nowrap;}
+  .mtime{font-size:12.5px;color:var(--muted);margin-bottom:10px;}
+  .odds3{display:flex;gap:8px;}
+  .o{flex:1;text-align:center;background:#11161c;border:1px solid var(--line);border-radius:10px;padding:8px 4px;}
+  .o .lab{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .o .val{font-size:15px;font-weight:700;}
+  .o .mv{font-size:10.5px;margin-top:1px;min-height:13px;}
+  .up{color:var(--accent);} .down{color:var(--bad);}
+  .chk{font-size:18px;color:var(--muted);}
+  .match.sel .chk{color:var(--accent);}
+  .cmatch{background:#1a1410;border:1px solid var(--gold);border-radius:10px;padding:10px;font-size:12px;color:var(--gold);margin-bottom:12px;line-height:1.5;}
+  .warnbox{background:#1a1410;border:1px solid var(--warn);border-radius:10px;padding:10px;font-size:12px;color:var(--warn);margin:12px 0;line-height:1.5;}
+  footer{color:var(--muted);font-size:12px;margin-top:20px;line-height:1.5;}
+  .selbar{position:sticky;bottom:0;background:linear-gradient(transparent,var(--bg) 30%);padding-top:14px;}
+</style>
+</head>
+<body>
+  <div id="gate">
+    <h2>Ninety <span class="plus">Plus</span></h2>
+    <p>Enter password to continue.</p>
+    <input id="gatePass" type="password" placeholder="Password" autocomplete="current-password" />
+    <button id="gateBtn">Unlock</button>
+    <div id="gateErr"></div>
+  </div>
+  <div id="app">
+  <h1>Ninety <span class="plus">Plus</span></h1>
+  <div class="sub">Pull live SGPools football odds, tap the games you want, then deep-pull every market. Copy the lot to Claude, who trawls punters/tipsters/data, runs the convergence check, and hands back a recommended bet slip table. The pull layer for The Spread WC journal.</div>
+
+  <div class="cmatch">⚠ Card-match rule: the code shown comes from the lagging mirror and may NOT equal the SGPools app code. Always confirm the real code, the match date and the live price in the SGPools app before betting.</div>
+
+  <button class="go" id="goBtn">Pull odds</button>
+  <div class="status" id="status"></div>
+  <div class="srcline" id="srcline"></div>
+  <div id="warns"></div>
+  <div id="out"></div>
+  <div class="selbar"><button class="go" id="deepBtn" style="display:none">Deep-pull selected games</button></div>
+  <button class="copy" id="copyBtn" style="display:none">Copy everything (paste to Claude)</button>
+
+  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v1.0</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
+  </div>
+
+<script>
+const PASS_HASH = "c283bf2ce8d3227f28166598d4087c6d10e7b5141d142ff4ad2df3bc73c532b4";
+async function sha256Hex(str){const buf=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(str));return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");}
+function unlockApp(){document.getElementById("gate").style.display="none";document.getElementById("app").style.display="block";}
+async function tryUnlock(){const pass=document.getElementById("gatePass").value;const err=document.getElementById("gateErr");try{const h=await sha256Hex(pass);if(h===PASS_HASH){sessionStorage.setItem("ot_ok","1");unlockApp();}else{err.textContent="Wrong password.";}}catch(e){err.textContent="Error: "+e;}}
+if(sessionStorage.getItem("ot_ok")==="1"){unlockApp();}
+document.getElementById("gateBtn").addEventListener("click",tryUnlock);
+document.getElementById("gatePass").addEventListener("keydown",e=>{if(e.key==="Enter")tryUnlock();});
+
+const ODDS="/api/odds2";
+const goBtn=document.getElementById("goBtn"),deepBtn=document.getElementById("deepBtn"),statusEl=document.getElementById("status"),srcline=document.getElementById("srcline"),out=document.getElementById("out"),copyBtn=document.getElementById("copyBtn"),warns=document.getElementById("warns");
+let fixtures=[],selected=new Set(),deepData={},copyText="";
+function esc(s){return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+function setStatus(s){statusEl.textContent=s||"";}
+
+// Mirror age -> plain words + a colour. Green under 30 min, amber under 2h, red beyond.
+function ageLabel(sec){
+  if(sec==null) return {cls:"aging",txt:"age unknown"};
+  const m=Math.floor(sec/60), h=Math.floor(m/60);
+  const txt = m<1 ? "just now" : h<1 ? m+"m ago" : h+"h "+(m%60)+"m ago";
+  const cls = sec<1800 ? "fresh" : sec<7200 ? "aging" : "stale";
+  return {cls,txt};
+}
+function mvHtml(v){
+  if(v==null||v===0) return '<div class="mv">&nbsp;</div>';
+  const cls = v>0 ? "up" : "down";
+  const sign = v>0 ? "+" : "";
+  return '<div class="mv '+cls+'">'+sign+v+'%</div>';
+}
+
+function renderList(data){
+  out.innerHTML="";warns.innerHTML="";selected.clear();deepData={};copyBtn.style.display="none";deepBtn.style.display="none";
+  const a=ageLabel(data.mirror_age_seconds);
+  srcline.innerHTML='<span class="'+a.cls+'">● sgodds mirror &middot; updated '+esc(data.last_updated||"?")+' ('+a.txt+')</span>';
+
+  if(data.parse_warnings && data.parse_warnings.length){
+    warns.innerHTML='<div class="warnbox"><strong>Parse warnings ('+data.parse_warnings.length+')</strong><br>'+
+      data.parse_warnings.slice(0,6).map(esc).join('<br>')+
+      (data.parse_warnings.length>6?'<br>…and '+(data.parse_warnings.length-6)+' more':'')+'</div>';
+  }
+
+  if(!data.fixtures||!data.fixtures.length){out.innerHTML='<div class="status">No fixtures parsed. Screenshot the SGPools card and I will read it manually.</div>';return;}
+  fixtures=data.fixtures;
+
+  // Group into day sections so a forward-dated card can never read as tonight's.
+  const groups=[];
+  let cur=null;
+  fixtures.forEach((f,idx)=>{
+    const key=f.match_date||"unknown";
+    if(!cur||cur.key!==key){cur={key:key,label:f.match_date_display||"Date unknown",items:[]};groups.push(cur);}
+    cur.items.push({f:f,idx:idx});
+  });
+
+  for(const g of groups){
+    const bar=document.createElement("div");
+    bar.className="daybar";
+    bar.innerHTML='<span class="d">'+esc(g.label)+'</span><span class="n">'+g.items.length+' game'+(g.items.length>1?"s":"")+'</span>';
+    out.appendChild(bar);
+
+    for(const {f,idx} of g.items){
+      const o=f.odds_1x2||{}, mv=f.movement_1x2||{};
+      const div=document.createElement("div");div.className="match";div.dataset.idx=idx;
+      div.innerHTML=
+        '<h2><span>'+esc(f.home)+' v '+esc(f.away)+'</span><span class="mcode">'+esc(f.mirror_code||"?")+'</span></h2>'+
+        '<div class="mtime">'+esc(f.time_sgt||"")+' SGT · '+esc(f.league||"")+' <span class="chk" style="float:right">○</span></div>'+
+        '<div class="odds3">'+
+          '<div class="o"><div class="lab">1 '+esc(f.home)+'</div><div class="val">'+esc(o.home)+'</div>'+mvHtml(mv.home)+'</div>'+
+          '<div class="o"><div class="lab">X Draw</div><div class="val">'+esc(o.draw)+'</div>'+mvHtml(mv.draw)+'</div>'+
+          '<div class="o"><div class="lab">2 '+esc(f.away)+'</div><div class="val">'+esc(o.away)+'</div>'+mvHtml(mv.away)+'</div>'+
+        '</div>';
+      div.addEventListener("click",()=>{
+        if(selected.has(idx)){selected.delete(idx);div.classList.remove("sel");div.querySelector(".chk").textContent="○";}
+        else{selected.add(idx);div.classList.add("sel");div.querySelector(".chk").textContent="●";}
+        deepBtn.style.display=selected.size?"block":"none";
+        deepBtn.textContent="Deep-pull "+selected.size+" selected game"+(selected.size>1?"s":"");
+      });
+      out.appendChild(div);
+    }
+  }
+}
+
+async function deepPull(){
+  deepBtn.disabled=true;copyBtn.style.display="none";
+  const picks=[...selected].map(i=>fixtures[i]);
+  setStatus("Deep-pulling "+picks.length+" game"+(picks.length>1?"s":"")+"…");
+  const blocks=[];
+  for(const f of picks){
+    try{
+      const r=await fetch(ODDS+"?match="+encodeURIComponent(f.match_url));
+      const j=await r.json();
+      deepData[f.match_url]=j;
+      let b="==== "+f.home+" v "+f.away+" ====\n";
+      b+="SGPools code (CARD-MATCH IN APP): "+(f.mirror_code||"?")+"\n";
+      b+="Match date: "+(f.match_date_display||j.match_date||"?")+"\n";
+      b+="Kickoff: "+(f.time_sgt||"?")+" SGT\n";
+      b+="League: "+(f.league||"?")+"\n";
+      b+="Mirror updated: "+(j.last_updated||"?")+
+         (j.mirror_age_seconds!=null?" ("+ageLabel(j.mirror_age_seconds).txt+")":"")+"\n";
+      if(j.parse_warnings&&j.parse_warnings.length){
+        b+="PARSE WARNINGS: "+j.parse_warnings.join(" | ")+"\n";
+      }
+      b+="\nMARKETS (mirror; opening -> current, with movement since open):\n";
+      const order=j.market_order||Object.keys(j.markets||{});
+      if(order.length){
+        for(const mk of order){
+          const m=j.markets[mk];
+          if(!m||!m.selections) continue;
+          b+="\n["+mk+"]\n";
+          m.selections.forEach(s=>{
+            const mvTxt = (s.movement==null||s.movement===0) ? "" :
+              "  ("+(s.movement>0?"+":"")+s.movement+"% since open "+s.opening+")";
+            b+="  "+s.selection+"  @ "+s.odds+mvTxt+"\n";
+          });
+        }
+      }else{
+        b+="(no detailed markets parsed; 1X2 from list: "+f.home+" "+(f.odds_1x2&&f.odds_1x2.home)+
+           " / Draw "+(f.odds_1x2&&f.odds_1x2.draw)+" / "+f.away+" "+(f.odds_1x2&&f.odds_1x2.away)+")\n";
+      }
+      if(j.history_1x2&&j.history_1x2.samples&&j.history_1x2.samples.length){
+        const s=j.history_1x2.samples, ser=j.history_1x2.series||{};
+        b+="\n[1X2 movement history] "+s.length+" samples, "+s[0]+" -> "+s[s.length-1]+"\n";
+        for(const k of Object.keys(ser)){
+          b+="  "+k+": "+ser[k].join(", ")+"\n";
+        }
+      }
+      blocks.push(b);
+    }catch(e){blocks.push("==== "+f.home+" v "+f.away+" ====\n(deep pull failed: "+e+")");}
+  }
+  copyText=
+    "DEEP-DIVE THESE GAMES (The Spread WC):\n\n"+
+    blocks.join("\n\n")+
+    "\n\n----\nPlease trawl punters/tipsters/press + run the data cross-check and convergence/confidence check, "+
+    "then recommend the best-value bets and build me a SGPools bet slip table (code, bet type, selection, odds, confidence, stake) ready to place. "+
+    "State bet types explicitly (e.g. '1X2 straight win' vs 'AH -0.75') so there is no ambiguity at the point of placing. "+
+    "Note the match date on each block - the mirror lists several days ahead, so these may not be today. "+
+    "Remember mirror codes need card-matching in the app.";
+  setStatus("Done. Copy and paste to Claude.");
+  copyBtn.style.display="block";
+  deepBtn.disabled=false;
+  copyBtn.scrollIntoView({behavior:"smooth",block:"center"});
+}
+
+async function pull(){
+  goBtn.disabled=true;out.innerHTML="";warns.innerHTML="";copyBtn.style.display="none";deepBtn.style.display="none";srcline.innerHTML="";
+  setStatus("Pulling odds from mirror…");
+  try{
+    const r=await fetch(ODDS);const j=await r.json();
+    if(j.error){setStatus("Error: "+j.error);}
+    else{
+      renderList(j);
+      const days=(j.dates||[]).length;
+      setStatus("Pulled "+j.fixture_count+" fixtures across "+days+" day"+(days>1?"s":"")+". Tap the games to deep-dive.");
+    }
+  }
+  catch(e){setStatus("Request failed: "+e);}
+  finally{goBtn.disabled=false;}
+}
+copyBtn.addEventListener("click",async()=>{
+  try{await navigator.clipboard.writeText(copyText);}
+  catch(e){const ta=document.createElement("textarea");ta.value=copyText;document.body.appendChild(ta);ta.select();document.execCommand("copy");document.body.removeChild(ta);}
+  copyBtn.textContent="Copied! Paste to Claude";setTimeout(()=>copyBtn.textContent="Copy everything (paste to Claude)",1800);
+});
+goBtn.addEventListener("click",pull);
+deepBtn.addEventListener("click",deepPull);
+</script>
+</body>
+</html>
