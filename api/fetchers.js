@@ -10,12 +10,34 @@
 // Every parser below was written against a REAL response captured on
 // 2026-07-24, not against a guess at the markup.
 
-const UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
+// USER-AGENT ROTATION IS A REAL BYPASS, not superstition. Verified 24/07/2026:
+// forebet.com returns 403 to a desktop-Chrome UA on every path but 200 to an
+// iPhone, Firefox or Android UA. The first live run of this tool lost Forebet on
+// BOTH the Swedish and Russian leagues to exactly that, and reported it as the
+// source being down. A 403 from one fetcher with one UA is not proof a source is
+// dead — retry with a different UA before writing anything off.
+const UAS = [
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36',
+];
+const UA = UAS[0];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function grab(url, { ms = 15000, tries = 2, json = false } = {}) {
+// PER-SOURCE UA PREFERENCE, not one global rotation. The two constraints pull in
+// OPPOSITE directions and a single order cannot satisfy both:
+//   forebet.com   403s desktop Chrome, serves iPhone/Firefox/Android
+//   soccerstats   serves a STRIPPED MOBILE PAGE to an iPhone UA (194KB, 174 rows)
+//                 and the full table to a desktop UA (700KB, 763 rows)
+// Rotating iPhone-first fixed Forebet and quietly cut SoccerSTATS from 16 teams to
+// 1 — a 200 with the wrong markup, which is exactly the "a 200 is not coverage"
+// trap. So each fetcher states the identity it needs, and rotation happens only
+// within that preference on retry.
+const UA_DESKTOP = [UAS[2], UAS[1]];   // chrome, then firefox
+const UA_MOBILE  = [UAS[0], UAS[1]];   // iphone, then firefox
+
+async function grab(url, { ms = 15000, tries = 3, json = false, uas = UA_DESKTOP } = {}) {
   let last;
   for (let i = 0; i < tries; i++) {
     const ctrl = new AbortController();
@@ -23,13 +45,20 @@ async function grab(url, { ms = 15000, tries = 2, json = false } = {}) {
     try {
       const r = await fetch(url, {
         signal: ctrl.signal,
-        headers: { 'User-Agent': UA, Accept: json ? 'application/json' : 'text/html,text/csv,*/*' },
+        headers: {
+          // Rotate WITHIN the source's preferred family on retry: a source that
+          // gates on the header fails identically three times otherwise, and the
+          // retry proves nothing.
+          'User-Agent': uas[i % uas.length],
+          'Accept-Language': 'en-US,en;q=0.9',
+          Accept: json ? 'application/json' : 'text/html,application/xhtml+xml,text/csv,*/*',
+        },
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return json ? await r.json() : await r.text();
     } catch (e) {
       last = e;
-      if (i < tries - 1) await sleep(500);
+      if (i < tries - 1) await sleep(400);
     } finally {
       clearTimeout(t);
     }
@@ -268,7 +297,8 @@ export async function fetchXGScore(slug) {
 // ---------------------------------------------------------------------------
 export async function fetchForebet(path) {
   try {
-    const html = await grab(`https://www.forebet.com/en/${path}`, { ms: 20000 });
+    // Chrome desktop is hard-403 here; iPhone and Firefox both serve.
+    const html = await grab(`https://www.forebet.com/en/${path}`, { ms: 20000, uas: UA_MOBILE });
 
     // Forebet emits schema.org microdata per fixture inside a `rcnt` block:
     //   <div class='rcnt ...'> ... <span class="homeTeam"><span itemprop="name">X</span>
@@ -321,7 +351,8 @@ export async function fetchForebet(path) {
 // ---------------------------------------------------------------------------
 export async function fetchSoccerStats(slug) {
   try {
-    const html = await grab(`https://www.soccerstats.com/latest.asp?league=${slug}`, { ms: 20000 });
+    // MUST stay desktop: a mobile UA gets a stripped page with the tables gone.
+    const html = await grab(`https://www.soccerstats.com/latest.asp?league=${slug}`, { ms: 20000, uas: UA_DESKTOP });
     const teams = {};
 
     // Performance table: club, GP, W, D, L, Pts, pPts, TeampPPG, OppPPG, rating

@@ -136,34 +136,57 @@ function parseReply(text) {
 // per source per league — not per fixture — so twelve Norwegian fixtures cost
 // the same six calls as one.
 
+// Source payloads are cached in Redis for CACHE_TTL seconds. Elo ratings, xG
+// tables and league standings do not change intraday, and re-pulling six sources
+// per league on every run is the bulk of the wait. Prices are NOT cached — those
+// come from the SGPools mirror on the frontend, fresh every time.
+const CACHE_TTL = 600; // 10 minutes
+
+async function cached(key, ttl, produce) {
+  try {
+    const [hit] = await redis([["GET", key]]);
+    if (hit) { const j = JSON.parse(hit); j._cached = true; return j; }
+  } catch (e) { /* a cache miss must never break the pull */ }
+  const fresh = await produce();
+  if (fresh && fresh.ok) {
+    try { await redis([["SET", key, JSON.stringify(fresh), "EX", String(ttl)]]); }
+    catch (e) { /* best effort */ }
+  }
+  return fresh;
+}
+
 async function gatherSources(leagues, dateISO) {
   const jobs = [];
   const store = {};                   // league -> source -> payload
   const errors = [];
+  const cacheHits = [];
   for (const lg of leagues) {
     store[lg] = {};
     const m = LEAGUES[lg];
     if (!m) { errors.push({ league: lg, source: "-", why: "competition not in the source registry" }); continue; }
 
-    if (m.espn) jobs.push(fetchESPN(m.espn, dateISO ? dateISO.replace(/-/g, "") : null)
-      .then((r) => { if (r.ok) store[lg].espn = r; else errors.push({ league: lg, source: "espn", why: r.error }); }));
-    if (m.clubelo) jobs.push(fetchClubElo(m.clubelo)
-      .then((r) => { if (r.ok) store[lg].clubelo = r; else errors.push({ league: lg, source: "clubelo", why: r.error }); }));
-    if (m.xgscore) jobs.push(fetchXGScore(m.xgscore)
-      .then((r) => { if (r.ok) store[lg].xgscore = r; else errors.push({ league: lg, source: "xgscore", why: r.error }); }));
-    if (m.forebet) jobs.push(fetchForebet(m.forebet)
-      .then((r) => { if (r.ok) store[lg].forebet = r; else errors.push({ league: lg, source: "forebet", why: r.error }); }));
-    if (m.soccerstats) jobs.push(fetchSoccerStats(m.soccerstats)
-      .then((r) => { if (r.ok) store[lg].soccerstats = r; else errors.push({ league: lg, source: "soccerstats", why: r.error }); }));
+    const take = (src, key, run) => jobs.push(
+      cached(key, CACHE_TTL, run).then((r) => {
+        if (r && r.ok) { store[lg][src] = r; if (r._cached) cacheHits.push(lg + "/" + src); }
+        else errors.push({ league: lg, source: src, why: (r && r.error) || "no data" });
+      })
+    );
+    const d = dateISO ? dateISO.replace(/-/g, "") : "any";
+    if (m.espn)        take("espn",        "ninety:src:espn:" + m.espn + ":" + d, () => fetchESPN(m.espn, dateISO ? dateISO.replace(/-/g, "") : null));
+    if (m.clubelo)     take("clubelo",     "ninety:src:clubelo:" + m.clubelo,     () => fetchClubElo(m.clubelo));
+    if (m.xgscore)     take("xgscore",     "ninety:src:xgscore:" + m.xgscore,     () => fetchXGScore(m.xgscore));
+    if (m.forebet)     take("forebet",     "ninety:src:forebet:" + m.forebet,     () => fetchForebet(m.forebet));
+    if (m.soccerstats) take("soccerstats", "ninety:src:soccerstats:" + m.soccerstats, () => fetchSoccerStats(m.soccerstats));
   }
   // Elo ratings are global, so one call serves every European competition.
   let eloRatings = null;
   if (leagues.some((lg) => LEAGUES[lg] && LEAGUES[lg].clubelo)) {
-    jobs.push(fetchClubEloRatings(new Date().toISOString().slice(0, 10))
-      .then((r) => { if (r.ok) eloRatings = r; else errors.push({ league: "*", source: "clubelo_ratings", why: r.error }); }));
+    const day = new Date().toISOString().slice(0, 10);
+    jobs.push(cached("ninety:src:elo:" + day, CACHE_TTL, () => fetchClubEloRatings(day))
+      .then((r) => { if (r && r.ok) eloRatings = r; else errors.push({ league: "*", source: "clubelo_ratings", why: (r && r.error) || "no data" }); }));
   }
   await Promise.all(jobs);
-  return { store, eloRatings, errors };
+  return { store, eloRatings, errors, cacheHits };
 }
 
 // Find a source's row for one fixture. Cross-source name matching is the whole
@@ -376,7 +399,13 @@ const SYSTEM =
   "(3) State the bet type unambiguously, e.g. '1X2 straight win' or 'Asian Handicap -0.75' or 'Total Goals Over 2.5' — never a bare team name. " +
   "(4) Stakes are FLAT: $10 for a standard leg, $5 for a speculative one. Conviction changes WHETHER you bet, never HOW MUCH. " +
   "(5) Maximum 5 legs across the whole card. Depth beats volume on a negative-takeout pool. " +
-  "\n\nNever invent a figure. If a source did not return data for a fixture, reason without it and say the read is thinner.";
+  "\n\nNever invent a figure. If a source did not return data for a fixture, reason without it and say the read is thinner." +
+  "\n\nBE BRIEF. This is read on a phone at the betting counter, not in a report. " +
+  "cardShape: at most 2 sentences on the whole card. " +
+  "Each faded entry: ONE sentence, and at most one per fixture — pick the single strongest reason you are not betting it, not every reason. " +
+  "notes: at most 2 sentences for the entire card, and only if something genuinely needs flagging; leave it empty otherwise. " +
+  "Each leg's reason may run to 2 sentences because that is the argument for spending money, but no further. " +
+  "Length is not rigour. A long paragraph explaining why you did not bet something is wasted on a reader who has already moved on.";
 
 // ---------------------------------------------------------------------------
 // CODE GATES — the law disposes
@@ -411,8 +440,18 @@ function gateLegs(rawLegs, fixtures) {
       sourcesUsed: Array.isArray(raw.sourcesUsed) ? raw.sourcesUsed.map(String) : [],
     };
     const fx = byCode[leg.mirrorCode];
+    // A vetoed leg carries its FULL proposal — the bet, the price the model
+    // thought it was taking, and the reasoning — not just a rule name. If the law
+    // cuts something you should be able to read what it cut and judge whether the
+    // law was right. It stays out of the slip table and out of the staked total,
+    // because a gate that only decorates is not a gate; but it is never silent.
     const veto = (rule, why) =>
-      vetoes.push({ ...leg, fixture: fx ? fx.home + " v " + fx.away : "(unknown)", rule, why });
+      vetoes.push({
+        ...leg,
+        fixture: fx ? fx.home + " v " + fx.away : "(unknown)",
+        league: fx ? fx.league : null,
+        rule, why,
+      });
 
     // GATE 1: the fixture must be one the user actually selected. A leg on a
     // fixture that was not pulled cannot be card-matched to anything.
@@ -441,10 +480,41 @@ function gateLegs(rawLegs, fixtures) {
     }
 
     // GATE 3: the selection must exist within that market.
+    //
+    // MATCH IN BOTH DIRECTIONS. The first version of this only asked whether the
+    // SCRAPED name contained the PROPOSED one, which quietly assumed the model
+    // always writes a substring of the coupon. It does not: on 24/07 it proposed
+    // "Orgryte @ 4.8" — the selection with its price glued on — against a scraped
+    // "Orgryte", so the longer string could never be found inside the shorter one.
+    // The leg was vetoed with the self-contradicting message '"Orgryte @ 4.8" is
+    // not a selection in [1X2] (available: Vasteras, Draw, Orgryte)', and the slip
+    // then reported "no leg proposed" when a leg had in fact been proposed and
+    // silently binned. A gate that lies about its own output is worse than no gate.
     const sels = markets[mk] || [];
     const norm = (s) => String(s).toLowerCase().replace(/\s+/g, " ").trim();
+    // Strip the decorations a model tends to add: a trailing "@ 4.8", a bracketed
+    // note, surrounding quotes. What is left should be the bare selection.
+    const bare = (s) => norm(s)
+      .replace(/\s*@\s*[\d.]+\s*$/, "")
+      .replace(/\s*\([^)]*\)\s*$/, "")
+      .replace(/^["']|["']$/g, "")
+      .trim();
     let sel = sels.find((s) => norm(s.selection) === norm(leg.selection));
-    if (!sel) sel = sels.find((s) => norm(s.selection).includes(norm(leg.selection)) && norm(leg.selection).length >= 3);
+    if (!sel) sel = sels.find((s) => bare(s.selection) === bare(leg.selection));
+    if (!sel) {
+      // containment, tried BOTH ways round, longest scraped match wins so that
+      // "Over 2.5" cannot be satisfied by a stray "Over" somewhere in the list
+      const p = bare(leg.selection);
+      let best = null;
+      for (const s of sels) {
+        const c = bare(s.selection);
+        if (c.length < 2 || p.length < 2) continue;
+        if (c === p || c.includes(p) || p.includes(c)) {
+          if (!best || c.length > bare(best.selection).length) best = s;
+        }
+      }
+      sel = best;
+    }
     if (!sel) {
       veto("unknown-selection",
         '"' + leg.selection + '" is not a selection in [' + mk + "] (available: " +
@@ -595,9 +665,26 @@ const handler = async (req, res) => {
       const leagues = [...new Set(fixtures.map((f) => f.league).filter(Boolean))];
       const dateISO = fixtures[0] && fixtures[0].matchDateISO ? fixtures[0].matchDateISO : null;
 
-      const { store, eloRatings, errors: sourceErrors } = await gatherSources(leagues, dateISO);
+      const { store, eloRatings, errors: sourceErrors, cacheHits } = await gatherSources(leagues, dateISO);
       const enriched = fixtures.map((fx) => enrichFixture(fx, store, eloRatings));
       const gatherMs = Date.now() - t0;
+
+      // WHICH SOURCES ANSWERED, not only which failed. A list of failures alone
+      // tells you what went wrong without telling you what the read actually
+      // rests on, which is the number that matters when weighing the answer.
+      const sourcesAnswered = leagues.map((lg) => {
+        const got = Object.keys(store[lg] || {});
+        const cov = coverageFor(lg);
+        return {
+          league: lg,
+          answered: got,
+          answeredCount: got.length,
+          expected: cov.count,
+          fixturesEnriched: fixtures
+            .map((f, i) => (f.league === lg ? enriched[i].present.length : null))
+            .filter((x) => x != null),
+        };
+      });
 
       const brief = buildBrief(fixtures, enriched);
 
@@ -610,8 +697,8 @@ const handler = async (req, res) => {
         '"odds":0,"stake":10,"confidence":"Standard|Speculative",' +
         '"reason":"which sources agree and why; name the disagreement with the market; state plainly if coverage is thin",' +
         '"sourcesUsed":["clubelo","forebet"]}],' +
-        '"faded":[{"mirrorCode":"","fixture":"","why":"why this tempting-looking fixture is not a bet"}],' +
-        '"notes":"anything worth flagging: stale prices, missing data, a trap"}';
+        '"faded":[{"mirrorCode":"","fixture":"","why":"ONE sentence, one entry per fixture at most"}],' +
+        '"notes":"at most 2 sentences for the whole card, or empty"}';
 
       const cr = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -649,7 +736,11 @@ const handler = async (req, res) => {
           standard: kept.filter((l) => l.confidence === "Standard").length,
           speculative: kept.filter((l) => l.confidence === "Speculative").length,
         },
-        faded: Array.isArray(parsed.faded) ? parsed.faded : [],
+        // One faded entry per fixture, enforced rather than requested. The first
+        // live run returned four entries for two fixtures, three of them about
+        // the same match. Brevity asked for in a prompt is brevity hoped for.
+        faded: (Array.isArray(parsed.faded) ? parsed.faded : []).filter((f, i, arr) =>
+          arr.findIndex((x) => String(x.mirrorCode || x.fixture) === String(f.mirrorCode || f.fixture)) === i),
         notes: String(parsed.notes || ""),
         // Everything the law cut, and why. A short slip must be visibly short.
         vetoes,
@@ -658,8 +749,9 @@ const handler = async (req, res) => {
         // its own field because coverage is a standing property of the league,
         // not a footnote on one bet.
         coverage: leagues.map((lg) => ({ league: lg, ...coverageFor(lg), tier: tierFor(lg) })),
+        sourcesAnswered,
         sourceErrors,
-        timing: { gatherMs, totalMs: Date.now() - t0 },
+        timing: { gatherMs, totalMs: Date.now() - t0, cacheHits: (cacheHits || []).length },
       };
 
       const key = "ninety:proposal:" + String(matchDate).replace(/\//g, "");

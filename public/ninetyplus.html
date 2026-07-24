@@ -92,6 +92,14 @@
   .vetobox,.fadebox{background:var(--card2,#12161b);border:1px solid var(--line);
     border-radius:11px;padding:11px 13px;margin-bottom:9px;font-size:12px;line-height:1.55;color:var(--muted);}
   .vetobox b{color:var(--warn);} .fadebox b{color:var(--blue);}
+  .vetoleg{border-top:1px solid var(--line);margin-top:8px;padding-top:8px;}
+  .vetoleg .vh{display:flex;justify-content:space-between;gap:8px;align-items:baseline;}
+  .vetoleg .vh span:first-child{color:var(--ink);font-weight:600;font-size:12.5px;}
+  .vetoleg .rule{font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+    color:var(--warn);border:1px solid var(--warn);border-radius:20px;padding:2px 7px;white-space:nowrap;}
+  .vetoleg .vb{color:var(--muted);font-size:12px;margin-top:3px;}
+  .vetoleg .vw{color:var(--warn);font-size:11.5px;margin-top:4px;line-height:1.5;}
+  .vetoleg .vr{color:var(--muted);font-size:11.5px;margin-top:4px;line-height:1.5;font-style:italic;}
   .placebar{background:#1a1410;border:1px solid var(--gold);border-radius:11px;
     padding:11px 13px;font-size:12px;color:var(--gold);line-height:1.55;margin-bottom:10px;}
 </style>
@@ -121,7 +129,7 @@
   <div class="selbar"><button class="go" id="deepBtn" style="display:none">Analyse selected games</button><div class="advisory" id="advisory"></div></div>
   <div class="slip" id="slip"></div>
 
-  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v2.0</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
+  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v2.1</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
   </div>
 
 <script>
@@ -465,9 +473,24 @@ function renderSlip(p,failed,total){
 
   // What the law cut. A short slip must be VISIBLY short: if five legs were
   // proposed and four vetoed, that is the most useful thing on the page.
+  // A vetoed leg shows the bet it WOULD have been, at the price the model thought
+  // it was taking, with its reasoning. You should be able to read what the law cut
+  // and judge whether the law was right — a bare rule name tells you nothing.
   if(p.vetoes&&p.vetoes.length){
-    h+='<div class="vetobox"><b>'+p.vetoes.length+' leg'+(p.vetoes.length>1?"s":"")+' vetoed in code</b><br>'+
-      p.vetoes.map(v=>'\u00b7 '+esc((v.selection||"?")+" ("+(v.fixture||"")+") \u2014 "+v.rule+": "+v.why)).join("<br>")+'</div>';
+    h+='<div class="vetobox"><b>'+p.vetoes.length+' leg'+(p.vetoes.length>1?"s":"")+' cut by the gates</b> '+
+      '<span style="color:var(--muted)">(proposed, then rejected \u2014 not placeable as written)</span>';
+    p.vetoes.forEach(v=>{
+      h+='<div class="vetoleg">'+
+        '<div class="vh"><span>'+esc(v.fixture||"")+'</span><span class="rule">'+esc(v.rule)+'</span></div>'+
+        (v.betType||v.selection
+          ? '<div class="vb">'+esc(v.betType||"")+(v.selection?' \u00b7 '+esc(v.selection):'')+
+            (v.odds?' @ '+esc(v.odds):'')+'</div>'
+          : '')+
+        '<div class="vw">'+esc(v.why)+'</div>'+
+        (v.reason?'<div class="vr">'+esc(v.reason)+'</div>':'')+
+      '</div>';
+    });
+    h+='</div>';
   }
   if(p.corrections&&p.corrections.length){
     h+='<div class="vetobox"><b>Corrections applied</b><br>'+p.corrections.map(c=>'\u00b7 '+esc(c)).join("<br>")+'</div>';
@@ -477,9 +500,21 @@ function renderSlip(p,failed,total){
       p.faded.map(f=>'\u00b7 '+esc((f.fixture||f.mirrorCode||"")+" \u2014 "+(f.why||""))).join("<br>")+'</div>';
   }
   if(p.notes) h+='<div class="fadebox"><b>Notes</b><br>'+esc(p.notes)+'</div>';
-  if(p.sourceErrors&&p.sourceErrors.length){
-    h+='<div class="vetobox"><b>Sources that did not answer ('+p.sourceErrors.length+')</b><br>'+
-      p.sourceErrors.slice(0,8).map(e=>'\u00b7 '+esc(e.source+" for "+e.league+": "+e.why)).join("<br>")+'</div>';
+  // What the read actually RESTS ON. A failure list alone tells you what went
+  // wrong without telling you what went right, which is the number that matters.
+  const SRCN={espn:"ESPN",clubelo:"Elo",xgscore:"xG",forebet:"Forebet",soccerstats:"SoccerSTATS",footballdata:"closing odds",clubelo_ratings:"Elo ratings"};
+  if((p.sourcesAnswered&&p.sourcesAnswered.length)||(p.sourceErrors&&p.sourceErrors.length)){
+    h+='<div class="fadebox"><b>Sources used</b>';
+    (p.sourcesAnswered||[]).forEach(s=>{
+      h+='<div style="margin-top:5px">'+esc(s.league)+': <span style="color:var(--accent)">'+
+        s.answeredCount+' of '+s.expected+' answered</span>'+
+        (s.answered.length?' \u2014 '+esc(s.answered.map(x=>SRCN[x]||x).join(", ")):'')+'</div>';
+    });
+    if(p.sourceErrors&&p.sourceErrors.length){
+      h+='<div style="margin-top:7px;color:var(--warn)">Did not answer: '+
+        esc(p.sourceErrors.slice(0,8).map(e=>(SRCN[e.source]||e.source)+" ("+e.league+"): "+e.why).join(" \u00b7 "))+'</div>';
+    }
+    h+='</div>';
   }
   slipHost.innerHTML=h;
 }
