@@ -14,6 +14,7 @@
   ],
   "functions": {
     "api/mission.js": { "maxDuration": 10 },
+    "api/forex-hands.js": { "maxDuration": 10},
     "api/forex-brain.js": { "maxDuration": 300 }
   }
 }

@@ -339,7 +339,7 @@ UPCOMING EVENTS FOR ${pair.ccys.join("/")}: ${JSON.stringify(rel)}
 RECENT HEADLINES:\n${heads}
 
 Rules you must obey:
-- FLAT is the default and the common answer. Only go directional if the range box plus news genuinely favour a breakout with follow-through.
+- Hunt for the trade. You are an opportunistic breakout trader: when the box, momentum and news align even reasonably, COMMIT with a directional call and honest conviction. Do not demand perfection. FLAT is reserved for when the evidence genuinely argues against a breakout (dead liquidity, imminent binary event, contradictory signals), not for mere uncertainty.
 - riskPercent must be <= ${CONFIG.maxRiskPercent}; default ${CONFIG.defaultRiskPercent}.
 - All prices absolute. For BUY: slPrice < trigger < tpPrice, maxChase >= trigger. Reverse for SELL.
 - Anchor trigger to the box edge; anchor SL/TP sensibly to box size / ATR.
