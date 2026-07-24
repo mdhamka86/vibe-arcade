@@ -46,6 +46,7 @@
   .warnbox{background:#1a1410;border:1px solid var(--warn);border-radius:10px;padding:10px;font-size:12px;color:var(--warn);margin:12px 0;line-height:1.5;}
   footer{color:var(--muted);font-size:12px;margin-top:20px;line-height:1.5;}
   .selbar{position:sticky;bottom:0;background:linear-gradient(transparent,var(--bg) 30%);padding-top:14px;}
+  .advisory{font-size:11.5px;color:var(--warn);line-height:1.5;margin:8px 2px 0;text-align:center;}
 </style>
 </head>
 <body>
@@ -67,10 +68,10 @@
   <div class="srcline" id="srcline"></div>
   <div id="warns"></div>
   <div id="out"></div>
-  <div class="selbar"><button class="go" id="deepBtn" style="display:none">Deep-pull selected games</button></div>
+  <div class="selbar"><button class="go" id="deepBtn" style="display:none">Deep-pull selected games</button><div class="advisory" id="advisory"></div></div>
   <button class="copy" id="copyBtn" style="display:none">Copy everything (paste to Claude)</button>
 
-  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v1.0</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
+  <footer>Claude proposes ideas across 1X2, Asian Handicap, Totals O/U and BTTS with confidence-tiered stakes, then builds the recommended slip. Mirror data is reference only and lagging; your SGPools app is source of truth at bet time.<br><br><span style="color:var(--accent2);font-weight:600;">Ninety Plus v1.1</span> &middot; hammyLabs &middot; rebuilt 24/07/2026</footer>
   </div>
 
 <script>
@@ -83,7 +84,7 @@ document.getElementById("gateBtn").addEventListener("click",tryUnlock);
 document.getElementById("gatePass").addEventListener("keydown",e=>{if(e.key==="Enter")tryUnlock();});
 
 const ODDS="/api/odds2";
-const goBtn=document.getElementById("goBtn"),deepBtn=document.getElementById("deepBtn"),statusEl=document.getElementById("status"),srcline=document.getElementById("srcline"),out=document.getElementById("out"),copyBtn=document.getElementById("copyBtn"),warns=document.getElementById("warns");
+const goBtn=document.getElementById("goBtn"),deepBtn=document.getElementById("deepBtn"),statusEl=document.getElementById("status"),srcline=document.getElementById("srcline"),out=document.getElementById("out"),copyBtn=document.getElementById("copyBtn"),warns=document.getElementById("warns"),advisory=document.getElementById("advisory");
 let fixtures=[],selected=new Set(),deepData={},copyText="";
 function esc(s){return String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
 function setStatus(s){statusEl.textContent=s||"";}
@@ -104,7 +105,7 @@ function mvHtml(v){
 }
 
 function renderList(data){
-  out.innerHTML="";warns.innerHTML="";selected.clear();deepData={};copyBtn.style.display="none";deepBtn.style.display="none";
+  out.innerHTML="";warns.innerHTML="";advisory.textContent="";selected.clear();deepData={};copyBtn.style.display="none";deepBtn.style.display="none";
   const a=ageLabel(data.mirror_age_seconds);
   srcline.innerHTML='<span class="'+a.cls+'">● sgodds mirror &middot; updated '+esc(data.last_updated||"?")+' ('+a.txt+')</span>';
 
@@ -148,68 +149,137 @@ function renderList(data){
         else{selected.add(idx);div.classList.add("sel");div.querySelector(".chk").textContent="●";}
         deepBtn.style.display=selected.size?"block":"none";
         deepBtn.textContent="Deep-pull "+selected.size+" selected game"+(selected.size>1?"s":"");
+        updateAdvisory();
       });
       out.appendChild(div);
     }
   }
 }
 
+// Deep-pull tuning. Pool stays small on purpose: firing 20 requests at sgodds
+// at once is a good way to earn a Cloudflare challenge, which is exactly the
+// AbortError the API's retry logic exists to survive.
+const POOL = 3;          // concurrent deep pulls
+const STAGGER_MS = 120;  // delay between worker launches
+const BIG_PULL = 12;     // soft advisory threshold, not a block
+
+// Soft nudge, never a block. Two reasons a very large pull is worth pausing on:
+// it leans on the mirror harder, and a 20-game paste means shallower analysis
+// per fixture than a tight card of six or eight.
+function updateAdvisory(){
+  const n=selected.size;
+  if(!n){advisory.textContent="";return;}
+  advisory.textContent = n>=BIG_PULL
+    ? "Large pull ("+n+" games): slower, leans on the mirror, and a card this big usually means thinner analysis per game."
+    : "";
+}
+
+// ---- deep pull -----------------------------------------------------------
+// Sequential pulls made a 20-game card a ~60s stare at a spinner. We now run a
+// small pool (POOL) with a short stagger. Pool stays small on purpose: firing
+// 20 requests at sgodds at once is a good way to earn a Cloudflare challenge,
+// which is exactly the AbortError the API's retry logic exists to survive.
+function buildBlock(f, j){
+  let b="==== "+f.home+" v "+f.away+" ====\n";
+  b+="SGPools code (CARD-MATCH IN APP): "+(f.mirror_code||"?")+"\n";
+  b+="Match date: "+(f.match_date_display||j.match_date||"?")+"\n";
+  b+="Kickoff: "+(f.time_sgt||"?")+" SGT\n";
+  b+="League: "+(f.league||"?")+"\n";
+  b+="Mirror updated: "+(j.last_updated||"?")+
+     (j.mirror_age_seconds!=null?" ("+ageLabel(j.mirror_age_seconds).txt+")":"")+"\n";
+  if(j.parse_warnings&&j.parse_warnings.length){
+    b+="PARSE WARNINGS: "+j.parse_warnings.join(" | ")+"\n";
+  }
+  b+="\nMARKETS (mirror; opening -> current, with movement since open):\n";
+  const order=j.market_order||Object.keys(j.markets||{});
+  if(order.length){
+    for(const mk of order){
+      const m=j.markets[mk];
+      if(!m||!m.selections) continue;
+      b+="\n["+mk+"]\n";
+      m.selections.forEach(s=>{
+        const mvTxt = (s.movement==null||s.movement===0) ? "" :
+          "  ("+(s.movement>0?"+":"")+s.movement+"% since open "+s.opening+")";
+        b+="  "+s.selection+"  @ "+s.odds+mvTxt+"\n";
+      });
+    }
+  }else{
+    b+="(no detailed markets parsed; 1X2 from list: "+f.home+" "+(f.odds_1x2&&f.odds_1x2.home)+
+       " / Draw "+(f.odds_1x2&&f.odds_1x2.draw)+" / "+f.away+" "+(f.odds_1x2&&f.odds_1x2.away)+")\n";
+  }
+  if(j.history_1x2&&j.history_1x2.samples&&j.history_1x2.samples.length){
+    const s=j.history_1x2.samples, ser=j.history_1x2.series||{};
+    b+="\n[1X2 movement history] "+s.length+" samples, "+s[0]+" -> "+s[s.length-1]+"\n";
+    for(const k of Object.keys(ser)){
+      b+="  "+k+": "+ser[k].join(", ")+"\n";
+    }
+  }
+  return b;
+}
+
 async function deepPull(){
   deepBtn.disabled=true;copyBtn.style.display="none";
   const picks=[...selected].map(i=>fixtures[i]);
-  setStatus("Deep-pulling "+picks.length+" game"+(picks.length>1?"s":"")+"…");
-  const blocks=[];
-  for(const f of picks){
-    try{
-      const r=await fetch(ODDS+"?match="+encodeURIComponent(f.match_url));
-      const j=await r.json();
-      deepData[f.match_url]=j;
-      let b="==== "+f.home+" v "+f.away+" ====\n";
-      b+="SGPools code (CARD-MATCH IN APP): "+(f.mirror_code||"?")+"\n";
-      b+="Match date: "+(f.match_date_display||j.match_date||"?")+"\n";
-      b+="Kickoff: "+(f.time_sgt||"?")+" SGT\n";
-      b+="League: "+(f.league||"?")+"\n";
-      b+="Mirror updated: "+(j.last_updated||"?")+
-         (j.mirror_age_seconds!=null?" ("+ageLabel(j.mirror_age_seconds).txt+")":"")+"\n";
-      if(j.parse_warnings&&j.parse_warnings.length){
-        b+="PARSE WARNINGS: "+j.parse_warnings.join(" | ")+"\n";
+  const total=picks.length;
+
+  // Results are held by index so pool completion order never scrambles the card.
+  const results=new Array(total).fill(null);
+  const failed=[];
+  let done=0;
+  const tick=()=>{setStatus("Deep-pulling… "+(++done)+" of "+total+(failed.length?"  ("+failed.length+" failed)":""));};
+  setStatus("Deep-pulling… 0 of "+total);
+
+  let next=0;
+  async function worker(slot){
+    // Stagger the launches so we don't open every socket on the same tick.
+    await new Promise(r=>setTimeout(r,slot*STAGGER_MS));
+    while(true){
+      const i=next++;
+      if(i>=total) return;
+      const f=picks[i];
+      try{
+        const r=await fetch(ODDS+"?match="+encodeURIComponent(f.match_url));
+        const j=await r.json();
+        // A soft API error still returns 200 with {error}, so check for it.
+        if(j&&j.error) throw new Error(j.error);
+        deepData[f.match_url]=j;
+        results[i]=buildBlock(f,j);
+      }catch(e){
+        // Isolate the failure: one bad fetch must not kill the batch.
+        failed.push({f:f,why:String(e&&e.message?e.message:e)});
+        results[i]="==== "+f.home+" v "+f.away+" ====\n"+
+          "SGPools code (CARD-MATCH IN APP): "+(f.mirror_code||"?")+"\n"+
+          "Match date: "+(f.match_date_display||"?")+"\n"+
+          "*** DEEP PULL FAILED - no market data retrieved for this fixture. ***\n"+
+          "*** This is a fetch failure, NOT a fixture without markets. Re-pull before judging it. ***\n";
       }
-      b+="\nMARKETS (mirror; opening -> current, with movement since open):\n";
-      const order=j.market_order||Object.keys(j.markets||{});
-      if(order.length){
-        for(const mk of order){
-          const m=j.markets[mk];
-          if(!m||!m.selections) continue;
-          b+="\n["+mk+"]\n";
-          m.selections.forEach(s=>{
-            const mvTxt = (s.movement==null||s.movement===0) ? "" :
-              "  ("+(s.movement>0?"+":"")+s.movement+"% since open "+s.opening+")";
-            b+="  "+s.selection+"  @ "+s.odds+mvTxt+"\n";
-          });
-        }
-      }else{
-        b+="(no detailed markets parsed; 1X2 from list: "+f.home+" "+(f.odds_1x2&&f.odds_1x2.home)+
-           " / Draw "+(f.odds_1x2&&f.odds_1x2.draw)+" / "+f.away+" "+(f.odds_1x2&&f.odds_1x2.away)+")\n";
-      }
-      if(j.history_1x2&&j.history_1x2.samples&&j.history_1x2.samples.length){
-        const s=j.history_1x2.samples, ser=j.history_1x2.series||{};
-        b+="\n[1X2 movement history] "+s.length+" samples, "+s[0]+" -> "+s[s.length-1]+"\n";
-        for(const k of Object.keys(ser)){
-          b+="  "+k+": "+ser[k].join(", ")+"\n";
-        }
-      }
-      blocks.push(b);
-    }catch(e){blocks.push("==== "+f.home+" v "+f.away+" ====\n(deep pull failed: "+e+")");}
+      tick();
+    }
   }
+
+  await Promise.all(Array.from({length:Math.min(POOL,total)},(_,s)=>worker(s)));
+
+  // Failures are called out up top as well as inline, so a long paste can't
+  // hide them and they can't be mistaken for "this fixture had no markets".
+  let head="DEEP-DIVE THESE GAMES (The Spread WC):\n";
+  if(failed.length){
+    head+="\n!! "+failed.length+" of "+total+" fixtures FAILED to deep-pull and have NO market data below:\n";
+    failed.forEach(x=>{head+="   - "+x.f.home+" v "+x.f.away+" (#"+(x.f.mirror_code||"?")+"): "+x.why+"\n";});
+    head+="   Treat these as missing data, not as fixtures worth fading. Re-pull them.\n";
+  }
+
   copyText=
-    "DEEP-DIVE THESE GAMES (The Spread WC):\n\n"+
-    blocks.join("\n\n")+
+    head+"\n"+
+    results.join("\n\n")+
     "\n\n----\nPlease trawl punters/tipsters/press + run the data cross-check and convergence/confidence check, "+
     "then recommend the best-value bets and build me a SGPools bet slip table (code, bet type, selection, odds, confidence, stake) ready to place. "+
     "State bet types explicitly (e.g. '1X2 straight win' vs 'AH -0.75') so there is no ambiguity at the point of placing. "+
     "Note the match date on each block - the mirror lists several days ahead, so these may not be today. "+
     "Remember mirror codes need card-matching in the app.";
-  setStatus("Done. Copy and paste to Claude.");
+
+  setStatus(failed.length
+    ? "Done, but "+failed.length+" of "+total+" failed. Copy anyway, or re-pull those."
+    : "Done. Copy and paste to Claude.");
   copyBtn.style.display="block";
   deepBtn.disabled=false;
   copyBtn.scrollIntoView({behavior:"smooth",block:"center"});
